@@ -77,7 +77,8 @@ evaluator/attacks/
 ├── registry.py             # 攻击注册表
 ├── runner.py               # 目录级批量执行
 ├── distortion_attacks/     # 基础数字失真攻击
-├── generative_attacks/     # 生成式攻击预留
+├── content_preserve_workflow_attacks/ # 内容保持型数字工作流攻击
+├── regeneration_attacks/   # 再生成攻击预留
 └── adversarial_attacks/    # 对抗攻击预留
 ```
 
@@ -105,6 +106,20 @@ from evaluator.attacks import list_attacks
 
 print(list_attacks())
 ```
+
+## Content-Preserving Workflow Attacks
+
+`content_preserve_workflow_attacks/` 实现真实用户/平台工作流攻击，例如：
+
+- `cp_denoise`
+- `cp_deblock`
+- `cp_super_resolution`
+- `cp_auto_enhance`
+- `cp_filter_lut`
+- `cp_platform_pipeline`
+- `cp_retouch_pipeline_core`
+
+这些攻击通常不是单个低级扰动，而是修复、增强、导出、再处理流程。
 
 ## 新增攻击
 

@@ -1,4 +1,5 @@
 from .base import AttackContext, AttackResult, BaseAttack
+from . import content_preserve_workflow_attacks as content_preserve_workflow_attacks
 from .distortion_attacks import (
     BrightnessAttack,
     ContrastAttack,
@@ -19,6 +20,7 @@ __all__ = [
     "AttackResult",
     "BaseAttack",
     "BrightnessAttack",
+    "content_preserve_workflow_attacks",
     "ContrastAttack",
     "ErasingAttack",
     "GaussianBlurAttack",

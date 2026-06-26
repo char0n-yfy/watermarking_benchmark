@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import distortion_attacks  # noqa: F401 - import registers default attacks
+from . import content_preserve_workflow_attacks, distortion_attacks  # noqa: F401 - import registers default attacks
 from .base import AttackContext, AttackResult
 from .registry import build_attack
 
