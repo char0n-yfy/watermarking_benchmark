@@ -4,8 +4,9 @@
 /算法
 /weights
 /watermarking.zip
-evaluator/watermarking/weights/
+/weights/watermarking
 *.pth
 *.pyt
 *.pt
 *.pickle
+*.pyc

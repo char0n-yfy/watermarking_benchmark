@@ -14,7 +14,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ALGORITHMS_ROOT = PACKAGE_ROOT / "algorithms"
 PACKAGED_WEIGHTS_ROOT = PACKAGE_ROOT / "weights" / "watermarking"
-PROJECT_WEIGHTS_ROOT = PROJECT_ROOT / "weights" / "watermarking"
+RESOURCE_WEIGHTS_ROOT = PROJECT_ROOT / "resources" / "weights" / "watermarking"
 
 
 def packaged_algorithm_dir(name: str) -> Path:
@@ -22,10 +22,13 @@ def packaged_algorithm_dir(name: str) -> Path:
 
 
 def packaged_weights_dir(name: str) -> Path:
+    resource_path = RESOURCE_WEIGHTS_ROOT / name
+    if resource_path.exists():
+        return resource_path
     package_path = PACKAGED_WEIGHTS_ROOT / name
     if package_path.exists():
         return package_path
-    return PROJECT_WEIGHTS_ROOT / name
+    return resource_path
 
 
 def resolve_path(value: str | Path | None) -> Path | None:

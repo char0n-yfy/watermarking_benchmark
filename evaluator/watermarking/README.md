@@ -13,8 +13,9 @@ actual checkpoint files:
 ```text
 evaluator/watermarking/
 |-- algorithms/
-|-- methods/
-`-- weights/watermarking/
+`-- methods/
+
+resources/weights/watermarking/
 ```
 
 Current registered methods:
