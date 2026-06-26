@@ -1,0 +1,10 @@
+{
+  "name": "watermarking-benchmark-platform",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter @wm-bench/web dev",
+    "build:web": "pnpm --filter @wm-bench/web build",
+    "lint:web": "pnpm --filter @wm-bench/web lint"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

@@ -10,3 +10,9 @@
 *.pt
 *.pickle
 *.pyc
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+.env
