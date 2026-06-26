@@ -14,7 +14,14 @@
 *.onnx
 *.pickle
 *.pyc
+*.tsbuildinfo
 /AGENTS.md
 /PARETOGUARD_MEMORY.md
 /WORKFLOW.md
 /resources/weights/watermarking.zip
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+.env
