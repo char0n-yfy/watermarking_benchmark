@@ -1,3 +1,11 @@
 /WAVES-main
 /wibe-main
 .DS_Store
+/算法
+/weights
+/watermarking.zip
+evaluator/watermarking/weights/
+*.pth
+*.pyt
+*.pt
+*.pickle
