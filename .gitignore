@@ -14,3 +14,7 @@
 *.onnx
 *.pickle
 *.pyc
+/AGENTS.md
+/PARETOGUARD_MEMORY.md
+/WORKFLOW.md
+/resources/weights/watermarking.zip

@@ -3,6 +3,7 @@ from .hidden import HiDDeNWatermark
 from .invisible_watermark import (
     InvisibleWatermarkDwtDct,
     InvisibleWatermarkDwtDctSvd,
+    InvisibleWatermarkRivaGan,
 )
 from .maskwm import MaskWMD32Watermark
 from .rawatermark import RAWatermark
@@ -22,6 +23,7 @@ __all__ = [
     "HiDDeNWatermark",
     "InvisibleWatermarkDwtDct",
     "InvisibleWatermarkDwtDctSvd",
+    "InvisibleWatermarkRivaGan",
     "MaskWMD32Watermark",
     "RAWatermark",
     "SSLWatermark",

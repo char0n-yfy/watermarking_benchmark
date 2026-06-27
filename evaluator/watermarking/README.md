@@ -28,6 +28,7 @@ Current registered methods:
 - `blind_watermark`
 - `invisible-watermark-dwtdct`
 - `invisible-watermark-dwtdctsvd`
+- `invisible-watermark-rivagan`
 - `trustmark`
 - `trustmark-c`
 - `trustmark-q`
