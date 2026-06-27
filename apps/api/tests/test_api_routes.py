@@ -48,9 +48,18 @@ class ApiRoutesTest(unittest.TestCase):
                 },
             )
             self.assertEqual(config_response.status_code, 200)
+            config_id = config_response.json()["id"]
+
+            rename_response = client.patch(
+                f"/experiment-configs/{config_id}",
+                json={"name": "Renamed smoke"},
+            )
+            self.assertEqual(rename_response.status_code, 200)
+            self.assertEqual(rename_response.json()["name"], "Renamed smoke")
+
             run_response = client.post(
                 "/runs",
-                json={"configId": config_response.json()["id"]},
+                json={"configId": config_id},
             )
             self.assertEqual(run_response.status_code, 200)
             self.assertEqual(run_response.json()["status"], "queued")
@@ -62,6 +71,13 @@ class ApiRoutesTest(unittest.TestCase):
             cancel_response = client.post(f"/runs/{run_response.json()['id']}/cancel")
             self.assertEqual(cancel_response.status_code, 200)
             self.assertEqual(cancel_response.json()["status"], "cancelled")
+
+            delete_response = client.delete(f"/experiment-configs/{config_id}")
+            self.assertEqual(delete_response.status_code, 200)
+            self.assertEqual(delete_response.json()["status"], "deleted")
+            list_response = client.get("/experiment-configs")
+            self.assertEqual(list_response.status_code, 200)
+            self.assertEqual(list_response.json(), [])
 
 
 if __name__ == "__main__":

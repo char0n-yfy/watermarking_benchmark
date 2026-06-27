@@ -55,6 +55,19 @@ export function createSavedConfig(name: string, selection: ExperimentSelection):
   });
 }
 
+export function renameSavedConfig(configId: string, name: string): Promise<SavedExperimentConfig> {
+  return requestJson<SavedExperimentConfig>(`/experiment-configs/${configId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name })
+  });
+}
+
+export function deleteSavedConfig(configId: string): Promise<{ id: string; status: string }> {
+  return requestJson<{ id: string; status: string }>(`/experiment-configs/${configId}`, {
+    method: "DELETE"
+  });
+}
+
 export function fetchRuns(): Promise<DemoRunRecord[]> {
   return requestJson<DemoRunRecord[]>("/runs");
 }

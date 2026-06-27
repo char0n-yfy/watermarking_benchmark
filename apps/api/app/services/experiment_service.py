@@ -86,7 +86,7 @@ class ExperimentService:
     def list_configs(self) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM experiment_configs ORDER BY created_at DESC"
+                "SELECT * FROM experiment_configs WHERE deleted_at IS NULL ORDER BY created_at DESC"
             ).fetchall()
         return [row_to_config(row) for row in rows]
 
@@ -99,6 +99,51 @@ class ExperimentService:
         if row is None:
             raise KeyError(f"Unknown config id: {config_id}")
         return row_to_config(row)
+
+    def rename_config(self, config_id: str, name: str) -> dict[str, Any]:
+        next_name = name.strip()
+        if not next_name:
+            raise ValueError("Config name cannot be empty")
+        now = utc_now()
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM experiment_configs WHERE id = ? AND deleted_at IS NULL",
+                (config_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown config id: {config_id}")
+            connection.execute(
+                """
+                UPDATE experiment_configs
+                SET name = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (next_name, now, config_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM experiment_configs WHERE id = ?",
+                (config_id,),
+            ).fetchone()
+        return row_to_config(updated)
+
+    def delete_config(self, config_id: str) -> dict[str, str]:
+        now = utc_now()
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM experiment_configs WHERE id = ? AND deleted_at IS NULL",
+                (config_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown config id: {config_id}")
+            connection.execute(
+                """
+                UPDATE experiment_configs
+                SET deleted_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, config_id),
+            )
+        return {"id": config_id, "status": "deleted"}
 
     def create_run(self, config_id: str, *, execute: bool = False) -> dict[str, Any]:
         config = self.get_config(config_id)

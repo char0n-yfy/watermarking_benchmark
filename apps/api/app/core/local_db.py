@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS experiment_configs (
   sample_count INTEGER NOT NULL,
   image_operation_count INTEGER NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS experiment_runs (
@@ -86,6 +87,9 @@ MIGRATION_COLUMNS = {
     "experiment_cells": {
         "bit_error_rate": "REAL",
         "elapsed_ms": "REAL",
+    },
+    "experiment_configs": {
+        "deleted_at": "TEXT",
     },
 }
 

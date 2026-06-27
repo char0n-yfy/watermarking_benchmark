@@ -18,6 +18,10 @@ class ExperimentConfigCreatePayload(BaseModel):
     selection: ExperimentSelectionPayload
 
 
+class ExperimentConfigRenamePayload(BaseModel):
+    name: str
+
+
 class RunCreatePayload(BaseModel):
     config_id: Optional[str] = None
     configId: Optional[str] = None

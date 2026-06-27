@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from .core.config import get_settings
 from .core.local_db import LocalDatabase
 from .core.status import RunStatus
-from .schemas.experiments import ExperimentConfigCreatePayload, RunCreatePayload
+from .schemas.experiments import ExperimentConfigCreatePayload, ExperimentConfigRenamePayload, RunCreatePayload
 from .services.experiment_service import ExperimentService
 from .services.resources import (
     list_attack_resources,
@@ -101,6 +101,22 @@ def create_app() -> FastAPI:
     @app.get("/experiment-configs")
     def list_configs() -> list[dict[str, object]]:
         return service.list_configs()
+
+    @app.patch("/experiment-configs/{config_id}")
+    def rename_config(config_id: str, payload: ExperimentConfigRenamePayload) -> dict[str, object]:
+        try:
+            return service.rename_config(config_id, payload.name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/experiment-configs/{config_id}")
+    def delete_config(config_id: str) -> dict[str, str]:
+        try:
+            return service.delete_config(config_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/runs")
     def create_run(payload: RunCreatePayload) -> dict[str, object]:
