@@ -1,0 +1,5 @@
+{
+  "denoise": "../../denoise/restormer_denoise/gaussian_color_denoising_blind.pth",
+  "jpeg_car": "../../deartifact/swinir_car/006_colorCAR_DFWB_s126w7_SwinIR-M_jpeg30.pth",
+  "super_resolution": "../../super_resolution/real_esrgan/RealESRGAN_x4plus.pth"
+}

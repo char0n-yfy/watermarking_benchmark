@@ -112,14 +112,50 @@ print(list_attacks())
 `content_preserve_workflow_attacks/` 实现真实用户/平台工作流攻击，例如：
 
 - `cp_denoise`
+- `cp_denoise_deep`
 - `cp_deblock`
+- `cp_deblock_deep`
+- `cp_deartifact`
+- `cp_deartifact_deep`
+- `cp_despeckle`
+- `cp_edge_preserve_smooth`
 - `cp_super_resolution`
+- `cp_super_resolution_deep`
+- `cp_thumbnail_restore`
+- `cp_thumbnail_restore_deep`
+- `cp_resample_restore`
+- `cp_sr_denoise`
 - `cp_auto_enhance`
+- `cp_clahe`
+- `cp_hdr_like`
+- `cp_sharpen`
+- `cp_color_balance`
 - `cp_filter_lut`
+- `cp_warm_cold_tone`
+- `cp_fade_matte`
+- `cp_vivid_boost`
+- `cp_mono_style`
 - `cp_platform_pipeline`
+- `cp_social_export`
+- `cp_iterative_export`
+- `cp_color_space_pipeline`
+- `cp_metadata_strip_export`
+- `cp_preview_pipeline`
 - `cp_retouch_pipeline_core`
+- `cp_restore_pipeline_deep`
+- `cp_app_edit_pipeline`
+- `cp_platform_retouch`
+- `cp_clean_export_pipeline`
 
 这些攻击通常不是单个低级扰动，而是修复、增强、导出、再处理流程。
+
+Deep 类攻击默认查找权重：
+
+```text
+resources/weights/attacks/content_preserve_workflow_attacks/
+```
+
+Deep 攻击已接入本地 PyTorch 推理 backend：Restormer、SwinIR JPEG/CAR 和 Real-ESRGAN RRDBNet x4。运行结果 metadata 会记录实际 `backend`、`weight_path`、`weight_exists` 和 `fallback_used`。传入 `allow_fallback=False` 可以强制验证真实 Deep 推理路径。
 
 ## 新增攻击
 

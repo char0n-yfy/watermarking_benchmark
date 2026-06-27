@@ -167,6 +167,45 @@ def deartifact(image: Image.Image, strength: float = 0.45, radius: int = 5) -> I
     return Image.blend(image, smoothed, 0.35 + 0.45 * strength)
 
 
+def despeckle(
+    image: Image.Image,
+    kernel_size: int = 3,
+    component_threshold: int = 24,
+    strength: float = 0.6,
+    difference_threshold: int = 10,
+) -> Image.Image:
+    strength = float(np.clip(strength, 0.0, 1.0))
+    kernel_size = max(3, int(kernel_size))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    if cv2 is None:
+        filtered = image.filter(ImageFilter.MedianFilter(size=kernel_size))
+        return Image.blend(image.convert("RGB"), filtered, 0.2 + 0.55 * strength)
+
+    array = to_uint8(image)
+    median = cv2.medianBlur(array, kernel_size)
+    diff = cv2.absdiff(array, median)
+    diff_gray = cv2.cvtColor(diff, cv2.COLOR_RGB2GRAY)
+    _, raw_mask = cv2.threshold(diff_gray, int(difference_threshold), 255, cv2.THRESH_BINARY)
+
+    labels_count, labels, stats, _ = cv2.connectedComponentsWithStats(raw_mask, connectivity=8)
+    mask = np.zeros(raw_mask.shape, dtype=np.uint8)
+    max_area = max(1, int(component_threshold))
+    for label in range(1, labels_count):
+        area = stats[label, cv2.CC_STAT_AREA]
+        if area <= max_area:
+            mask[labels == label] = 255
+
+    if not np.any(mask):
+        return Image.blend(image.convert("RGB"), from_uint8(median), 0.15 + 0.35 * strength)
+
+    mask = cv2.dilate(mask, np.ones((3, 3), dtype=np.uint8), iterations=1)
+    alpha = (mask.astype(np.float32) / 255.0)[:, :, None] * (0.35 + 0.55 * strength)
+    out = array.astype(np.float32) * (1.0 - alpha) + median.astype(np.float32) * alpha
+    return from_uint8(out)
+
+
 def clahe(image: Image.Image, clip_limit: float = 2.0, tile_grid_size: int = 8) -> Image.Image:
     if cv2 is None:
         return ImageOps.autocontrast(image.convert("RGB"), cutoff=1)
@@ -222,6 +261,67 @@ def apply_filter_lut(image: Image.Image, lut_type: str = "warm_film", alpha: flo
     filtered = from_uint8(mapped)
     filtered = ImageEnhance.Color(filtered).enhance(saturation)
     return Image.blend(base, filtered, alpha)
+
+
+def hdr_like(
+    image: Image.Image,
+    tone_strength: float = 0.5,
+    shadow_lift: float = 0.18,
+    highlight_compression: float = 0.16,
+    local_contrast: float = 0.25,
+) -> Image.Image:
+    tone_strength = float(np.clip(tone_strength, 0.0, 1.0))
+    shadow_lift = float(np.clip(shadow_lift, 0.0, 1.0))
+    highlight_compression = float(np.clip(highlight_compression, 0.0, 1.0))
+    local_contrast = float(np.clip(local_contrast, 0.0, 1.0))
+
+    array = to_uint8(image).astype(np.float32) / 255.0
+    luma = 0.299 * array[:, :, 0] + 0.587 * array[:, :, 1] + 0.114 * array[:, :, 2]
+    shadow_mask = np.square(1.0 - luma)[:, :, None]
+    highlight_mask = np.square(luma)[:, :, None]
+
+    lifted = array + shadow_lift * tone_strength * shadow_mask * (1.0 - array)
+    compressed = lifted - highlight_compression * tone_strength * highlight_mask * np.maximum(lifted - 0.45, 0.0)
+    tone_mapped = from_uint8(compressed * 255.0)
+
+    if local_contrast > 0:
+        local = clahe(tone_mapped, clip_limit=1.2 + 2.4 * local_contrast, tile_grid_size=8)
+        tone_mapped = Image.blend(tone_mapped, local, 0.2 + 0.35 * local_contrast)
+
+    tone_mapped = ImageEnhance.Contrast(tone_mapped).enhance(1.0 + 0.08 * tone_strength)
+    return ImageEnhance.Color(tone_mapped).enhance(1.0 + 0.05 * tone_strength)
+
+
+def fade_matte(
+    image: Image.Image,
+    fade_strength: float = 0.5,
+    black_lift: float = 0.12,
+    contrast: float = 0.92,
+    saturation: float = 0.92,
+) -> Image.Image:
+    fade_strength = float(np.clip(fade_strength, 0.0, 1.0))
+    black_lift = float(np.clip(black_lift, 0.0, 0.5))
+    base = image.convert("RGB")
+    array = to_uint8(base).astype(np.float32) / 255.0
+
+    lifted = array * (1.0 - black_lift * fade_strength) + black_lift * fade_strength
+    lifted = (lifted - 0.5) * float(contrast) + 0.5
+    matte = from_uint8(lifted * 255.0)
+    matte = ImageEnhance.Color(matte).enhance(float(saturation))
+    warm_matte = apply_filter_lut(matte, "matte", alpha=0.35 + 0.35 * fade_strength, saturation=1.0)
+    return Image.blend(base, warm_matte, 0.45 + 0.4 * fade_strength)
+
+
+def mono_style(image: Image.Image, desaturation_ratio: float = 0.85, contrast: float = 1.08, lift: float = 0.04) -> Image.Image:
+    desaturation_ratio = float(np.clip(desaturation_ratio, 0.0, 1.0))
+    base = image.convert("RGB")
+    gray = ImageOps.grayscale(base).convert("RGB")
+    mono = Image.blend(base, gray, desaturation_ratio)
+    mono = ImageEnhance.Contrast(mono).enhance(float(contrast))
+    if lift > 0:
+        array = to_uint8(mono).astype(np.float32)
+        mono = from_uint8(array * (1.0 - float(lift)) + 255.0 * float(lift))
+    return mono
 
 
 def restore_size(image: Image.Image, size: tuple[int, int], method: int = Image.Resampling.LANCZOS) -> Image.Image:
