@@ -4,11 +4,28 @@ import { useEffect, useMemo, useState } from "react";
 import { Archive, Braces, Database, Gauge, GitBranch, RotateCcw, Shield } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
-import { buildSavedConfig, defaultSelection, addSavedConfig, loadSavedConfigs } from "@/lib/demo-store";
+import { defaultSelection } from "@/lib/demo-store";
+import {
+  createSavedConfig,
+  fetchAlgorithms,
+  fetchAttacks,
+  fetchDatasets,
+  fetchSavedConfigs
+} from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
-import { algorithms, attacks, datasets } from "@/lib/mock-data";
+import {
+  algorithms as fallbackAlgorithms,
+  attacks as fallbackAttacks,
+  datasets as fallbackDatasets
+} from "@/lib/mock-data";
 import { estimateMatrix } from "@/lib/matrix";
-import type { ExperimentSelection, SavedExperimentConfig } from "@/lib/types";
+import type {
+  AlgorithmVersion,
+  AttackPreset,
+  DatasetVersion,
+  ExperimentSelection,
+  SavedExperimentConfig
+} from "@/lib/types";
 
 function toggle(values: string[], value: string) {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
@@ -19,6 +36,9 @@ export default function ConfigsPage() {
   const [selection, setSelection] = useState<ExperimentSelection>(defaultSelection);
   const [configName, setConfigName] = useState("Demo robustness smoke");
   const [savedConfigs, setSavedConfigs] = useState<SavedExperimentConfig[]>([]);
+  const [datasets, setDatasets] = useState<DatasetVersion[]>(fallbackDatasets);
+  const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>(fallbackAlgorithms);
+  const [attacks, setAttacks] = useState<AttackPreset[]>(fallbackAttacks);
   const [message, setMessage] = useState("");
   const estimate = useMemo(() => estimateMatrix(selection, datasets, attacks), [selection]);
   const specPreview = {
@@ -32,13 +52,47 @@ export default function ConfigsPage() {
   };
 
   useEffect(() => {
-    setSavedConfigs(loadSavedConfigs());
+    let cancelled = false;
+    Promise.all([fetchDatasets(), fetchAlgorithms(), fetchAttacks(), fetchSavedConfigs()])
+      .then(([apiDatasets, apiAlgorithms, apiAttacks, apiConfigs]) => {
+        if (cancelled) {
+          return;
+        }
+        if (apiDatasets.length > 0) {
+          setDatasets(apiDatasets);
+          setSelection((current) => {
+            const validDatasetIds = new Set(apiDatasets.map((dataset) => dataset.id));
+            const hasValidDataset = current.datasetIds.some((id) => validDatasetIds.has(id));
+            return hasValidDataset ? current : { ...current, datasetIds: [apiDatasets[0].id] };
+          });
+        } else {
+          setDatasets([]);
+          setSelection((current) => ({ ...current, datasetIds: [] }));
+          setMessage("resources/datasets 下还没有可用图片，请先解压数据集。");
+        }
+        setAlgorithms(apiAlgorithms.length > 0 ? apiAlgorithms : fallbackAlgorithms);
+        setAttacks(apiAttacks.length > 0 ? apiAttacks : fallbackAttacks);
+        setSavedConfigs(apiConfigs);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSavedConfigs([]);
+          setMessage("API 未启动，当前只显示占位资源，无法保存配置。");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const saveConfig = () => {
-    const config = buildSavedConfig(configName, selection);
-    setSavedConfigs(addSavedConfig(config));
-    setMessage(t.configs.savedToast);
+  const saveConfig = async () => {
+    try {
+      const config = await createSavedConfig(configName, selection);
+      setSavedConfigs([config, ...savedConfigs]);
+      setMessage(t.configs.savedToast);
+    } catch {
+      setMessage("API 保存失败，请先启动 FastAPI 服务后再保存。");
+    }
   };
 
   return (
@@ -59,7 +113,16 @@ export default function ConfigsPage() {
           >
             <RotateCcw size={16} />
           </button>
-          <button className="button primary" onClick={saveConfig} title={t.configs.saveConfig}>
+          <button
+            className="button primary"
+            disabled={
+              selection.datasetIds.length === 0 ||
+              selection.algorithmIds.length === 0 ||
+              selection.attackPresetIds.length === 0
+            }
+            onClick={saveConfig}
+            title={t.configs.saveConfig}
+          >
             <Archive size={16} />
             {t.configs.saveConfig}
           </button>

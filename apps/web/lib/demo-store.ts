@@ -6,11 +6,11 @@ const configsKey = "wm-bench-demo-configs-v2";
 const runsKey = "wm-bench-demo-runs-v2";
 
 export const defaultSelection: ExperimentSelection = {
-  datasetIds: ["ds-demo-v1"],
-  algorithmIds: ["alg-hidden"],
-  attackPresetIds: ["atk-identity", "atk-jpeg-sweep"],
+  datasetIds: ["local-root"],
+  algorithmIds: ["alg-traditional-lsb"],
+  attackPresetIds: ["atk-identity", "atk-jpeg-smoke"],
   seeds: [42],
-  maxSamples: 64
+  maxSamples: 1
 };
 
 function nowLabel() {

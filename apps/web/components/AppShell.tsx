@@ -10,7 +10,8 @@ import {
   Images,
   Languages,
   LayoutDashboard,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Trophy
 } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { languages } from "@/lib/i18n";
@@ -21,6 +22,7 @@ const nav = [
   { href: "/resources", key: "resources", icon: Boxes },
   { href: "/runs", key: "runs", icon: Activity },
   { href: "/results", key: "results", icon: Images },
+  { href: "/leaderboard", key: "leaderboard", icon: Trophy },
   { href: "/schema", key: "schema", icon: Database }
 ] as const;
 

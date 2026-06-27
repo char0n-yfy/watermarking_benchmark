@@ -19,9 +19,15 @@
 /PARETOGUARD_MEMORY.md
 /WORKFLOW.md
 /resources/weights/watermarking.zip
+/resources/datasets/*
+!/resources/datasets/README.md
+/runs/
 node_modules/
 .pnpm-store/
 .next/
 dist/
 build/
+out/
 .env
+.env.local
+.env.autodl

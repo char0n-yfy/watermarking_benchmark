@@ -14,6 +14,7 @@ export const translations = {
       resources: "资源",
       runs: "运行",
       results: "结果",
+      leaderboard: "天梯图",
       schema: "数据结构"
     },
     common: {
@@ -32,6 +33,11 @@ export const translations = {
       versioned: "已版本化",
       indexed: "已索引",
       table: "表",
+      refresh: "刷新",
+      healthy: "健康",
+      degraded: "异常",
+      rank: "排名",
+      overallScore: "综合分",
       status: {
         draft: "草稿",
         queued: "排队中",
@@ -76,7 +82,23 @@ export const translations = {
       failed: "失败",
       openConfigs: "配置实验",
       openRuns: "去运行",
-      monitorNote: "这里仅展示前端 demo 队列状态；真实执行由后端 API 接入后替换。"
+      monitorNote: "这里展示后端队列和 worker 心跳；运行由本地/GPU worker 异步执行。",
+      systemHealthy: "系统健康",
+      systemDegraded: "系统异常",
+      autoRefresh: "自动刷新",
+      filters: "筛选",
+      activeRuns: "活动运行",
+      queuedRuns: "排队运行",
+      runningRuns: "运行中任务",
+      completedRuns: "已完成运行",
+      failedRuns: "失败运行",
+      startedAt: "开始时间",
+      robustnessCurves: "鲁棒性曲线",
+      leaderboardPreview: "天梯图预览",
+      datasetsSummary: "数据集摘要",
+      officialLeaderboardPending: "正式天梯图等待固定评测协议和批量结果。",
+      needMultipleStrengths: "需要同一算法在多个攻击强度下的结果才能绘制曲线。",
+      noActiveRuns: "当前没有排队或运行中的实验。"
     },
     configs: {
       title: "实验配置",
@@ -85,7 +107,7 @@ export const translations = {
       namePlaceholder: "例如：HiDDeN JPEG 鲁棒性扫描",
       savedConfigs: "已保存配置",
       saveConfig: "保存配置",
-      savedToast: "配置已保存到本地 demo 状态",
+      savedToast: "配置已保存到后端数据库",
       empty: "还没有保存的实验配置",
       specPreview: "配置预览"
     },
@@ -100,7 +122,7 @@ export const translations = {
     },
     runs: {
       title: "运行",
-      subtitle: "选择已保存的实验配置并模拟提交运行",
+      subtitle: "选择已保存的实验配置，提交到后端队列并由 worker 执行",
       recent: "最近运行",
       run: "运行",
       status: "状态",
@@ -109,15 +131,34 @@ export const translations = {
       launcher: "启动运行",
       selectConfig: "选择实验配置",
       execute: "执行配置",
+      cancel: "取消",
+      logs: "日志",
+      worker: "Worker",
+      logPath: "日志路径",
       noConfigs: "还没有保存的配置，请先到实验配置页面创建。",
-      queuedNotice: "已加入本地 demo 队列"
+      queuedNotice: "已加入后端队列，等待 worker 执行。"
     },
     results: {
       title: "结果",
       subtitle: "指标汇总和 artifact 索引",
       matrixCells: "矩阵单元",
+      aggregates: "聚合指标",
+      runLeaderboard: "运行内排行",
       cell: "单元",
       manifest: "Manifest"
+    },
+    leaderboard: {
+      title: "天梯图",
+      subtitle: "正式排行榜将在固定评测协议和批量结果完成后生成",
+      pendingTitle: "正式天梯图尚未启用",
+      pendingBody: "需要先固定数据集、攻击集合、强度网格、seed、评分公式和最小样本量。当前页面只保留结构入口，不展示示例排名。",
+      protocol: "评测协议",
+      metrics: "评分维度",
+      robustness: "鲁棒性",
+      imageQuality: "图像质量",
+      speed: "速度",
+      overall: "综合分",
+      requirements: "上线前条件"
     },
     schema: {
       title: "数据结构",
@@ -150,6 +191,7 @@ export const translations = {
       resources: "Resources",
       runs: "Runs",
       results: "Results",
+      leaderboard: "Leaderboard",
       schema: "Schema"
     },
     common: {
@@ -168,6 +210,11 @@ export const translations = {
       versioned: "versioned",
       indexed: "indexed",
       table: "table",
+      refresh: "Refresh",
+      healthy: "healthy",
+      degraded: "degraded",
+      rank: "Rank",
+      overallScore: "Overall score",
       status: {
         draft: "draft",
         queued: "queued",
@@ -212,7 +259,23 @@ export const translations = {
       failed: "Failed",
       openConfigs: "Configure experiment",
       openRuns: "Go to runs",
-      monitorNote: "This view shows frontend demo queue state only; backend execution can replace it later."
+      monitorNote: "This view shows backend queue state and worker heartbeats; runs execute asynchronously in the local/GPU worker.",
+      systemHealthy: "System healthy",
+      systemDegraded: "System degraded",
+      autoRefresh: "Auto-refresh",
+      filters: "Filters",
+      activeRuns: "Active runs",
+      queuedRuns: "Queued runs",
+      runningRuns: "Running runs",
+      completedRuns: "Completed runs",
+      failedRuns: "Failed runs",
+      startedAt: "Started at",
+      robustnessCurves: "Robustness curves",
+      leaderboardPreview: "Leaderboard preview",
+      datasetsSummary: "Datasets summary",
+      officialLeaderboardPending: "The official leaderboard is waiting for a fixed benchmark protocol and batch results.",
+      needMultipleStrengths: "Multiple attack strengths for the same algorithm are required to draw curves.",
+      noActiveRuns: "No queued or running experiments right now."
     },
     configs: {
       title: "Experiment Configs",
@@ -221,7 +284,7 @@ export const translations = {
       namePlaceholder: "Example: HiDDeN JPEG robustness sweep",
       savedConfigs: "Saved configs",
       saveConfig: "Save config",
-      savedToast: "Config saved to local demo state",
+      savedToast: "Config saved to the backend database",
       empty: "No saved experiment configs yet",
       specPreview: "Spec preview"
     },
@@ -236,7 +299,7 @@ export const translations = {
     },
     runs: {
       title: "Runs",
-      subtitle: "Select a saved experiment config and simulate a run submission",
+      subtitle: "Select a saved experiment config, queue it in the backend, and let the worker execute it",
       recent: "Recent runs",
       run: "Run",
       status: "Status",
@@ -245,15 +308,34 @@ export const translations = {
       launcher: "Launch run",
       selectConfig: "Select experiment config",
       execute: "Run config",
+      cancel: "Cancel",
+      logs: "Logs",
+      worker: "Worker",
+      logPath: "Log path",
       noConfigs: "No saved configs yet. Create one on the Configs page first.",
-      queuedNotice: "Added to local demo queue"
+      queuedNotice: "Queued in the backend. Waiting for a worker."
     },
     results: {
       title: "Results",
       subtitle: "Metric summaries and artifact indexes",
       matrixCells: "Matrix cells",
+      aggregates: "Aggregates",
+      runLeaderboard: "Run-level leaderboard",
       cell: "Cell",
       manifest: "Manifest"
+    },
+    leaderboard: {
+      title: "Leaderboard",
+      subtitle: "The official ranking will be generated after the protocol and batch results are fixed",
+      pendingTitle: "Official leaderboard is not enabled yet",
+      pendingBody: "Datasets, attacks, strength grids, seeds, scoring formula, and minimum sample counts must be fixed first. This page keeps the product structure without showing mock rankings.",
+      protocol: "Benchmark protocol",
+      metrics: "Score dimensions",
+      robustness: "Robustness",
+      imageQuality: "Image quality",
+      speed: "Speed",
+      overall: "Overall score",
+      requirements: "Requirements"
     },
     schema: {
       title: "Schema",

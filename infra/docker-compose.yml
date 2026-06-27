@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: wmbench
+      POSTGRES_USER: wmbench
+      POSTGRES_PASSWORD: wmbench
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../apps/api/app/db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://wmbench:wmbench@postgres:5432/wmbench
+      REDIS_URL: redis://redis:6379/0
+      WM_BENCH_DATA_ROOT: /data/wm-bench
+    ports:
+      - "8000:8000"
+    volumes:
+      - wmbench-data:/data/wm-bench
+    depends_on:
+      - postgres
+      - redis
+
+  worker-cpu:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_QUEUE: cpu
+      WM_BENCH_DATA_ROOT: /data/wm-bench
+    volumes:
+      - wmbench-data:/data/wm-bench
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+
+  worker-gpu:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_QUEUE: gpu
+      WM_BENCH_DATA_ROOT: /data/wm-bench
+    volumes:
+      - wmbench-data:/data/wm-bench
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      - redis
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  wmbench-data:

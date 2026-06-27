@@ -1,12 +1,28 @@
 import type { AlgorithmVersion, AttackPreset, DatasetVersion, ModelArtifact, RunStatus } from "./types";
 
 export const datasets: DatasetVersion[] = [
-  { id: "ds-coco-v1", name: "MS-COCO validation slice", sampleCount: 500, version: "v1" },
-  { id: "ds-diffusiondb-v1", name: "DiffusionDB curated", sampleCount: 1200, version: "v1" },
+  { id: "local-root", name: "Local dataset root", sampleCount: 1, version: "local" },
   { id: "ds-demo-v1", name: "Demo smoke set", sampleCount: 32, version: "v1" }
 ];
 
 export const algorithms: AlgorithmVersion[] = [
+  {
+    id: "alg-traditional-lsb",
+    name: "Traditional LSB",
+    version: "local-smoke",
+    status: "enabled",
+    requiresGpu: false,
+    method: "traditional-lsb",
+    recommended: true
+  },
+  {
+    id: "alg-traditional-dct",
+    name: "Traditional DCT",
+    version: "local-smoke",
+    status: "enabled",
+    requiresGpu: false,
+    method: "traditional-dct"
+  },
   {
     id: "alg-hidden",
     name: "HiDDeN",
@@ -32,6 +48,8 @@ export const algorithms: AlgorithmVersion[] = [
 
 export const attacks: AttackPreset[] = [
   { id: "atk-identity", name: "Identity", method: "identity", strengths: [0] },
+  { id: "atk-jpeg-smoke", name: "JPEG smoke", method: "jpeg", strengths: [0.5], recommended: true },
+  { id: "atk-blur-smoke", name: "Blur smoke", method: "gaussian_blur", strengths: [0.2] },
   { id: "atk-jpeg-sweep", name: "JPEG sweep", method: "jpeg", strengths: [0.25, 0.5, 0.75] },
   { id: "atk-blur-sweep", name: "Blur sweep", method: "gaussian_blur", strengths: [0.2, 0.4, 0.6] },
   { id: "atk-crop-sweep", name: "Crop sweep", method: "resized_crop", strengths: [0.1, 0.3, 0.5] }
