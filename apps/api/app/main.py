@@ -16,6 +16,7 @@ from .services.resources import (
     list_watermark_resources,
     scan_dataset_resources,
 )
+from .services.system_metrics import collect_system_metrics
 
 
 def create_app() -> FastAPI:
@@ -69,6 +70,10 @@ def create_app() -> FastAPI:
             "workerPollSeconds": settings.worker_poll_seconds,
             "workers": service.list_worker_heartbeats(),
         }
+
+    @app.get("/system/metrics")
+    def system_metrics() -> dict[str, object]:
+        return collect_system_metrics(data_root=settings.data_root, device=settings.device)
 
     @app.get("/status-values")
     def status_values() -> dict[str, list[str]]:

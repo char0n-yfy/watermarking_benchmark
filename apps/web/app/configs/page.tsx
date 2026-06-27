@@ -31,6 +31,21 @@ function toggle(values: string[], value: string) {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
 }
 
+function matchesResource(
+  query: string,
+  resource: { id: string; name: string; method?: string; category?: string; description?: string }
+) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+  return [resource.id, resource.name, resource.method, resource.category, resource.description]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(normalizedQuery);
+}
+
 export default function ConfigsPage() {
   const { language, t } = useLanguage();
   const [selection, setSelection] = useState<ExperimentSelection>(defaultSelection);
@@ -39,8 +54,18 @@ export default function ConfigsPage() {
   const [datasets, setDatasets] = useState<DatasetVersion[]>(fallbackDatasets);
   const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>(fallbackAlgorithms);
   const [attacks, setAttacks] = useState<AttackPreset[]>(fallbackAttacks);
+  const [algorithmFilter, setAlgorithmFilter] = useState("");
+  const [attackFilter, setAttackFilter] = useState("");
   const [message, setMessage] = useState("");
-  const estimate = useMemo(() => estimateMatrix(selection, datasets, attacks), [selection]);
+  const estimate = useMemo(() => estimateMatrix(selection, datasets, attacks), [selection, datasets, attacks]);
+  const filteredAlgorithms = useMemo(
+    () => algorithms.filter((algorithm) => matchesResource(algorithmFilter, algorithm)),
+    [algorithmFilter, algorithms]
+  );
+  const filteredAttacks = useMemo(
+    () => attacks.filter((attack) => matchesResource(attackFilter, attack)),
+    [attackFilter, attacks]
+  );
   const specPreview = {
     name: configName,
     dataset_versions: selection.datasetIds,
@@ -197,24 +222,45 @@ export default function ConfigsPage() {
                 <Shield size={15} />
                 {t.console.algorithms}
               </div>
-              <div className="option-grid">
-                {algorithms.map((algorithm) => (
-                  <label className="check-tile" key={algorithm.id}>
-                    <input
-                      checked={selection.algorithmIds.includes(algorithm.id)}
-                      disabled={algorithm.status !== "enabled"}
-                      onChange={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          algorithmIds: toggle(current.algorithmIds, algorithm.id)
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    <span>{algorithm.name}</span>
-                    {algorithm.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                  </label>
-                ))}
+              <div className="selector-stack">
+                <div className="selector-tools">
+                  <input
+                    aria-label="Filter watermark algorithms"
+                    onChange={(event) => setAlgorithmFilter(event.target.value)}
+                    placeholder={language === "zh" ? "筛选水印算法" : "Filter watermark algorithms"}
+                    value={algorithmFilter}
+                  />
+                  <span className="count-pill">
+                    {selection.algorithmIds.length}/{algorithms.length}
+                  </span>
+                </div>
+                <div className="option-grid dense-options">
+                  {filteredAlgorithms.map((algorithm) => (
+                    <label className="check-tile resource-check-tile" key={algorithm.id}>
+                      <input
+                        checked={selection.algorithmIds.includes(algorithm.id)}
+                        disabled={algorithm.status !== "enabled" || algorithm.available === false}
+                        onChange={() =>
+                          setSelection((current) => ({
+                            ...current,
+                            algorithmIds: toggle(current.algorithmIds, algorithm.id)
+                          }))
+                        }
+                        type="checkbox"
+                      />
+                      <span className="tile-copy">
+                        <strong>{algorithm.name}</strong>
+                        <small>
+                          {algorithm.method ?? algorithm.id}
+                          {algorithm.category ? ` · ${algorithm.category}` : ""}
+                        </small>
+                      </span>
+                      {algorithm.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+                      {algorithm.available === false ? <span className="badge error">Missing</span> : null}
+                    </label>
+                  ))}
+                </div>
+                {filteredAlgorithms.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
               </div>
             </div>
 
@@ -223,22 +269,46 @@ export default function ConfigsPage() {
                 <Gauge size={15} />
                 {t.console.attacks}
               </div>
-              <div className="option-grid">
-                {attacks.map((attack) => (
-                  <label className="check-tile" key={attack.id}>
-                    <input
-                      checked={selection.attackPresetIds.includes(attack.id)}
-                      onChange={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          attackPresetIds: toggle(current.attackPresetIds, attack.id)
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    <span>{localizedName(language, attack.id, attack.name)}</span>
-                  </label>
-                ))}
+              <div className="selector-stack">
+                <div className="selector-tools">
+                  <input
+                    aria-label="Filter attacks"
+                    onChange={(event) => setAttackFilter(event.target.value)}
+                    placeholder={language === "zh" ? "筛选攻击方法" : "Filter attacks"}
+                    value={attackFilter}
+                  />
+                  <span className="count-pill">
+                    {selection.attackPresetIds.length}/{attacks.length}
+                  </span>
+                </div>
+                <div className="option-grid dense-options">
+                  {filteredAttacks.map((attack) => (
+                    <label className="check-tile resource-check-tile" key={attack.id}>
+                      <input
+                        checked={selection.attackPresetIds.includes(attack.id)}
+                        disabled={attack.available === false}
+                        onChange={() =>
+                          setSelection((current) => ({
+                            ...current,
+                            attackPresetIds: toggle(current.attackPresetIds, attack.id)
+                          }))
+                        }
+                        type="checkbox"
+                      />
+                      <span className="tile-copy">
+                        <strong>{localizedName(language, attack.id, attack.name)}</strong>
+                        <small>
+                          {attack.method}
+                          {attack.category ? ` · ${attack.category}` : ""}
+                          {attack.strengths.length > 1 ? ` · ${attack.strengths.length} strengths` : ""}
+                        </small>
+                      </span>
+                      {attack.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+                      {attack.available === false ? <span className="badge error">Missing</span> : null}
+                    </label>
+                  ))}
+                </div>
+                {filteredAttacks.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
               </div>
             </div>
 

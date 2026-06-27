@@ -1,31 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  Cpu,
   Filter,
+  HardDrive,
+  MemoryStick,
   PlayCircle,
   RefreshCw,
-  Trophy
+  Zap
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
-import { RobustnessCurve } from "@/components/RobustnessCurve";
 import {
   fetchAlgorithms,
   fetchAttacks,
   fetchDatasets,
-  fetchRunResults,
   fetchRuns,
   fetchRuntime,
-  fetchSavedConfigs
+  fetchSavedConfigs,
+  fetchSystemMetrics
 } from "@/lib/api";
 import {
   buildActiveRunRows,
-  formatMetric,
   statusBadgeClass,
   summarizeRuns
 } from "@/lib/insights";
@@ -34,16 +35,103 @@ import type {
   AttackPreset,
   DatasetVersion,
   DemoRunRecord,
-  RunResults,
   RuntimeInfo,
-  SavedExperimentConfig
+  SavedExperimentConfig,
+  SystemMetrics
 } from "@/lib/types";
 
-function latestResultCandidate(runs: DemoRunRecord[]) {
+function formatPercent(value: number | null | undefined) {
+  return value == null ? "n/a" : `${value.toFixed(1)}%`;
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (value == null) {
+    return "n/a";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let nextValue = value;
+  let unitIndex = 0;
+  while (nextValue >= 1024 && unitIndex < units.length - 1) {
+    nextValue /= 1024;
+    unitIndex += 1;
+  }
+  return `${nextValue.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatBytesPerSecond(value: number | null | undefined) {
+  return value == null ? "n/a" : `${formatBytes(value)}/s`;
+}
+
+function metricLevel(percent: number | null | undefined) {
+  if (percent == null) {
+    return "unknown";
+  }
+  if (percent >= 90) {
+    return "danger";
+  }
+  if (percent >= 75) {
+    return "warn";
+  }
+  return "ok";
+}
+
+function metricColor(level: string) {
+  if (level === "danger") {
+    return "var(--red)";
+  }
+  if (level === "warn") {
+    return "var(--amber)";
+  }
+  if (level === "unknown") {
+    return "#66736c";
+  }
+  return "var(--teal)";
+}
+
+function GaugeCard({
+  detail,
+  icon,
+  label,
+  meta = [],
+  value
+}: {
+  detail: string;
+  icon: ReactNode;
+  label: string;
+  meta?: Array<{ label: string; value: string }>;
+  value: number | null | undefined;
+}) {
+  const level = metricLevel(value);
+  const normalized = Math.max(0, Math.min(100, value ?? 0));
+  const gaugeStyle = {
+    "--gauge-color": metricColor(level),
+    "--gauge-value": `${normalized}%`
+  } as CSSProperties;
+
   return (
-    runs.find((run) => run.status === "succeeded" || run.status === "partially_failed") ??
-    runs.find((run) => run.status !== "queued" && run.status !== "running") ??
-    null
+    <div className={`gauge-card ${level}`} style={gaugeStyle}>
+      <div className="gauge-card-top">
+        <span className="gauge-title">{label}</span>
+        <span className="gauge-icon">{icon}</span>
+      </div>
+      <div className="gauge-ring">
+        <div className="gauge-core">
+          <strong>{formatPercent(value)}</strong>
+          <span>{value == null ? "未采集" : "实时占用"}</span>
+        </div>
+      </div>
+      <p className="gauge-detail">{detail}</p>
+      {meta.length ? (
+        <div className="gauge-meta">
+          {meta.map((item) => (
+            <span key={item.label}>
+              <small>{item.label}</small>
+              <strong>{item.value}</strong>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -55,19 +143,28 @@ export default function ExperimentConsole() {
   const [datasets, setDatasets] = useState<DatasetVersion[]>([]);
   const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>([]);
   const [attacks, setAttacks] = useState<AttackPreset[]>([]);
-  const [latestResults, setLatestResults] = useState<RunResults | null>(null);
+  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(10);
   const [notice, setNotice] = useState("");
 
   const loadDashboard = async () => {
-    const [loadedConfigs, loadedRuns, loadedRuntime, loadedDatasets, loadedAlgorithms, loadedAttacks] =
+    const [
+      loadedConfigs,
+      loadedRuns,
+      loadedRuntime,
+      loadedDatasets,
+      loadedAlgorithms,
+      loadedAttacks,
+      loadedSystemMetrics
+    ] =
       await Promise.all([
         fetchSavedConfigs(),
         fetchRuns(),
         fetchRuntime(),
         fetchDatasets(),
         fetchAlgorithms(),
-        fetchAttacks()
+        fetchAttacks(),
+        fetchSystemMetrics()
       ]);
     setConfigs(loadedConfigs);
     setRuns(loadedRuns);
@@ -75,18 +172,8 @@ export default function ExperimentConsole() {
     setDatasets(loadedDatasets);
     setAlgorithms(loadedAlgorithms);
     setAttacks(loadedAttacks);
+    setSystemMetrics(loadedSystemMetrics);
     setNotice("");
-
-    const latestRun = latestResultCandidate(loadedRuns);
-    if (latestRun) {
-      try {
-        setLatestResults(await fetchRunResults(latestRun.id));
-      } catch {
-        setLatestResults(null);
-      }
-    } else {
-      setLatestResults(null);
-    }
   };
 
   useEffect(() => {
@@ -120,6 +207,19 @@ export default function ExperimentConsole() {
   const workerLabel = runtime?.workers.length
     ? runtime.workers.map((worker) => `${worker.status}:${worker.device}`).join(", ")
     : "no worker";
+  const primaryGpu = systemMetrics?.gpu.devices[0] ?? null;
+  const loadAverageLabel = systemMetrics?.cpu.loadAverage.length
+    ? systemMetrics.cpu.loadAverage.map((value) => value.toFixed(2)).join(" / ")
+    : "n/a";
+  const gpuName = primaryGpu?.name ?? "未检测到 NVIDIA GPU 指标";
+  const vramUsedBytes = primaryGpu?.memoryUsedMiB == null ? null : primaryGpu.memoryUsedMiB * 1024 * 1024;
+  const vramTotalBytes = primaryGpu?.memoryTotalMiB == null ? null : primaryGpu.memoryTotalMiB * 1024 * 1024;
+  const memoryFreeBytes =
+    systemMetrics?.memory.availableBytes ?? (
+      systemMetrics?.memory.totalBytes != null && systemMetrics?.memory.usedBytes != null
+        ? systemMetrics.memory.totalBytes - systemMetrics.memory.usedBytes
+        : null
+    );
 
   return (
     <AppShell active="console">
@@ -233,63 +333,76 @@ export default function ExperimentConsole() {
       </section>
 
       <section className="console-bottom-grid">
-        <div className="panel">
+        <div className="panel hardware-monitor-panel">
           <div className="panel-header">
-            <h2>{t.console.robustnessCurves}</h2>
+            <h2>当前电脑性能</h2>
+            <Activity size={16} />
           </div>
-          <div className="panel-body">
-            <RobustnessCurve emptyText={t.console.needMultipleStrengths} results={latestResults} />
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>{t.console.leaderboardPreview}</h2>
-            <Trophy size={16} />
-          </div>
-          <div className="panel-body">
-            <div className="leaderboard-mini-empty">
-              <Trophy size={22} />
-              <p>{t.console.officialLeaderboardPending}</p>
+          <div className="panel-body gauge-panel-body">
+            <div className="gauge-grid">
+              <GaugeCard
+                detail={gpuName}
+                icon={<Zap size={17} />}
+                label="GPU 占用率"
+                meta={[
+                  ...(primaryGpu?.temperatureC == null ? [] : [{ label: "温度", value: `${primaryGpu.temperatureC}°C` }]),
+                  ...(primaryGpu?.powerDrawW == null ? [] : [{ label: "功耗", value: `${primaryGpu.powerDrawW.toFixed(1)}W` }])
+                ]}
+                value={primaryGpu?.utilizationPercent}
+              />
+              <GaugeCard
+                detail={
+                  primaryGpu
+                    ? `${formatBytes(vramUsedBytes)} / ${formatBytes(vramTotalBytes)}`
+                    : "显存数据不可用"
+                }
+                icon={<MemoryStick size={17} />}
+                label="显存占用率"
+                meta={
+                  primaryGpu
+                    ? [
+                        { label: "已用", value: formatBytes(vramUsedBytes) },
+                        { label: "总量", value: formatBytes(vramTotalBytes) }
+                      ]
+                    : []
+                }
+                value={primaryGpu?.memoryUsedPercent}
+              />
+              <GaugeCard
+                detail={`${formatBytes(systemMetrics?.memory.usedBytes)} / ${formatBytes(systemMetrics?.memory.totalBytes)}`}
+                icon={<MemoryStick size={17} />}
+                label="内存占用率"
+                meta={[
+                  { label: "可用", value: formatBytes(memoryFreeBytes) },
+                  { label: "API RSS", value: formatBytes(systemMetrics?.process.rssBytes) }
+                ]}
+                value={systemMetrics?.memory.usedPercent}
+              />
+              <GaugeCard
+                detail={`${systemMetrics?.cpu.logicalCores ?? "n/a"} logical cores`}
+                icon={<Cpu size={17} />}
+                label="CPU 占用率"
+                meta={[{ label: "Load avg", value: loadAverageLabel }]}
+                value={systemMetrics?.cpu.usagePercent}
+              />
+              <GaugeCard
+                detail={`${formatBytes(systemMetrics?.disk.usedBytes)} / ${formatBytes(systemMetrics?.disk.totalBytes)}`}
+                icon={<HardDrive size={17} />}
+                label="硬盘占用率"
+                meta={[
+                  { label: "可用", value: formatBytes(systemMetrics?.disk.freeBytes) },
+                  { label: "I/O", value: formatBytesPerSecond(systemMetrics?.disk.ioTotalBytesPerSecond) }
+                ]}
+                value={systemMetrics?.disk.usedPercent}
+              />
             </div>
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>{t.console.datasetsSummary}</h2>
-          </div>
-          <div className="panel-body table-scroll">
-            <table className="table compact-table">
-              <thead>
-                <tr>
-                  <th>{t.common.dataset}</th>
-                  <th>{t.common.samples}</th>
-                  <th>{t.resources.status}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {datasets.slice(0, 5).map((dataset) => (
-                  <tr key={dataset.id}>
-                    <td>{dataset.name}</td>
-                    <td>{dataset.sampleCount.toLocaleString()}</td>
-                    <td>
-                      <span className="badge ok">{t.common.enabled}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {datasets.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
           </div>
         </div>
       </section>
 
       <p className="dashboard-note">
         {t.console.monitorNote} {workerLabel ? `(${workerLabel})` : ""}
-        {latestResults?.aggregates[0]?.meanBitAccuracy != null
-          ? ` · Latest Bit Acc. ${formatMetric(latestResults.aggregates[0].meanBitAccuracy)}`
-          : ""}
+        {systemMetrics?.timestamp ? ` · Metrics ${systemMetrics.timestamp}` : ""}
       </p>
     </AppShell>
   );

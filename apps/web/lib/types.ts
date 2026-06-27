@@ -24,6 +24,8 @@ export interface AlgorithmVersion {
   status: ResourceStatus;
   requiresGpu: boolean;
   method?: string;
+  description?: string;
+  category?: string;
   recommended?: boolean;
   available?: boolean;
   params?: Record<string, unknown>;
@@ -34,6 +36,10 @@ export interface AttackPreset {
   name: string;
   method: string;
   strengths: number[];
+  description?: string;
+  category?: string;
+  strengthParam?: string | null;
+  requiresGpu?: boolean;
   recommended?: boolean;
   available?: boolean;
   params?: Record<string, unknown>;
@@ -153,4 +159,54 @@ export interface RuntimeInfo {
   apiPort: number;
   workerPollSeconds: number;
   workers: WorkerHeartbeat[];
+}
+
+export interface SystemMetrics {
+  timestamp: string;
+  hostName: string;
+  platform: string;
+  system: string;
+  machine: string;
+  pythonVersion: string;
+  uptimeSeconds: number | null;
+  configuredDevice: string;
+  cpu: {
+    logicalCores: number;
+    usagePercent: number | null;
+    loadAverage: number[];
+  };
+  memory: {
+    totalBytes: number | null;
+    usedBytes: number | null;
+    availableBytes: number | null;
+    usedPercent: number | null;
+  };
+  disk: {
+    path: string;
+    totalBytes: number;
+    usedBytes: number;
+    freeBytes: number;
+    usedPercent: number | null;
+    ioReadBytesPerSecond: number | null;
+    ioWriteBytesPerSecond: number | null;
+    ioTotalBytesPerSecond: number | null;
+  };
+  gpu: {
+    available: boolean;
+    devices: Array<{
+      index: number;
+      name: string;
+      utilizationPercent: number | null;
+      memoryUsedMiB: number | null;
+      memoryTotalMiB: number | null;
+      memoryUsedPercent: number | null;
+      temperatureC: number | null;
+      powerDrawW: number | null;
+    }>;
+  };
+  process: {
+    pid: number;
+    rssBytes: number | null;
+    pythonExecutable: string;
+  };
 }

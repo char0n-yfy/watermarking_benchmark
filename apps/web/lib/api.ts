@@ -7,7 +7,8 @@ import type {
   RunLogs,
   RunResults,
   RuntimeInfo,
-  SavedExperimentConfig
+  SavedExperimentConfig,
+  SystemMetrics
 } from "./types";
 
 const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
@@ -81,4 +82,8 @@ export function fetchRunLogs(runId: string): Promise<RunLogs> {
 
 export function fetchRuntime(): Promise<RuntimeInfo> {
   return requestJson<RuntimeInfo>("/system/runtime");
+}
+
+export function fetchSystemMetrics(): Promise<SystemMetrics> {
+  return requestJson<SystemMetrics>("/system/metrics");
 }

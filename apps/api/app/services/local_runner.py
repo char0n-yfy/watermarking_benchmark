@@ -133,8 +133,9 @@ def _cell_key(
 
 def _attack_params(attack: JsonDict, strength: float) -> JsonDict:
     params = dict(attack.get("params") or {})
-    if attack["method"] != "identity":
-        params["strength"] = float(strength)
+    strength_param = attack.get("strengthParam")
+    if strength_param:
+        params[str(strength_param)] = float(strength)
     return params
 
 

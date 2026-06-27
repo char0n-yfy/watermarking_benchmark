@@ -98,24 +98,42 @@ export default function ResourcesPage() {
             <tbody>
               {algorithms.map((algorithm) => (
                 <tr key={algorithm.id}>
-                  <td>{algorithm.name}</td>
+                  <td>
+                    <strong>{algorithm.name}</strong>
+                    <span className="table-subtext">{algorithm.method ?? algorithm.id}</span>
+                  </td>
                   <td>{t.common.algorithm}</td>
                   <td>
                     <span className={algorithm.status === "enabled" ? "badge ok" : "badge warn"}>
                       {t.common.status[algorithm.status]}
                     </span>
                   </td>
-                  <td>{algorithm.requiresGpu ? t.common.gpu : t.common.cpu}</td>
+                  <td>
+                    <span className="table-subtext">
+                      {algorithm.category ?? "watermark"} · {algorithm.requiresGpu ? t.common.gpu : t.common.cpu}
+                    </span>
+                    {algorithm.description ? <span className="table-subtext">{algorithm.description}</span> : null}
+                  </td>
                 </tr>
               ))}
               {attacks.map((attack) => (
                 <tr key={attack.id}>
-                  <td>{localizedName(language, attack.id, attack.name)}</td>
+                  <td>
+                    <strong>{localizedName(language, attack.id, attack.name)}</strong>
+                    <span className="table-subtext">{attack.method}</span>
+                  </td>
                   <td>{t.common.attackPreset}</td>
                   <td>
                     <span className="badge ok">{t.common.enabled}</span>
                   </td>
-                  <td>{attack.method}</td>
+                  <td>
+                    <span className="table-subtext">
+                      {attack.category ?? "attack"} · {attack.strengths.length} strength
+                      {attack.strengths.length === 1 ? "" : "s"}
+                      {attack.requiresGpu ? ` · ${t.common.gpu}` : ""}
+                    </span>
+                    {attack.description ? <span className="table-subtext">{attack.description}</span> : null}
+                  </td>
                 </tr>
               ))}
               {artifacts.map((artifact) => (
