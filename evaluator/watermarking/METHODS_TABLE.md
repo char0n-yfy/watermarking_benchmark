@@ -2,7 +2,7 @@
 
 Updated: 2026-06-27
 
-Scope: this table covers the watermarking methods currently registered under `evaluator/watermarking/methods/`. Image-size and capacity notes describe the current local wrappers, not only the upstream papers. For variable-size methods, the listed capacity is the wrapper default or the packaged checkpoint capacity.
+Scope: the first table covers the watermarking methods currently registered under `evaluator/watermarking/methods/`. Image-size and capacity notes describe the current local wrappers, not only the upstream papers. For variable-size methods, the listed capacity is the wrapper default or the packaged checkpoint capacity. Scratch-only methods that were reproduced or audited but not promoted are listed separately below the registered-method table.
 
 | Registered method | Image input size in this workspace | Embedding capacity | GitHub repository | Paper link | Watermark characteristics and notes |
 | --- | --- | --- | --- | --- | --- |
@@ -31,6 +31,12 @@ Scope: this table covers the watermarking methods currently registered under `ev
 | `ssl-watermarking` | Original PIL RGB size; upstream `default_transform` only tensorizes and normalizes; output keeps original size. | Default 30-bit multi-bit mode in this wrapper; upstream also supports 0-bit. | [facebookresearch/ssl_watermarking](https://github.com/facebookresearch/ssl_watermarking) | [arXiv:2112.09581](https://arxiv.org/abs/2112.09581) | Self-supervised latent-space watermarking using DINO ResNet50 features, normalization layer, and a packaged carrier; embedding is iterative optimization rather than a single encoder pass. |
 | `stegastamp` | Center-crop/resize to 400x400 through the packaged inference API; output is 400x400. | 100 raw bits, or up to 7 ASCII characters with BCH/ECC in the packaged API. | [tancik/StegaStamp](https://github.com/tancik/StegaStamp) | [arXiv:1904.05343](https://arxiv.org/abs/1904.05343) | Physical-world watermark for print-and-camera recovery; local package uses PyTorch weights and can also save a residual visualization. |
 
+## Scratch-Only / Not Promoted
+
+| Method | Current workspace status | Image input size observed from upstream wrapper | Embedding capacity | GitHub repository | Paper link | Watermark characteristics and notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `vine` | Scratch source and decoder-only smoke are present under `算法/`; not registered in formal benchmark paths. | Upstream encoder crops non-square inputs to square, resizes to 256x256 for VINE encoding, then scales the residual back to the cropped/original square size; decoder resizes input to 256x256. | 100 bits, or up to 12 UTF-8 characters plus 4 padding bits in the upstream text path. | [Shilin-LU/VINE](https://github.com/Shilin-LU/VINE) | [arXiv:2410.18775](https://arxiv.org/abs/2410.18775) | VINE uses generative priors for robustness against image editing. Scratch audit confirmed `VINE-R-Dec` can load and emit 100-bit predictions, but full embed is blocked from promotion because the encoder hard-loads `stabilityai/sd-turbo` tokenizer, text encoder, UNet, VAE, and scheduler, plus a roughly 3.8 GB VINE encoder checkpoint. |
+
 ## Summary
 
 - Capacity tiers: `chunkyseal` is the current high-capacity outlier at 1024 bits; `videoseal`, `pixelseal`, and `mbrs` sit at 256 bits; `trustmark*`, `invismark`, and `stegastamp` are 100-bit methods; `wam`, `maskwm-d32`, `hidden`, `cin`, `pimog`, and `ssl-watermarking` are 30 to 32-bit methods; `rawatermark` is zero-bit detection.
@@ -38,4 +44,4 @@ Scope: this table covers the watermarking methods currently registered under `ev
 - Classical/no-weight baselines are useful for speed and interpretability, but they are usually weaker against resizing, crop, and recompression than modern neural methods.
 - Neural methods cover different use cases: TrustMark is compact and arbitrary-resolution; VideoSeal/PixelSeal favor robust image/video messages; ChunkySeal tests high payload capacity; WAM adds localization; RAWatermark is a fast detector-only watermark; StegaStamp targets physical print-camera recovery.
 - Local packaging exceptions are intentional: `pixelseal`, `chunkyseal`, and `invismark` have large checkpoints, and `chunkyseal` is above the strict subsecond embed gate locally, but they are included because they are required benchmark algorithms.
-
+- `vine` is documented as scratch-only rather than registered: it is a strong image-editing-robust method on paper, but the current project gate excludes methods that require Stable Diffusion, SDXL, or other diffusion model weights, and VINE's encoder depends on SD-Turbo at runtime.
