@@ -1,12 +1,42 @@
 from .base import BaseWatermark, WatermarkContext, WatermarkEmbedResult, WatermarkExtractResult
-from .methods import HiDDeNWatermark, SSLWatermark, StegaStampWatermark
+from .methods import (
+    BlindWatermark,
+    HiDDeNWatermark,
+    InvisibleWatermarkDwtDct,
+    InvisibleWatermarkDwtDctSvd,
+    MaskWMD32Watermark,
+    RAWatermark,
+    SSLWatermark,
+    StegaStampWatermark,
+    TraditionalDctWatermark,
+    TraditionalHaarWatermark,
+    TraditionalLsbWatermark,
+    TraditionalSpreadDctWatermark,
+    TrustMarkCWatermark,
+    TrustMarkQWatermark,
+    TrustMarkWatermark,
+    VideoSealWatermark,
+)
 from .registry import WATERMARK_REGISTRY, build_watermark, list_watermarks, register_watermark
 
 __all__ = [
     "BaseWatermark",
+    "BlindWatermark",
     "HiDDeNWatermark",
+    "InvisibleWatermarkDwtDct",
+    "InvisibleWatermarkDwtDctSvd",
+    "MaskWMD32Watermark",
+    "RAWatermark",
     "SSLWatermark",
     "StegaStampWatermark",
+    "TraditionalDctWatermark",
+    "TraditionalHaarWatermark",
+    "TraditionalLsbWatermark",
+    "TraditionalSpreadDctWatermark",
+    "TrustMarkCWatermark",
+    "TrustMarkQWatermark",
+    "TrustMarkWatermark",
+    "VideoSealWatermark",
     "WATERMARK_REGISTRY",
     "WatermarkContext",
     "WatermarkEmbedResult",

@@ -8,5 +8,9 @@
 *.pth
 *.pyt
 *.pt
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
 *.pickle
 *.pyc
