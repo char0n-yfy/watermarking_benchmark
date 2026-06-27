@@ -2,6 +2,7 @@ from .blind_watermark import BlindWatermark
 from .chunkyseal import ChunkySealWatermark
 from .cin import CINWatermark
 from .hidden import HiDDeNWatermark
+from .invismark import InvisMarkWatermark
 from .invisible_watermark import (
     InvisibleWatermarkDwtDct,
     InvisibleWatermarkDwtDctSvd,
@@ -29,6 +30,7 @@ __all__ = [
     "ChunkySealWatermark",
     "CINWatermark",
     "HiDDeNWatermark",
+    "InvisMarkWatermark",
     "InvisibleWatermarkDwtDct",
     "InvisibleWatermarkDwtDctSvd",
     "InvisibleWatermarkRivaGan",

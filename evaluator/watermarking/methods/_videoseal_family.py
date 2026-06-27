@@ -23,6 +23,7 @@ class VideoSealFamilyWatermark(BaseWatermark):
     algorithm_dir_name = ""
     checkpoint_filename = ""
     default_payload_bits = 256
+    default_lowres_attenuation = False
     display_name = "VideoSeal-family"
 
     def __init__(
@@ -31,14 +32,21 @@ class VideoSealFamilyWatermark(BaseWatermark):
         weights_dir: str | Path | None = None,
         checkpoint_path: str | Path | None = None,
         payload_bits: int | None = None,
+        lowres_attenuation: bool | None = None,
         **params: Any,
     ) -> None:
         payload_bits = int(payload_bits or self.default_payload_bits)
+        self.lowres_attenuation = (
+            self.default_lowres_attenuation
+            if lowres_attenuation is None
+            else bool(lowres_attenuation)
+        )
         super().__init__(
             repo_dir=str(repo_dir) if repo_dir is not None else None,
             weights_dir=str(weights_dir) if weights_dir is not None else None,
             checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else None,
             payload_bits=payload_bits,
+            lowres_attenuation=self.lowres_attenuation,
             **params,
         )
         if not self.algorithm_dir_name or not self.checkpoint_filename:
@@ -106,6 +114,8 @@ class VideoSealFamilyWatermark(BaseWatermark):
             kwargs["message"] = msg
         if "is_video" in signature.parameters:
             kwargs["is_video"] = False
+        if "lowres_attenuation" in signature.parameters:
+            kwargs["lowres_attenuation"] = self.lowres_attenuation
 
         with self._torch.no_grad():
             outputs = self._model.embed(tensor, **kwargs)
@@ -116,6 +126,7 @@ class VideoSealFamilyWatermark(BaseWatermark):
             "payload_bits": self.payload_bits,
             "checkpoint_file": str(self.checkpoint_path),
             "weights_dir": str(self.weights_dir),
+            "lowres_attenuation": self.lowres_attenuation,
         }
 
     def extract_impl(self, input_path: Path, context: WatermarkContext) -> Mapping[str, Any]:

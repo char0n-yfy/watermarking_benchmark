@@ -35,10 +35,13 @@ Current registered methods:
 - `rawatermark`
 - `maskwm-d32`
 - `videoseal`
+- `pixelseal`
+- `chunkyseal`
 - `wam`
 - `mbrs`
 - `cin`
 - `pimog`
+- `invismark`
 - `hidden`
 - `ssl-watermarking`
 - `stegastamp`
@@ -60,8 +63,14 @@ Newly promoted GitHub methods:
 - `mbrs`: MBRS 256-bit JPEG-robust baseline, using `EC_42.pth`.
 - `cin`: CIN 30-bit combined-noise baseline, using `cinNet_nsmNet.pth`.
 - `pimog`: PIMoG 30-bit ScreenShooting baseline, using `Encoder_Decoder_Model_mask_99.pth`.
+- `pixelseal`: PixelSeal 256-bit VideoSeal-family checkpoint, using `pixelseal_checkpoint.pth`.
+- `chunkyseal`: ChunkySeal 1024-bit high-capacity VideoSeal-family checkpoint, using `chunkyseal_checkpoint.pth`.
+- `invismark`: InvisMark 100-bit AI provenance checkpoint, using `paper.ckpt`.
 
-`pixelseal` and `chunkyseal` remain scratch-only references because their
-checkpoints are too large for the current formal benchmark package. `invismark`
-is also scratch-only until its official `paper.ckpt` can be downloaded without
-interactive OneDrive authentication.
+`pixelseal` and `chunkyseal` are required-list size exceptions. `pixelseal`
+still satisfies the warm-loaded subsecond gate locally; `chunkyseal` embeds
+locally and decodes locally, but its 1024-bit model is not a strict fast method
+on the 8 GB RTX 5070 Laptop GPU used for packaging. `invismark` was promoted
+after the user supplied `ckpt_paper.zip`; the wrapper loads only the packaged
+encoder/decoder checkpoint and does not instantiate the training discriminator
+or LPIPS path.

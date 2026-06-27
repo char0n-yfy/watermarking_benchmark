@@ -14,6 +14,7 @@
 *.onnx
 *.pickle
 *.pyc
+*.zip
 *.tsbuildinfo
 /AGENTS.md
 /PARETOGUARD_MEMORY.md
