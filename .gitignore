@@ -33,3 +33,4 @@ out/
 .env
 .env.local
 .env.autodl
+/resources/weights/.DS_Store
