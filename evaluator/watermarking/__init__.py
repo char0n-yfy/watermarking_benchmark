@@ -1,11 +1,16 @@
 from .base import BaseWatermark, WatermarkContext, WatermarkEmbedResult, WatermarkExtractResult
 from .methods import (
     BlindWatermark,
+    ChunkySealWatermark,
+    CINWatermark,
     HiDDeNWatermark,
     InvisibleWatermarkDwtDct,
     InvisibleWatermarkDwtDctSvd,
     InvisibleWatermarkRivaGan,
     MaskWMD32Watermark,
+    MBRSWatermark,
+    PIMoGWatermark,
+    PixelSealWatermark,
     RAWatermark,
     SSLWatermark,
     StegaStampWatermark,
@@ -17,17 +22,23 @@ from .methods import (
     TrustMarkQWatermark,
     TrustMarkWatermark,
     VideoSealWatermark,
+    WAMWatermark,
 )
 from .registry import WATERMARK_REGISTRY, build_watermark, list_watermarks, register_watermark
 
 __all__ = [
     "BaseWatermark",
     "BlindWatermark",
+    "ChunkySealWatermark",
+    "CINWatermark",
     "HiDDeNWatermark",
     "InvisibleWatermarkDwtDct",
     "InvisibleWatermarkDwtDctSvd",
     "InvisibleWatermarkRivaGan",
     "MaskWMD32Watermark",
+    "MBRSWatermark",
+    "PIMoGWatermark",
+    "PixelSealWatermark",
     "RAWatermark",
     "SSLWatermark",
     "StegaStampWatermark",
@@ -39,6 +50,7 @@ __all__ = [
     "TrustMarkQWatermark",
     "TrustMarkWatermark",
     "VideoSealWatermark",
+    "WAMWatermark",
     "WATERMARK_REGISTRY",
     "WatermarkContext",
     "WatermarkEmbedResult",

@@ -35,6 +35,10 @@ Current registered methods:
 - `rawatermark`
 - `maskwm-d32`
 - `videoseal`
+- `wam`
+- `mbrs`
+- `cin`
+- `pimog`
 - `hidden`
 - `ssl-watermarking`
 - `stegastamp`
@@ -48,4 +52,16 @@ Packaging convention:
 
 The fast methods added in this pass are self-contained under `evaluator/watermarking`
 plus `resources/weights/watermarking`, except for normal Python runtime dependencies
-such as PyTorch, torchvision, Pillow, NumPy, OpenCV and OmegaConf.
+such as PyTorch, torchvision, Pillow, NumPy, OpenCV, Kornia and OmegaConf.
+
+Newly promoted GitHub methods:
+
+- `wam`: Watermark Anything 32-bit localized watermark, using `wam_mit.pth`.
+- `mbrs`: MBRS 256-bit JPEG-robust baseline, using `EC_42.pth`.
+- `cin`: CIN 30-bit combined-noise baseline, using `cinNet_nsmNet.pth`.
+- `pimog`: PIMoG 30-bit ScreenShooting baseline, using `Encoder_Decoder_Model_mask_99.pth`.
+
+`pixelseal` and `chunkyseal` remain scratch-only references because their
+checkpoints are too large for the current formal benchmark package. `invismark`
+is also scratch-only until its official `paper.ckpt` can be downloaded without
+interactive OneDrive authentication.
