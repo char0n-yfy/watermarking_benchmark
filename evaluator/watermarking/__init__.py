@@ -23,6 +23,7 @@ from .methods import (
     TrustMarkQWatermark,
     TrustMarkWatermark,
     VideoSealWatermark,
+    VineWatermark,
     WAMWatermark,
 )
 from .registry import WATERMARK_REGISTRY, build_watermark, list_watermarks, register_watermark
@@ -52,6 +53,7 @@ __all__ = [
     "TrustMarkQWatermark",
     "TrustMarkWatermark",
     "VideoSealWatermark",
+    "VineWatermark",
     "WAMWatermark",
     "WATERMARK_REGISTRY",
     "WatermarkContext",

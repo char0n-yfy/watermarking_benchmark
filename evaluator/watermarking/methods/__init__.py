@@ -23,6 +23,7 @@ from .traditional import (
 )
 from .trustmark import TrustMarkCWatermark, TrustMarkQWatermark, TrustMarkWatermark
 from .videoseal import VideoSealWatermark
+from .vine import VineWatermark
 from .wam import WAMWatermark
 
 __all__ = [
@@ -49,5 +50,6 @@ __all__ = [
     "TrustMarkQWatermark",
     "TrustMarkWatermark",
     "VideoSealWatermark",
+    "VineWatermark",
     "WAMWatermark",
 ]

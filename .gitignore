@@ -13,6 +13,12 @@
 *.bin
 *.onnx
 *.pickle
+*.pkl
+*.npz
+*.h5
+*.hdf5
+*.pb
+*.tflite
 *.pyc
 *.zip
 *.tsbuildinfo

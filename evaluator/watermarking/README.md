@@ -37,6 +37,7 @@ Current registered methods:
 - `videoseal`
 - `pixelseal`
 - `chunkyseal`
+- `vine`
 - `wam`
 - `mbrs`
 - `cin`
@@ -66,6 +67,7 @@ Newly promoted GitHub methods:
 - `pixelseal`: PixelSeal 256-bit VideoSeal-family checkpoint, using `pixelseal_checkpoint.pth`.
 - `chunkyseal`: ChunkySeal 1024-bit high-capacity VideoSeal-family checkpoint, using `chunkyseal_checkpoint.pth`.
 - `invismark`: InvisMark 100-bit AI provenance checkpoint, using `paper.ckpt`.
+- `vine`: VINE 100-bit diffusion-prior watermark wrapper, using local VINE-R and SD-Turbo paths under `resources/weights/watermarking/vine/`.
 
 `pixelseal` and `chunkyseal` are required-list size exceptions. `pixelseal`
 still satisfies the warm-loaded subsecond gate locally; `chunkyseal` embeds
@@ -74,3 +76,12 @@ on the 8 GB RTX 5070 Laptop GPU used for packaging. `invismark` was promoted
 after the user supplied `ckpt_paper.zip`; the wrapper loads only the packaged
 encoder/decoder checkpoint and does not instantiate the training discriminator
 or LPIPS path.
+
+`vine` is a requested diffusion-dependent registration exception. The wrapper
+is formally registered and uses only local packaged paths:
+`resources/weights/watermarking/vine/vine-r-dec/`,
+`resources/weights/watermarking/vine/vine-r-enc/`, and
+`resources/weights/watermarking/vine/sd-turbo/`. Full packaged-path
+embed/extract smoke passed on CUDA with 100/100 decoded bits. The SD-Turbo
+fp16 files are stored locally, while UNet and VAE are cast to fp32 at runtime
+to avoid fp16 NaNs during VINE inference.
