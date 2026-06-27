@@ -1,5 +1,6 @@
 from .base import AttackContext, AttackResult, BaseAttack
 from . import content_preserve_workflow_attacks as content_preserve_workflow_attacks
+from . import regeneration_attacks as regeneration_attacks
 from .distortion_attacks import (
     BrightnessAttack,
     ContrastAttack,
@@ -13,6 +14,12 @@ from .distortion_attacks import (
     RotationAttack,
 )
 from .registry import ATTACK_REGISTRY, build_attack, list_attacks, register_attack
+from .regeneration_attacks import (
+    FourTimesRegenDiffusionAttack,
+    RegenDiffusionAttack,
+    RegenVAEAttack,
+    TwoTimesRegenDiffusionAttack,
+)
 
 __all__ = [
     "ATTACK_REGISTRY",
@@ -33,4 +40,9 @@ __all__ = [
     "build_attack",
     "list_attacks",
     "register_attack",
+    "regeneration_attacks",
+    "RegenDiffusionAttack",
+    "RegenVAEAttack",
+    "TwoTimesRegenDiffusionAttack",
+    "FourTimesRegenDiffusionAttack",
 ]

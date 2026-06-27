@@ -19,6 +19,7 @@
 /AGENTS.md
 /PARETOGUARD_MEMORY.md
 /WORKFLOW.md
+/resources/weights/
 /resources/weights/watermarking.zip
 /resources/datasets/*
 !/resources/datasets/README.md
