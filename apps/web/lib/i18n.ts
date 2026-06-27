@@ -10,6 +10,7 @@ export const translations = {
     languageLabel: "界面语言",
     nav: {
       console: "控制台",
+      configs: "实验配置",
       resources: "资源",
       runs: "运行",
       results: "结果",
@@ -21,6 +22,10 @@ export const translations = {
       algorithm: "水印算法",
       attackPreset: "攻击预设",
       weight: "权重",
+      config: "配置",
+      progress: "进度",
+      updated: "更新",
+      noData: "暂无数据",
       gpu: "GPU",
       cpu: "CPU",
       enabled: "已启用",
@@ -43,7 +48,7 @@ export const translations = {
     },
     console: {
       title: "实验控制台",
-      subtitle: "配置测评矩阵草稿",
+      subtitle: "监控正在进行的测评队列和最近运行状态",
       reset: "重置草稿",
       save: "保存草稿",
       materialize: "生成运行",
@@ -59,7 +64,30 @@ export const translations = {
       cells: "单元",
       ops: "操作数",
       okRisk: "运行规模在默认队列保护范围内。",
-      warnRisk: "运行规模超过默认队列保护范围。"
+      warnRisk: "运行规模超过默认队列保护范围。",
+      activeQueue: "运行队列",
+      activeQueueSubtitle: "当前队列和 worker 进度概览",
+      savedConfigs: "已保存配置",
+      savedConfigsSubtitle: "可在运行页选择配置并执行",
+      recentActivity: "最近活动",
+      running: "运行中",
+      queued: "排队中",
+      completed: "已完成",
+      failed: "失败",
+      openConfigs: "配置实验",
+      openRuns: "去运行",
+      monitorNote: "这里仅展示前端 demo 队列状态；真实执行由后端 API 接入后替换。"
+    },
+    configs: {
+      title: "实验配置",
+      subtitle: "选择数据集、水印算法、攻击算法和参数矩阵，并保存为可运行配置",
+      nameLabel: "配置名称",
+      namePlaceholder: "例如：HiDDeN JPEG 鲁棒性扫描",
+      savedConfigs: "已保存配置",
+      saveConfig: "保存配置",
+      savedToast: "配置已保存到本地 demo 状态",
+      empty: "还没有保存的实验配置",
+      specPreview: "配置预览"
     },
     resources: {
       title: "资源",
@@ -72,12 +100,17 @@ export const translations = {
     },
     runs: {
       title: "运行",
-      subtitle: "队列、worker 和执行日志",
+      subtitle: "选择已保存的实验配置并模拟提交运行",
       recent: "最近运行",
       run: "运行",
       status: "状态",
       cells: "单元数",
-      updated: "更新时间"
+      updated: "更新时间",
+      launcher: "启动运行",
+      selectConfig: "选择实验配置",
+      execute: "执行配置",
+      noConfigs: "还没有保存的配置，请先到实验配置页面创建。",
+      queuedNotice: "已加入本地 demo 队列"
     },
     results: {
       title: "结果",
@@ -113,6 +146,7 @@ export const translations = {
     languageLabel: "Interface language",
     nav: {
       console: "Console",
+      configs: "Configs",
       resources: "Resources",
       runs: "Runs",
       results: "Results",
@@ -124,6 +158,10 @@ export const translations = {
       algorithm: "Algorithm",
       attackPreset: "Attack preset",
       weight: "Weight",
+      config: "Config",
+      progress: "Progress",
+      updated: "Updated",
+      noData: "No data",
       gpu: "gpu",
       cpu: "CPU",
       enabled: "enabled",
@@ -146,7 +184,7 @@ export const translations = {
     },
     console: {
       title: "Experiment Console",
-      subtitle: "Draft experiment matrix",
+      subtitle: "Monitor active benchmark queues and recent run status",
       reset: "Reset draft",
       save: "Save draft",
       materialize: "Materialize run",
@@ -162,7 +200,30 @@ export const translations = {
       cells: "Cells",
       ops: "Ops",
       okRisk: "Run size is within the default queue guard.",
-      warnRisk: "Run size exceeds the default queue guard."
+      warnRisk: "Run size exceeds the default queue guard.",
+      activeQueue: "Run queue",
+      activeQueueSubtitle: "Queue and worker progress overview",
+      savedConfigs: "Saved configs",
+      savedConfigsSubtitle: "Select a config on the Runs page to execute it",
+      recentActivity: "Recent activity",
+      running: "Running",
+      queued: "Queued",
+      completed: "Completed",
+      failed: "Failed",
+      openConfigs: "Configure experiment",
+      openRuns: "Go to runs",
+      monitorNote: "This view shows frontend demo queue state only; backend execution can replace it later."
+    },
+    configs: {
+      title: "Experiment Configs",
+      subtitle: "Select datasets, watermark algorithms, attacks, and parameters, then save as runnable configs",
+      nameLabel: "Config name",
+      namePlaceholder: "Example: HiDDeN JPEG robustness sweep",
+      savedConfigs: "Saved configs",
+      saveConfig: "Save config",
+      savedToast: "Config saved to local demo state",
+      empty: "No saved experiment configs yet",
+      specPreview: "Spec preview"
     },
     resources: {
       title: "Resources",
@@ -175,12 +236,17 @@ export const translations = {
     },
     runs: {
       title: "Runs",
-      subtitle: "Queue, workers, and execution logs",
+      subtitle: "Select a saved experiment config and simulate a run submission",
       recent: "Recent runs",
       run: "Run",
       status: "Status",
       cells: "Cells",
-      updated: "Updated"
+      updated: "Updated",
+      launcher: "Launch run",
+      selectConfig: "Select experiment config",
+      execute: "Run config",
+      noConfigs: "No saved configs yet. Create one on the Configs page first.",
+      queuedNotice: "Added to local demo queue"
     },
     results: {
       title: "Results",

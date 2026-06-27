@@ -8,24 +8,24 @@ export const datasets: DatasetVersion[] = [
 
 export const algorithms: AlgorithmVersion[] = [
   {
-    id: "alg-dct-qim-001",
-    name: "DCT-QIM Baseline",
-    version: "0.1.0",
+    id: "alg-hidden",
+    name: "HiDDeN",
+    version: "packaged",
     status: "enabled",
-    requiresGpu: false
-  },
-  {
-    id: "alg-stable-signature-adapter",
-    name: "Stable Signature Adapter",
-    version: "uploaded",
-    status: "reviewed",
     requiresGpu: true
   },
   {
-    id: "alg-custom-lab-drop",
-    name: "Lab Upload Package",
-    version: "pending",
-    status: "uploaded",
+    id: "alg-ssl-watermarking",
+    name: "SSL Watermarking",
+    version: "packaged",
+    status: "enabled",
+    requiresGpu: true
+  },
+  {
+    id: "alg-stegastamp",
+    name: "StegaStamp",
+    version: "packaged",
+    status: "enabled",
     requiresGpu: true
   }
 ];
@@ -38,8 +38,9 @@ export const attacks: AttackPreset[] = [
 ];
 
 export const artifacts: ModelArtifact[] = [
-  { id: "wgt-dct-default", name: "dct-qim-default.json", checksum: "sha256:6b5e...", size: "4 KB" },
-  { id: "wgt-stable-sig", name: "stable-signature-decoder.pt", checksum: "sha256:fd02...", size: "91 MB" }
+  { id: "wgt-hidden", name: "combined-noise--epoch-400.pyt", checksum: "local", size: "HiDDeN" },
+  { id: "wgt-ssl", name: "dino_r50_plus.pth", checksum: "local", size: "SSL" },
+  { id: "wgt-stegastamp", name: "encoder/decoder checkpoint", checksum: "local", size: "StegaStamp" }
 ];
 
 export const recentRuns: Array<{

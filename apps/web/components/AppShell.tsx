@@ -2,12 +2,22 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Activity, Boxes, Database, FlaskConical, Images, Languages, LayoutDashboard } from "lucide-react";
+import {
+  Activity,
+  Boxes,
+  Database,
+  FlaskConical,
+  Images,
+  Languages,
+  LayoutDashboard,
+  SlidersHorizontal
+} from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { languages } from "@/lib/i18n";
 
 const nav = [
   { href: "/", key: "console", icon: LayoutDashboard },
+  { href: "/configs", key: "configs", icon: SlidersHorizontal },
   { href: "/resources", key: "resources", icon: Boxes },
   { href: "/runs", key: "runs", icon: Activity },
   { href: "/results", key: "results", icon: Images },

@@ -45,3 +45,24 @@ export interface ExperimentSelection {
   seeds: number[];
   maxSamples: number;
 }
+
+export interface SavedExperimentConfig {
+  id: string;
+  name: string;
+  selection: ExperimentSelection;
+  cellCount: number;
+  sampleCount: number;
+  imageOperationCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DemoRunRecord {
+  id: string;
+  configId: string;
+  configName: string;
+  status: RunStatus;
+  cells: number;
+  progress: number;
+  updatedAt: string;
+}

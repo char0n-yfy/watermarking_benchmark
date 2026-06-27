@@ -188,6 +188,10 @@ button {
   color: white;
 }
 
+a.button {
+  text-decoration: none;
+}
+
 .console-grid {
   display: grid;
   grid-template-columns: 270px minmax(520px, 1fr) 330px;
@@ -234,6 +238,11 @@ button {
   border-radius: 7px;
   padding: 10px;
   background: #fbfcfa;
+}
+
+.resource-item.link-item {
+  color: inherit;
+  text-decoration: none;
 }
 
 .resource-item strong {
@@ -425,6 +434,116 @@ button {
   color: var(--muted);
 }
 
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(520px, 1fr) 330px;
+  gap: 12px;
+  align-items: start;
+}
+
+.dashboard-main {
+  grid-row: span 2;
+}
+
+.dashboard-stats {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.run-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.run-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.run-card-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.run-card-main strong,
+.run-card-main span {
+  display: block;
+}
+
+.run-card-main span,
+.dashboard-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-status-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
+.progress-block {
+  display: grid;
+  gap: 6px;
+}
+
+.progress-block span {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--panel-soft);
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
+.dashboard-note {
+  margin: 12px 0 0;
+}
+
+.config-grid {
+  grid-template-columns: 290px minmax(520px, 1fr) 330px;
+}
+
+.config-name-field {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.runs-grid {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.launcher-panel {
+  display: grid;
+  gap: 12px;
+}
+
 @media (max-width: 1180px) {
   .shell {
     grid-template-columns: 1fr;
@@ -455,6 +574,15 @@ button {
   .console-grid {
     grid-template-columns: 1fr;
   }
+
+  .dashboard-grid,
+  .runs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-main {
+    grid-row: auto;
+  }
 }
 
 @media (max-width: 760px) {
@@ -470,5 +598,17 @@ button {
 
   .language-panel {
     min-width: 0;
+  }
+
+  .dashboard-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .run-card {
+    grid-template-columns: 1fr;
+  }
+
+  .progress-block span {
+    text-align: left;
   }
 }

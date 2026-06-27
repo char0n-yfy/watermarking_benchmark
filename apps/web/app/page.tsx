@@ -1,49 +1,34 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  Archive,
-  Boxes,
-  Braces,
-  Database,
-  Gauge,
-  GitBranch,
-  Play,
-  RotateCcw,
-  Shield
-} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, Archive, ArrowRight, CheckCircle2, Clock3, PlayCircle, XCircle } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
-import { localizedName } from "@/lib/i18n";
-import { algorithms, artifacts, attacks, datasets } from "@/lib/mock-data";
-import { estimateMatrix } from "@/lib/matrix";
-import type { ExperimentSelection } from "@/lib/types";
-
-const initialSelection: ExperimentSelection = {
-  datasetIds: ["ds-demo-v1"],
-  algorithmIds: ["alg-dct-qim-001"],
-  attackPresetIds: ["atk-identity", "atk-jpeg-sweep"],
-  seeds: [42],
-  maxSamples: 64
-};
-
-function toggle(values: string[], value: string) {
-  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
-}
+import { loadRunRecords, loadSavedConfigs } from "@/lib/demo-store";
+import type { DemoRunRecord, SavedExperimentConfig } from "@/lib/types";
 
 export default function ExperimentConsole() {
-  const { language, t } = useLanguage();
-  const [selection, setSelection] = useState<ExperimentSelection>(initialSelection);
-  const estimate = useMemo(() => estimateMatrix(selection, datasets, attacks), [selection]);
-  const specPreview = {
-    name: "robustness-console-draft",
-    dataset_versions: selection.datasetIds,
-    algorithm_versions: selection.algorithmIds,
-    attack_presets: selection.attackPresetIds,
-    seeds: selection.seeds,
-    max_samples_per_dataset: selection.maxSamples,
-    materialized_cells: estimate.cellCount
-  };
+  const { t } = useLanguage();
+  const [configs, setConfigs] = useState<SavedExperimentConfig[]>([]);
+  const [runs, setRuns] = useState<DemoRunRecord[]>([]);
+
+  useEffect(() => {
+    setConfigs(loadSavedConfigs());
+    setRuns(loadRunRecords());
+  }, []);
+
+  const stats = useMemo(
+    () => ({
+      running: runs.filter((run) => run.status === "running").length,
+      queued: runs.filter((run) => run.status === "queued").length,
+      succeeded: runs.filter((run) => run.status === "succeeded").length,
+      failed: runs.filter((run) => run.status === "failed" || run.status === "partially_failed").length
+    }),
+    [runs]
+  );
+
+  const activeRuns = runs.filter((run) => run.status === "running" || run.status === "queued");
 
   return (
     <AppShell active="console">
@@ -53,194 +38,111 @@ export default function ExperimentConsole() {
           <p>{t.console.subtitle}</p>
         </div>
         <div className="toolbar">
-          <button className="button" title={t.console.reset} onClick={() => setSelection(initialSelection)}>
-            <RotateCcw size={16} />
-          </button>
-          <button className="button" title={t.console.save}>
+          <Link className="button" href="/configs">
             <Archive size={16} />
-          </button>
-          <button className="button primary" title={t.console.materialize}>
-            <Play size={16} />
-          </button>
+            {t.console.openConfigs}
+          </Link>
+          <Link className="button primary" href="/runs">
+            <PlayCircle size={16} />
+            {t.console.openRuns}
+          </Link>
         </div>
       </div>
 
-      <section className="console-grid">
-        <div className="panel">
+      <section className="dashboard-grid">
+        <div className="panel dashboard-main">
           <div className="panel-header">
-            <h2>{t.console.resources}</h2>
-            <Boxes size={16} />
+            <h2>{t.console.activeQueue}</h2>
+            <Activity size={16} />
           </div>
-          <div className="panel-body resource-list">
-            {datasets.map((dataset) => (
-              <div className="resource-item" key={dataset.id}>
-                <div>
-                  <strong>{localizedName(language, dataset.id, dataset.name)}</strong>
-                  <span>
-                    {dataset.sampleCount.toLocaleString()} {t.common.samples} · {dataset.version}
-                  </span>
-                </div>
-                <span className="badge ok">{t.common.dataset}</span>
+          <div className="panel-body">
+            <div className="stats dashboard-stats">
+              <div className="stat">
+                <span>{t.console.running}</span>
+                <strong>{stats.running}</strong>
               </div>
-            ))}
-            {artifacts.map((artifact) => (
-              <div className="resource-item" key={artifact.id}>
-                <div>
-                  <strong>{artifact.name}</strong>
-                  <span>{artifact.size} · {artifact.checksum}</span>
-                </div>
-                <span className="badge">{t.common.weight}</span>
+              <div className="stat">
+                <span>{t.console.queued}</span>
+                <strong>{stats.queued}</strong>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>{t.console.matrix}</h2>
-            <GitBranch size={16} />
-          </div>
-          <div className="panel-body matrix">
-            <div className="matrix-row">
-              <div className="matrix-label">
-                <Database size={15} />
-                {t.console.datasets}
+              <div className="stat">
+                <span>{t.console.completed}</span>
+                <strong>{stats.succeeded}</strong>
               </div>
-              <div className="option-grid">
-                {datasets.map((dataset) => (
-                  <label className="check-tile" key={dataset.id}>
-                    <input
-                      checked={selection.datasetIds.includes(dataset.id)}
-                      onChange={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          datasetIds: toggle(current.datasetIds, dataset.id)
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    <span>{localizedName(language, dataset.id, dataset.name)}</span>
-                  </label>
-                ))}
+              <div className="stat">
+                <span>{t.console.failed}</span>
+                <strong>{stats.failed}</strong>
               </div>
             </div>
-
-            <div className="matrix-row">
-              <div className="matrix-label">
-                <Shield size={15} />
-                {t.console.algorithms}
-              </div>
-              <div className="option-grid">
-                {algorithms.map((algorithm) => (
-                  <label className="check-tile" key={algorithm.id}>
-                    <input
-                      checked={selection.algorithmIds.includes(algorithm.id)}
-                      disabled={algorithm.status !== "enabled"}
-                      onChange={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          algorithmIds: toggle(current.algorithmIds, algorithm.id)
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    <span>{algorithm.name}</span>
-                    {algorithm.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="matrix-row">
-              <div className="matrix-label">
-                <Gauge size={15} />
-                {t.console.attacks}
-              </div>
-              <div className="option-grid">
-                {attacks.map((attack) => (
-                  <label className="check-tile" key={attack.id}>
-                    <input
-                      checked={selection.attackPresetIds.includes(attack.id)}
-                      onChange={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          attackPresetIds: toggle(current.attackPresetIds, attack.id)
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    <span>{localizedName(language, attack.id, attack.name)}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="matrix-row">
-              <div className="matrix-label">
-                <Braces size={15} />
-                {t.console.parameters}
-              </div>
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor="seeds">{t.console.seeds}</label>
-                  <input
-                    id="seeds"
-                    value={selection.seeds.join(",")}
-                    onChange={(event) =>
-                      setSelection((current) => ({
-                        ...current,
-                        seeds: event.target.value
-                          .split(",")
-                          .map((seed) => Number(seed.trim()))
-                          .filter((seed) => Number.isFinite(seed))
-                      }))
-                    }
-                  />
+            <div className="run-list">
+              {activeRuns.length === 0 ? <div className="empty">{t.common.noData}</div> : null}
+              {activeRuns.map((run) => (
+                <div className="run-card" key={run.id}>
+                  <div className="run-card-main">
+                    <div className="run-status-icon">
+                      {run.status === "running" ? <Activity size={17} /> : <Clock3 size={17} />}
+                    </div>
+                    <div>
+                      <strong>{run.configName}</strong>
+                      <span>
+                        {run.id} · {run.cells} {t.console.cells}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="progress-block">
+                    <span>{run.progress}%</span>
+                    <div className="progress-track">
+                      <div className="progress-bar" style={{ width: `${run.progress}%` }} />
+                    </div>
+                  </div>
                 </div>
-                <div className="field">
-                  <label htmlFor="max-samples">{t.console.maxSamples}</label>
-                  <input
-                    id="max-samples"
-                    min={1}
-                    onChange={(event) =>
-                      setSelection((current) => ({
-                        ...current,
-                        maxSamples: Number(event.target.value)
-                      }))
-                    }
-                    type="number"
-                    value={selection.maxSamples}
-                  />
-                </div>
-              </div>
+              ))}
             </div>
+            <p className="dashboard-note">{t.console.monitorNote}</p>
           </div>
         </div>
 
         <aside className="panel">
           <div className="panel-header">
-            <h2>{t.console.inspector}</h2>
-            <Braces size={16} />
+            <h2>{t.console.savedConfigs}</h2>
+            <Archive size={16} />
           </div>
-          <div className="panel-body">
-            <div className="stats">
-              <div className="stat">
-                <span>{t.console.cells}</span>
-                <strong>{estimate.cellCount}</strong>
+          <div className="panel-body resource-list">
+            {configs.map((config) => (
+              <Link className="resource-item link-item" href="/runs" key={config.id}>
+                <div>
+                  <strong>{config.name}</strong>
+                  <span>
+                    {config.cellCount} {t.console.cells} · {config.imageOperationCount.toLocaleString()}{" "}
+                    {t.console.ops}
+                  </span>
+                </div>
+                <ArrowRight size={15} />
+              </Link>
+            ))}
+          </div>
+        </aside>
+
+        <aside className="panel">
+          <div className="panel-header">
+            <h2>{t.console.recentActivity}</h2>
+            <CheckCircle2 size={16} />
+          </div>
+          <div className="panel-body resource-list">
+            {runs.slice(0, 4).map((run) => (
+              <div className="resource-item" key={run.id}>
+                <div>
+                  <strong>{run.configName}</strong>
+                  <span>
+                    {run.updatedAt} · {run.progress}% {t.common.progress}
+                  </span>
+                </div>
+                <span className={run.status === "succeeded" ? "badge ok" : "badge warn"}>
+                  {run.status === "failed" ? <XCircle size={12} /> : null}
+                  {t.common.status[run.status]}
+                </span>
               </div>
-              <div className="stat">
-                <span>{t.common.samples}</span>
-                <strong>{estimate.sampleCount}</strong>
-              </div>
-              <div className="stat">
-                <span>{t.console.ops}</span>
-                <strong>{estimate.imageOperationCount}</strong>
-              </div>
-            </div>
-            <div className={`risk ${estimate.level}`}>
-              {estimate.level === "ok" ? t.console.okRisk : t.console.warnRisk}
-            </div>
-            <pre className="json-preview">{JSON.stringify(specPreview, null, 2)}</pre>
+            ))}
           </div>
         </aside>
       </section>
