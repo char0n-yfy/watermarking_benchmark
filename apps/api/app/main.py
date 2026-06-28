@@ -16,6 +16,7 @@ from .schemas.experiments import ExperimentConfigCreatePayload, ExperimentConfig
 from .services.dataset_catalog import build_catalog_item, get_catalog_entry, list_categories, list_dataset_catalog
 from .services.dataset_download import DatasetDownloadService
 from .services.experiment_service import ExperimentService
+from .services.object_storage import get_object_storage_client
 from .services.resources import (
     list_attack_resources,
     list_watermark_resources,
@@ -31,7 +32,8 @@ def create_app() -> FastAPI:
         resources_root=settings.resources_root,
         runs_root=settings.runs_root,
     )
-    download_service = DatasetDownloadService(settings.resources_root)
+    oss_client = get_object_storage_client()
+    download_service = DatasetDownloadService(settings.resources_root, oss=oss_client)
 
     app = FastAPI(
         title="Watermark Benchmark API",
@@ -89,11 +91,15 @@ def create_app() -> FastAPI:
     def datasets() -> list[dict[str, object]]:
         return [dataset.to_json() for dataset in scan_dataset_resources(settings.resources_root)]
 
+    @app.get("/resources/storage/status")
+    def storage_status() -> dict[str, object]:
+        return oss_client.status()
+
     @app.get("/resources/datasets/catalog")
     def dataset_catalog() -> dict[str, object]:
         return {
             "categories": list_categories(),
-            "items": list_dataset_catalog(settings.resources_root),
+            "items": list_dataset_catalog(settings.resources_root, oss=oss_client),
         }
 
     @app.get("/resources/datasets/downloads/{job_id}")
@@ -127,7 +133,7 @@ def create_app() -> FastAPI:
             entry = get_catalog_entry(dataset_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return build_catalog_item(settings.resources_root, entry)
+        return build_catalog_item(settings.resources_root, entry, oss=oss_client)
 
     @app.post("/resources/datasets/{dataset_id}/downloads")
     def start_dataset_download(dataset_id: str, payload: DatasetDownloadCreatePayload) -> dict[str, object]:

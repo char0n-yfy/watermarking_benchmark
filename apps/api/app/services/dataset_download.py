@@ -19,6 +19,7 @@ from app.services.dataset_catalog import (
     full_dir,
     get_catalog_entry,
 )
+from app.services.object_storage import ObjectStorageClient, parse_manifest_lines
 from app.services.resources import iter_image_paths
 
 
@@ -67,8 +68,9 @@ class DatasetDownloadJob:
 
 
 class DatasetDownloadService:
-    def __init__(self, resources_root: Path) -> None:
+    def __init__(self, resources_root: Path, *, oss: ObjectStorageClient | None = None) -> None:
         self.resources_root = resources_root
+        self.oss = oss
         self.cache_root = resources_root / "cache" / "dataset-downloads"
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, DatasetDownloadJob] = {}
@@ -160,13 +162,27 @@ class DatasetDownloadService:
             compact_uses_root=entry.compact_uses_root,
         )
         images = iter_image_paths(source)
-        if not images:
-            raise FileNotFoundError(
-                f"Compact dataset not found under {source}. "
-                f"Place {COMPACT_SAMPLE_COUNT} images in datasets/{job.dataset_id}/compact/ "
-                f"or the dataset root when compactUsesRoot is enabled."
-            )
+        if images:
+            self._run_compact_from_local(job, images)
+            return
 
+        if self.oss and self.oss.enabled:
+            object_key = self.oss.dataset_compact_key(job.dataset_id)
+            if self.oss.exists(object_key):
+                self._run_compact_from_object_storage(job, object_key)
+                return
+
+        oss_hint = "wmbench/datasets/<id>/compact-1000.zip"
+        if self.oss and self.oss.enabled:
+            oss_hint = self.oss.dataset_compact_key(job.dataset_id)
+
+        raise FileNotFoundError(
+            f"Compact dataset not found under {source}. "
+            f"Place {COMPACT_SAMPLE_COUNT} images in datasets/{job.dataset_id}/compact/, "
+            f"upload {oss_hint} to object storage, or enable compactUsesRoot."
+        )
+
+    def _run_compact_from_local(self, job: DatasetDownloadJob, images: list[Path]) -> None:
         job_dir = self.cache_root / job.id
         if job_dir.exists():
             shutil.rmtree(job_dir)
@@ -195,6 +211,21 @@ class DatasetDownloadService:
         job.output_dir = str(job_dir)
         job.archive_path = str(archive_path)
 
+    def _run_compact_from_object_storage(self, job: DatasetDownloadJob, object_key: str) -> None:
+        archive_path = self.cache_root / f"{job.id}.zip"
+        if archive_path.exists():
+            archive_path.unlink()
+
+        def on_progress(completed: int, total: int, message: str) -> None:
+            total_steps = max(total, 1)
+            self._set_progress(job, min(completed, total_steps), total_steps, message=message)
+            job.bytes_downloaded = completed
+
+        job.message = "从对象存储下载精简包"
+        self.oss.download_file(object_key, archive_path, on_progress=on_progress)
+        job.archive_path = str(archive_path)
+        self._set_progress(job, 1, 1, message="对象存储精简包已就绪")
+
     def _run_custom(self, job: DatasetDownloadJob) -> None:
         entry = get_catalog_entry(job.dataset_id)
         output_root = self.resources_root / "datasets" / job.dataset_id / "custom" / f"seed{job.seed}_{job.sample_count}"
@@ -204,18 +235,18 @@ class DatasetDownloadService:
         job.output_dir = str(output_root)
 
         if entry.manifest_url:
-            urls = self._fetch_manifest(entry.manifest_url)
-            rng = random.Random(job.seed)
-            rng.shuffle(urls)
-            selected_urls = urls[: job.sample_count]
-            total_steps = len(selected_urls) * 2
-            step = 0
-            self._set_progress(job, step, total_steps, message="从远程 manifest 下载")
-            self._download_urls(job, selected_urls, output_root, step_offset=0, total_steps=total_steps)
-            archive_path = self.cache_root / f"{job.id}.zip"
-            self._create_zip_with_progress(job, output_root, archive_path, start_step=len(selected_urls), total_steps=total_steps)
-            job.archive_path = str(archive_path)
+            manifest_text = self._fetch_manifest_text(entry.manifest_url)
+            targets = parse_manifest_lines(manifest_text, dataset_id=job.dataset_id, oss=self.oss)
+            self._run_custom_from_targets(job, targets, output_root)
             return
+
+        if self.oss and self.oss.enabled:
+            manifest_key = self.oss.dataset_manifest_key(job.dataset_id)
+            if self.oss.exists(manifest_key):
+                manifest_text = self.oss.read_text(manifest_key)
+                targets = parse_manifest_lines(manifest_text, dataset_id=job.dataset_id, oss=self.oss)
+                self._run_custom_from_targets(job, targets, output_root)
+                return
 
         source = full_dir(self.resources_root, job.dataset_id)
         images = iter_image_paths(source)
@@ -229,8 +260,8 @@ class DatasetDownloadService:
         if not pool:
             raise FileNotFoundError(
                 "No local source images available for custom sampling. "
-                f"Add a full dataset under datasets/{job.dataset_id}/full/ "
-                f"or configure manifestUrl in the dataset catalog."
+                f"Add a full dataset under datasets/{job.dataset_id}/full/, "
+                f"upload manifest.txt to object storage, or configure manifestUrl in the dataset catalog."
             )
 
         rng = random.Random(job.seed)
@@ -257,44 +288,68 @@ class DatasetDownloadService:
         )
         job.archive_path = str(archive_path)
 
-    def _fetch_manifest(self, manifest_url: str) -> list[str]:
+    def _run_custom_from_targets(self, job: DatasetDownloadJob, targets: list[str], output_root: Path) -> None:
+        if not targets:
+            raise ValueError("Manifest did not contain downloadable entries")
+
+        rng = random.Random(job.seed)
+        rng.shuffle(targets)
+        selected = targets[: job.sample_count]
+        total_steps = len(selected) * 2
+        self._set_progress(job, 0, total_steps, message="从 manifest 下载")
+        self._download_targets(job, selected, output_root, step_offset=0, total_steps=total_steps)
+        archive_path = self.cache_root / f"{job.id}.zip"
+        self._create_zip_with_progress(
+            job,
+            output_root,
+            archive_path,
+            start_step=len(selected),
+            total_steps=total_steps,
+        )
+        job.archive_path = str(archive_path)
+
+    def _fetch_manifest_text(self, manifest_url: str) -> str:
         with httpx.Client(timeout=60.0, follow_redirects=True) as client:
             response = client.get(manifest_url)
             response.raise_for_status()
-            lines = [line.strip() for line in response.text.splitlines() if line.strip() and not line.startswith("#")]
-        urls = [line.split()[0] for line in lines if line.split()[0].startswith(("http://", "https://"))]
-        if not urls:
-            raise ValueError(f"Manifest at {manifest_url} did not contain downloadable URLs")
-        return urls
+            return response.text
 
-    def _download_urls(
+    def _download_targets(
         self,
         job: DatasetDownloadJob,
-        urls: list[str],
+        targets: list[str],
         output_root: Path,
         *,
         step_offset: int,
         total_steps: int,
     ) -> None:
+        for index, target in enumerate(targets, start=1):
+            suffix = Path(urlparse(target).path).suffix.lower()
+            if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".zip"}:
+                suffix = ".jpg"
+            dest = output_root / f"{index:06d}{suffix}"
+            if target.startswith(("http://", "https://")):
+                self._download_http_url(job, target, dest)
+            elif self.oss and self.oss.enabled:
+                self.oss.download_file(target, dest)
+            else:
+                raise ValueError(f"Cannot download non-HTTP target without object storage: {target}")
+            self._set_progress(
+                job,
+                step_offset + index,
+                total_steps,
+                message=f"下载 {index}/{len(targets)}",
+            )
+
+    def _download_http_url(self, job: DatasetDownloadJob, url: str, dest: Path) -> None:
         with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-            for index, url in enumerate(urls, start=1):
-                suffix = Path(urlparse(url).path).suffix.lower()
-                if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-                    suffix = ".jpg"
-                target = output_root / f"{index:06d}{suffix}"
-                with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    with target.open("wb") as handle:
-                        for chunk in response.iter_bytes(chunk_size=1024 * 256):
-                            if chunk:
-                                handle.write(chunk)
-                                job.bytes_downloaded += len(chunk)
-                self._set_progress(
-                    job,
-                    step_offset + index,
-                    total_steps,
-                    message=f"下载图片 {index}/{len(urls)}",
-                )
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with dest.open("wb") as handle:
+                    for chunk in response.iter_bytes(chunk_size=1024 * 256):
+                        if chunk:
+                            handle.write(chunk)
+                            job.bytes_downloaded += len(chunk)
 
     def _create_zip_with_progress(
         self,

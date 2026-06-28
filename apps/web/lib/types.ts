@@ -36,6 +36,9 @@ export interface DatasetCatalogItem {
   installed: boolean;
   customDownloadReady: boolean;
   remoteManifestConfigured: boolean;
+  remoteCompactAvailable?: boolean;
+  remoteCustomAvailable?: boolean;
+  objectStorageConfigured?: boolean;
   compactUsesRoot?: boolean;
   rootPath?: string;
   compactPath?: string;

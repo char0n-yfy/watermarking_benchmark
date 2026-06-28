@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.resources import IMAGE_EXTS, iter_image_paths
+from app.services.object_storage import ObjectStorageClient
 
 
 COMPACT_SAMPLE_COUNT = 1000
@@ -276,19 +277,36 @@ def resolve_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dic
     }
 
 
-def build_catalog_item(resources_root: Path, entry: DatasetCatalogEntry) -> dict[str, Any]:
+def build_catalog_item(
+    resources_root: Path,
+    entry: DatasetCatalogEntry,
+    *,
+    oss: ObjectStorageClient | None = None,
+) -> dict[str, Any]:
     local = resolve_local_paths(resources_root, entry)
-    custom_ready = entry.manifest_url is not None or local["customPoolCount"] > 0
+    remote_compact = bool(oss and oss.enabled and oss.exists(oss.dataset_compact_key(entry.id)))
+    remote_manifest = bool(oss and oss.enabled and oss.exists(oss.dataset_manifest_key(entry.id)))
+    manifest_configured = entry.manifest_url is not None or remote_manifest
+    custom_ready = manifest_configured or local["customPoolCount"] > 0
+    compact_available = local["compactAvailable"] or remote_compact
     return {
         **entry.to_json(),
         **local,
+        "compactAvailable": compact_available,
         "customDownloadReady": custom_ready,
-        "remoteManifestConfigured": entry.manifest_url is not None,
+        "remoteManifestConfigured": manifest_configured,
+        "remoteCompactAvailable": remote_compact,
+        "remoteCustomAvailable": remote_manifest,
+        "objectStorageConfigured": bool(oss and oss.enabled),
     }
 
 
-def list_dataset_catalog(resources_root: Path) -> list[dict[str, Any]]:
-    items = [build_catalog_item(resources_root, entry) for entry in DATASET_CATALOG]
+def list_dataset_catalog(
+    resources_root: Path,
+    *,
+    oss: ObjectStorageClient | None = None,
+) -> list[dict[str, Any]]:
+    items = [build_catalog_item(resources_root, entry, oss=oss) for entry in DATASET_CATALOG]
     scanned_ids = {item["id"] for item in items}
 
     datasets_root = resources_root / "datasets"
