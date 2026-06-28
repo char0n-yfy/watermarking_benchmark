@@ -9,6 +9,9 @@ if [[ -f .env.autodl ]]; then
   set +a
 fi
 
+source infra/autodl/python_env.sh
+autodl_require_python_env
+
 export APP_ENV="${APP_ENV:-autodl}"
 export WM_BENCH_DATA_ROOT="${WM_BENCH_DATA_ROOT:-/root/autodl-fs/wm-bench}"
 export WM_BENCH_RESOURCES_ROOT="${WM_BENCH_RESOURCES_ROOT:-${WM_BENCH_DATA_ROOT}/resources}"
@@ -22,4 +25,4 @@ mkdir -p \
   "${WM_BENCH_RUNS_ROOT}" \
   "$(dirname "${WM_BENCH_DB_PATH}")"
 
-python apps/worker/local_worker.py --poll-seconds "${WM_BENCH_WORKER_POLL_SECONDS:-2}"
+"${AUTODL_PYTHON}" apps/worker/local_worker.py --poll-seconds "${WM_BENCH_WORKER_POLL_SECONDS:-2}"

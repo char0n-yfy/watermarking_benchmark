@@ -18,6 +18,10 @@ bash infra/autodl/setup_env.sh
 ```
 
 Edit `.env.autodl` when you need a different GPU or storage path.
+The setup script creates a project-local Python environment at `.venv` by
+default. On AutoDL it uses `--system-site-packages` unless
+`WM_BENCH_VENV_SYSTEM_SITE_PACKAGES=0`, so the venv can still see CUDA packages
+preinstalled in the base image.
 
 ## Start
 
