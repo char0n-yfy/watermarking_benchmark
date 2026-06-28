@@ -41,3 +41,4 @@ out/
 .env.autodl
 /resources/weights/.DS_Store
 /resources/
+/.venv
