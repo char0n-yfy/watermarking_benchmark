@@ -136,7 +136,10 @@ def _attack_params(attack: JsonDict, strength: float) -> JsonDict:
     params = dict(attack.get("params") or {})
     strength_param = attack.get("strengthParam")
     if strength_param:
-        params[str(strength_param)] = float(strength)
+        value: float | int = float(strength)
+        if str(strength_param) == "scale" and float(strength).is_integer():
+            value = int(strength)
+        params[str(strength_param)] = value
     return params
 
 

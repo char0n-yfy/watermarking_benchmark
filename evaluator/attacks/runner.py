@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import (  # noqa: F401 - import registers default attacks
+    consumer_enhancement_workflow_attacks,
     content_preserve_workflow_attacks,
     distortion_attacks,
     regeneration_attacks,

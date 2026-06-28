@@ -46,6 +46,28 @@ class ResourceCatalogTest(unittest.TestCase):
             self.assertTrue(item["id"].startswith("atk-"))
             self.assertEqual(item["available"], True)
 
+    def test_consumer_enhancement_attacks_are_grouped_for_frontend(self) -> None:
+        resources = list_attack_resources()
+        cew_resources = [item for item in resources if item["method"].startswith("cew_")]
+        exposed_methods = {item["method"] for item in cew_resources}
+
+        self.assertEqual(len(cew_resources), 16)
+        self.assertIn("cew_e1", exposed_methods)
+        self.assertIn("cew_d5", exposed_methods)
+        self.assertIn("cew_s3", exposed_methods)
+        self.assertIn("cew_c4", exposed_methods)
+        self.assertNotIn("cew_e1_m", exposed_methods)
+        self.assertNotIn("cew_s6", exposed_methods)
+        self.assertTrue(all(item["category"] == "consumer-enhancement" for item in cew_resources))
+        self.assertFalse(get_attack_catalog_item("cew_e1")["requiresGpu"])
+        self.assertTrue(get_attack_catalog_item("cew_d5")["requiresGpu"])
+        self.assertTrue(get_attack_catalog_item("cew_s1")["requiresGpu"])
+        self.assertTrue(get_attack_catalog_item("cew_c1")["requiresGpu"])
+        self.assertEqual(get_attack_catalog_item("cew_e1")["strengthParam"], "strength")
+        self.assertEqual(get_attack_catalog_item("cew_e1")["strengths"], [0.25, 0.5, 0.75])
+        self.assertEqual(get_attack_catalog_item("cew_s1")["strengthParam"], "scale")
+        self.assertEqual(get_attack_catalog_item("cew_s1")["strengths"], [2.0, 4.0])
+
     def test_legacy_attack_presets_remain_resolvable(self) -> None:
         jpeg_smoke = get_attack_catalog_item("atk-jpeg-smoke")
         blur_sweep = get_attack_catalog_item("atk-blur-sweep")
@@ -59,9 +81,13 @@ class ResourceCatalogTest(unittest.TestCase):
     def test_strength_is_only_injected_for_compatible_attacks(self) -> None:
         jpeg = get_attack_catalog_item("atk-jpeg")
         platform_pipeline = get_attack_catalog_item("atk-cp-platform-pipeline")
+        cew_edit = get_attack_catalog_item("cew_e1")
+        cew_sr = get_attack_catalog_item("cew_s1")
 
         self.assertEqual(_attack_params(jpeg, 0.5), {"strength": 0.5})
         self.assertEqual(_attack_params(platform_pipeline, 0.5), {})
+        self.assertEqual(_attack_params(cew_edit, 0.75), {"strength": 0.75})
+        self.assertEqual(_attack_params(cew_sr, 4.0), {"scale": 4})
 
 
 if __name__ == "__main__":

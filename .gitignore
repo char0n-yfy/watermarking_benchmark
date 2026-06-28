@@ -1,10 +1,21 @@
+# macOS / local editor noise
+.DS_Store
+
+# Legacy local workspaces and archives
 /WAVES-main
 /wibe-main
-.DS_Store
 /算法
 /weights
-/watermarking.zip
 /weights/watermarking
+/watermarking.zip
+
+# Large resource payloads live outside Git.
+# Keep actual datasets and model weights in external storage such as OSS.
+/resources/weights/
+/resources/datasets/*
+!/resources/datasets/README.md
+
+# Model checkpoints and binary ML artifacts
 *.pth
 *.pyt
 *.pt
@@ -19,16 +30,12 @@
 *.hdf5
 *.pb
 *.tflite
-*.pyc
 *.zip
+
+# Python / build outputs
+__pycache__/
+*.pyc
 *.tsbuildinfo
-/AGENTS.md
-/PARETOGUARD_MEMORY.md
-/WORKFLOW.md
-/resources/weights/
-/resources/weights/watermarking.zip
-/resources/datasets/*
-!/resources/datasets/README.md
 /runs/
 node_modules/
 .pnpm-store/
@@ -36,9 +43,14 @@ node_modules/
 dist/
 build/
 out/
+/.venv
+
+# Local environment files
 .env
 .env.local
 .env.autodl
-/resources/weights/.DS_Store
-/resources/
-/.venv
+
+# Local agent/workflow notes
+/AGENTS.md
+/PARETOGUARD_MEMORY.md
+/WORKFLOW.md
