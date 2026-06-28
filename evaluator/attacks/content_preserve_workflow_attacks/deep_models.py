@@ -11,7 +11,15 @@ from einops import rearrange
 from PIL import Image
 
 
-ModelKind = Literal["rrdbnet_x4", "swinir_jpeg_car", "restormer_denoise"]
+ModelKind = Literal[
+    "rrdbnet_x2",
+    "rrdbnet_x4",
+    "zero_dce_plus_plus",
+    "swinir_classical_sr_x2",
+    "swinir_classical_sr_x4",
+    "swinir_jpeg_car",
+    "restormer_denoise",
+]
 _MODEL_CACHE: dict[tuple[ModelKind, str, str], nn.Module] = {}
 
 
@@ -85,6 +93,60 @@ def load_state_dict(path: Path) -> dict[str, torch.Tensor]:
     return checkpoint
 
 
+def normalize_rrdb_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Map legacy ESRGAN/BSRGAN checkpoint keys to the local RRDBNet names."""
+    normalized: dict[str, torch.Tensor] = {}
+    for key, value in state.items():
+        mapped = key
+        mapped = mapped.replace("module.", "", 1)
+        mapped = mapped.replace("RRDB_trunk.", "body.")
+        mapped = mapped.replace(".RDB1.", ".rdb1.")
+        mapped = mapped.replace(".RDB2.", ".rdb2.")
+        mapped = mapped.replace(".RDB3.", ".rdb3.")
+        mapped = mapped.replace("trunk_conv.", "conv_body.")
+        mapped = mapped.replace("upconv1.", "conv_up1.")
+        mapped = mapped.replace("upconv2.", "conv_up2.")
+        mapped = mapped.replace("HRconv.", "conv_hr.")
+        normalized[mapped] = value
+    return normalized
+
+
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        super().__init__()
+        self.depth_conv = nn.Conv2d(in_channels, in_channels, 3, 1, 1, groups=in_channels)
+        self.point_conv = nn.Conv2d(in_channels, out_channels, 1, 1, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.point_conv(self.depth_conv(x))
+
+
+class ZeroDCEPlusPlus(nn.Module):
+    def __init__(self, num_feat: int = 32) -> None:
+        super().__init__()
+        self.relu = nn.ReLU(inplace=True)
+        self.e_conv1 = DepthwiseSeparableConv(3, num_feat)
+        self.e_conv2 = DepthwiseSeparableConv(num_feat, num_feat)
+        self.e_conv3 = DepthwiseSeparableConv(num_feat, num_feat)
+        self.e_conv4 = DepthwiseSeparableConv(num_feat, num_feat)
+        self.e_conv5 = DepthwiseSeparableConv(num_feat * 2, num_feat)
+        self.e_conv6 = DepthwiseSeparableConv(num_feat * 2, num_feat)
+        self.e_conv7 = DepthwiseSeparableConv(num_feat * 2, 3)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = self.relu(self.e_conv1(x))
+        x2 = self.relu(self.e_conv2(x1))
+        x3 = self.relu(self.e_conv3(x2))
+        x4 = self.relu(self.e_conv4(x3))
+        x5 = self.relu(self.e_conv5(torch.cat([x3, x4], dim=1)))
+        x6 = self.relu(self.e_conv6(torch.cat([x2, x5], dim=1)))
+        curve = torch.tanh(self.e_conv7(torch.cat([x1, x6], dim=1)))
+        enhanced = x
+        for _ in range(8):
+            enhanced = enhanced + curve * (enhanced * enhanced - enhanced)
+        return enhanced
+
+
 class ResidualDenseBlock(nn.Module):
     def __init__(self, num_feat: int = 64, num_grow_ch: int = 32) -> None:
         super().__init__()
@@ -124,23 +186,39 @@ class RRDBNet(nn.Module):
         num_feat: int = 64,
         num_block: int = 23,
         num_grow_ch: int = 32,
+        upsample_count: int | None = None,
+        pixel_unshuffle_scale: int = 1,
     ) -> None:
         super().__init__()
+        if scale not in {2, 4}:
+            raise ValueError(f"RRDBNet only supports scale 2 or 4, got {scale}")
+        if pixel_unshuffle_scale not in {1, 2, 4}:
+            raise ValueError(f"Unsupported pixel_unshuffle_scale: {pixel_unshuffle_scale}")
+        if upsample_count is None:
+            upsample_count = int(math.log2(scale * pixel_unshuffle_scale))
+        if upsample_count not in {1, 2}:
+            raise ValueError(f"RRDBNet only supports one or two upsample stages, got {upsample_count}")
         self.scale = scale
-        self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
+        self.upsample_count = upsample_count
+        self.pixel_unshuffle_scale = pixel_unshuffle_scale
+        self.conv_first = nn.Conv2d(num_in_ch * pixel_unshuffle_scale**2, num_feat, 3, 1, 1)
         self.body = nn.Sequential(*[RRDB(num_feat, num_grow_ch) for _ in range(num_block)])
         self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
         self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
-        self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        if upsample_count == 2:
+            self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
         self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
         self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
         self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.pixel_unshuffle_scale > 1:
+            x = F.pixel_unshuffle(x, self.pixel_unshuffle_scale)
         feat = self.conv_first(x)
         feat = feat + self.conv_body(self.body(feat))
         feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode="nearest")))
-        feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode="nearest")))
+        if self.upsample_count == 2:
+            feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode="nearest")))
         return self.conv_last(self.lrelu(self.conv_hr(feat)))
 
 
@@ -407,6 +485,70 @@ class SwinIRJPEG(nn.Module):
         return x / self.img_range + mean
 
 
+class SwinIRPixelShuffleUpsample(nn.Sequential):
+    def __init__(self, scale: int, num_feat: int) -> None:
+        layers: list[nn.Module] = []
+        if scale in {2, 4, 8}:
+            for _ in range(int(math.log2(scale))):
+                layers.extend([nn.Conv2d(num_feat, 4 * num_feat, 3, 1, 1), nn.PixelShuffle(2)])
+        elif scale == 3:
+            layers.extend([nn.Conv2d(num_feat, 9 * num_feat, 3, 1, 1), nn.PixelShuffle(3)])
+        else:
+            raise ValueError(f"Unsupported SwinIR upscale factor: {scale}")
+        super().__init__(*layers)
+
+
+class SwinIRClassicalSR(nn.Module):
+    def __init__(
+        self,
+        upscale: int,
+        img_size: int = 64,
+        window_size: int = 8,
+        img_range: float = 1.0,
+        depths: tuple[int, ...] = (6, 6, 6, 6, 6, 6),
+        embed_dim: int = 180,
+        num_heads: tuple[int, ...] = (6, 6, 6, 6, 6, 6),
+        mlp_ratio: float = 2.0,
+        num_feat: int = 64,
+    ) -> None:
+        super().__init__()
+        self.upscale = upscale
+        self.img_range = img_range
+        self.mean = torch.Tensor((0.4488, 0.4371, 0.4040)).view(1, 3, 1, 1)
+        self.conv_first = nn.Conv2d(3, embed_dim, 3, 1, 1)
+        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=1, embed_dim=embed_dim, norm_layer=nn.LayerNorm)
+        self.patch_unembed = PatchUnEmbed(embed_dim=embed_dim)
+        resolution = tuple(self.patch_embed.patches_resolution)
+        self.pos_drop = nn.Dropout(0.0)
+        self.layers = nn.ModuleList(
+            [
+                RSTB(embed_dim, resolution, depths[index], num_heads[index], window_size, mlp_ratio, img_size)
+                for index in range(len(depths))
+            ]
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+        self.conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
+        self.conv_before_upsample = nn.Sequential(nn.Conv2d(embed_dim, num_feat, 3, 1, 1), nn.LeakyReLU(inplace=True))
+        self.upsample = SwinIRPixelShuffleUpsample(upscale, num_feat)
+        self.conv_last = nn.Conv2d(num_feat, 3, 3, 1, 1)
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        x_size = (x.shape[2], x.shape[3])
+        x = self.pos_drop(self.patch_embed(x))
+        for layer in self.layers:
+            x = layer(x, x_size)
+        x = self.norm(x)
+        return self.patch_unembed(x, x_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        mean = self.mean.type_as(x)
+        x = (x - mean) * self.img_range
+        feat = self.conv_first(x)
+        feat = self.conv_after_body(self.forward_features(feat)) + feat
+        feat = self.conv_before_upsample(feat)
+        return self.conv_last(self.upsample(feat)) / self.img_range + mean
+
+
 class BiasFreeLayerNorm(nn.Module):
     def __init__(self, normalized_shape: int) -> None:
         super().__init__()
@@ -550,8 +692,27 @@ def _load_model(kind: ModelKind, weight_path: Path, device: torch.device) -> nn.
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key]
 
-    if kind == "rrdbnet_x4":
+    state = load_state_dict(checkpoint)
+    if kind == "rrdbnet_x2":
+        state = normalize_rrdb_state_dict(state)
+        conv_in_ch = int(state["conv_first.weight"].shape[1])
+        model: nn.Module = RRDBNet(
+            scale=2,
+            num_feat=64,
+            num_block=23,
+            num_grow_ch=32,
+            upsample_count=2 if "conv_up2.weight" in state else 1,
+            pixel_unshuffle_scale=2 if conv_in_ch == 12 else 1,
+        )
+    elif kind == "rrdbnet_x4":
+        state = normalize_rrdb_state_dict(state)
         model: nn.Module = RRDBNet(scale=4, num_feat=64, num_block=23, num_grow_ch=32)
+    elif kind == "zero_dce_plus_plus":
+        model = ZeroDCEPlusPlus()
+    elif kind == "swinir_classical_sr_x2":
+        model = SwinIRClassicalSR(upscale=2)
+    elif kind == "swinir_classical_sr_x4":
+        model = SwinIRClassicalSR(upscale=4)
     elif kind == "swinir_jpeg_car":
         model = SwinIRJPEG()
     elif kind == "restormer_denoise":
@@ -559,11 +720,19 @@ def _load_model(kind: ModelKind, weight_path: Path, device: torch.device) -> nn.
     else:
         raise ValueError(f"Unsupported model kind: {kind}")
 
-    state = load_state_dict(checkpoint)
     model.load_state_dict(state, strict=True)
     model.to(device).eval()
     _MODEL_CACHE[key] = model
     return model
+
+
+def run_rrdbnet_x2(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
+    device = select_device(device_name)
+    model = _load_model("rrdbnet_x2", weight_path, device)
+    tensor = image_to_tensor(image, device)
+    with torch.inference_mode():
+        output = model(tensor)
+    return tensor_to_image(output)
 
 
 def run_rrdbnet_x4(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
@@ -575,6 +744,15 @@ def run_rrdbnet_x4(image: Image.Image, weight_path: Path, device_name: str | Non
     return tensor_to_image(output)
 
 
+def run_zero_dce_plus_plus(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
+    device = select_device(device_name)
+    model = _load_model("zero_dce_plus_plus", weight_path, device)
+    tensor = image_to_tensor(image, device)
+    with torch.inference_mode():
+        output = model(tensor)
+    return tensor_to_image(output, size=image.size)
+
+
 def run_swinir_jpeg_car(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
     device = select_device(device_name)
     model = _load_model("swinir_jpeg_car", weight_path, device)
@@ -583,6 +761,25 @@ def run_swinir_jpeg_car(image: Image.Image, weight_path: Path, device_name: str 
     with torch.inference_mode():
         output = crop_to_size(model(padded), original_hw)
     return tensor_to_image(output, size=image.size)
+
+
+def run_swinir_classical_sr(
+    image: Image.Image,
+    weight_path: Path,
+    scale: int,
+    device_name: str | None = None,
+) -> Image.Image:
+    if scale not in {2, 4}:
+        raise ValueError(f"SwinIR classical SR only supports scale 2 or 4, got {scale}")
+    device = select_device(device_name)
+    kind: ModelKind = "swinir_classical_sr_x2" if scale == 2 else "swinir_classical_sr_x4"
+    model = _load_model(kind, weight_path, device)
+    tensor = image_to_tensor(image, device)
+    padded, original_hw = pad_to_multiple(tensor, 8)
+    with torch.inference_mode():
+        output = model(padded)
+        output = crop_to_size(output, (original_hw[0] * scale, original_hw[1] * scale))
+    return tensor_to_image(output, size=(image.size[0] * scale, image.size[1] * scale))
 
 
 def run_restormer_denoise(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:

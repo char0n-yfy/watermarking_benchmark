@@ -111,6 +111,22 @@ WATERMARK_DISPLAY_NAMES = {
 }
 
 ATTACK_DISPLAY_NAMES = {
+    "cew_c1": "CEW-C1 Basic Auto-Fix SR",
+    "cew_c2": "CEW-C2 Color Retouch SR",
+    "cew_c3": "CEW-C3 Detail Enhance SR",
+    "cew_c4": "CEW-C4 Full Enhancement Chain",
+    "cew_d1": "CEW-D1 Auto-Light",
+    "cew_d2": "CEW-D2 Auto-WhiteBalance",
+    "cew_d3": "CEW-D3 Adaptive AI Color",
+    "cew_d4": "CEW-D4 Detail Low-Light Enhance",
+    "cew_d5": "CEW-D5 AI-Denoise Clean",
+    "cew_e1": "CEW-E1 Auto-Tone",
+    "cew_e2": "CEW-E2 Warm-Vivid",
+    "cew_e3": "CEW-E3 Film-Faded",
+    "cew_e4": "CEW-E4 Local-Clarity HDR",
+    "cew_s1": "CEW-S1 RealESRGAN",
+    "cew_s2": "CEW-S2 SwinIR",
+    "cew_s3": "CEW-S3 BSRGAN",
     "2x_regen": "2x Regeneration",
     "4x_regen": "4x Regeneration",
     "cp_app_edit_pipeline": "CP App Edit Pipeline",
@@ -178,6 +194,13 @@ RECOMMENDED_WATERMARKS = {"traditional-lsb"}
 ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
     "brightness": [0.25, 0.5, 0.75],
     "contrast": [0.25, 0.5, 0.75],
+    "cew_e1": [0.25, 0.5, 0.75],
+    "cew_e2": [0.25, 0.5, 0.75],
+    "cew_e3": [0.25, 0.5, 0.75],
+    "cew_e4": [0.25, 0.5, 0.75],
+    "cew_s1": [2.0, 4.0],
+    "cew_s2": [2.0, 4.0],
+    "cew_s3": [2.0, 4.0],
     "cp_denoise": [0.5],
     "cp_denoise_deep": [0.5],
     "cp_despeckle": [0.5],
@@ -187,6 +210,16 @@ ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
     "jpeg": [0.25, 0.5, 0.75],
     "resized_crop": [0.1, 0.3, 0.5],
     "rotation": [0.25, 0.5, 0.75],
+}
+
+ATTACK_PARAM_BY_METHOD = {
+    "cew_e1": "strength",
+    "cew_e2": "strength",
+    "cew_e3": "strength",
+    "cew_e4": "strength",
+    "cew_s1": "scale",
+    "cew_s2": "scale",
+    "cew_s3": "scale",
 }
 
 LEGACY_ATTACK_PRESETS: dict[str, dict[str, Any]] = {
@@ -258,6 +291,8 @@ def _watermark_category(method: str) -> str:
 
 
 def _attack_category(method: str) -> str:
+    if method.startswith("cew_"):
+        return "consumer-enhancement"
     if method.startswith("cp_"):
         return "content-preserving"
     if "regen" in method:
@@ -270,7 +305,13 @@ def _has_explicit_init_param(cls: type[Any], parameter_name: str) -> bool:
 
 
 def _attack_requires_gpu(method: str) -> bool:
-    return "regen" in method or method.endswith("_deep")
+    return (
+        "regen" in method
+        or method.endswith("_deep")
+        or method.startswith("cew_d")
+        or method.startswith("cew_s")
+        or method.startswith("cew_c")
+    )
 
 
 def _build_watermark_catalog() -> dict[str, dict[str, Any]]:
@@ -294,7 +335,9 @@ def _build_watermark_catalog() -> dict[str, dict[str, Any]]:
 
 
 def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
-    strength_param = "strength" if _has_explicit_init_param(cls, "strength") else None
+    strength_param = ATTACK_PARAM_BY_METHOD.get(method)
+    if strength_param is None and _has_explicit_init_param(cls, "strength"):
+        strength_param = "strength"
     strengths = ATTACK_STRENGTH_SWEEPS.get(method, [0.5] if strength_param else [0.0])
     return {
         "id": f"atk-{_slug(method)}",
