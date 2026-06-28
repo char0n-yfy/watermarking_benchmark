@@ -23,6 +23,7 @@ from app.services.resources import (
     iter_image_paths,
     scan_dataset_resources,
 )
+from app.services.scoring import aggregate_benchmark_score, compute_quality_summary, score_cell
 
 
 JsonDict = dict[str, Any]
@@ -247,10 +248,14 @@ def run_local_experiment(
                         watermarked_dir = cell_root / "watermarked"
                         attacked_dir = cell_root / "attacked"
                         extracted_dir = cell_root / "extracted"
+                        negative_attacked_dir = cell_root / "negative_attacked"
+                        negative_extracted_dir = cell_root / "negative_extracted"
                         attack_params = _attack_params(attack, float(strength))
                         status = "succeeded"
                         error = None
                         bit_accuracy = None
+                        bit_error_rate = None
+                        scoring = None
                         cell_started = time.perf_counter()
 
                         try:
@@ -289,21 +294,66 @@ def run_local_experiment(
                                     seed=int(seed),
                                 )
                             )
+                            negative_attack_results = run_attack_dir(
+                                AttackJob(
+                                    run_id=request.run_id,
+                                    attack_name=attack["method"],
+                                    params=attack_params,
+                                    input_dir=cell_input_dir,
+                                    output_dir=negative_attacked_dir,
+                                    device=request.device,
+                                    seed=int(seed),
+                                )
+                            )
+                            negative_extract_results = run_watermark_extract_dir(
+                                WatermarkExtractJob(
+                                    run_id=request.run_id,
+                                    method_name=algorithm["method"],
+                                    params=dict(algorithm.get("params") or {}),
+                                    input_dir=negative_attacked_dir,
+                                    output_dir=negative_extracted_dir,
+                                    message=request.message,
+                                    device=request.device,
+                                    seed=int(seed),
+                                )
+                            )
 
-                            if not all(result.ok for result in [*embed_results, *attack_results, *extract_results]):
+                            operation_results = [
+                                *embed_results,
+                                *attack_results,
+                                *extract_results,
+                                *negative_attack_results,
+                                *negative_extract_results,
+                            ]
+                            if not all(result.ok for result in operation_results):
                                 status = "failed"
                                 errors = [
                                     result.error
-                                    for result in [*embed_results, *attack_results, *extract_results]
+                                    for result in operation_results
                                     if result.error
                                 ]
                                 error = "; ".join(errors) or "one or more image operations failed"
                             bit_accuracy = _average_bit_accuracy(extract_results)
                             bit_error_rate = _bit_error_rate(bit_accuracy)
+                            elapsed_ms = (time.perf_counter() - cell_started) * 1000
+                            quality_summary = compute_quality_summary(cell_input_dir, attacked_dir)
+                            clean_quality_summary = compute_quality_summary(cell_input_dir, watermarked_dir)
+                            scoring = score_cell(
+                                algorithm_id=algorithm_id,
+                                attack_preset_id=attack_id,
+                                attack_method=attack["method"],
+                                attack_strength=float(strength),
+                                sample_count=len(copied_samples),
+                                positive_extract_results=extract_results,
+                                negative_extract_results=negative_extract_results,
+                                quality_summary=quality_summary,
+                                clean_quality_summary=clean_quality_summary,
+                                elapsed_ms=elapsed_ms,
+                            )
                         except Exception as exc:
                             status = "failed"
                             error = f"{type(exc).__name__}: {exc}"
-                            bit_error_rate = None
+                            elapsed_ms = (time.perf_counter() - cell_started) * 1000
 
                         cell = {
                             "cellKey": cell_key,
@@ -320,9 +370,11 @@ def run_local_experiment(
                             "bitErrorRate": bit_error_rate,
                             "attackParams": attack_params,
                             "manifestPath": str(extracted_dir / "watermark_extract_manifest.json"),
+                            "negativeManifestPath": str(negative_extracted_dir / "watermark_extract_manifest.json"),
                             "outputDir": str(cell_root),
                             "error": error,
-                            "elapsedMs": (time.perf_counter() - cell_started) * 1000,
+                            "elapsedMs": elapsed_ms,
+                            "scoring": scoring,
                         }
                         cells.append(cell)
                         if on_cell is not None:
@@ -355,6 +407,7 @@ def run_local_experiment(
         "progress": _progress(len(cells), expected_cells),
         "elapsedMs": (time.perf_counter() - started) * 1000,
         "aggregates": _aggregate_cells(cells),
+        "score": aggregate_benchmark_score(cells),
         "cells": cells,
     }
 

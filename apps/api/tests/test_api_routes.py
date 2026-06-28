@@ -68,6 +68,14 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(runtime_response.status_code, 200)
             self.assertEqual(runtime_response.json()["device"], "cpu")
 
+            protocols_response = client.get("/benchmark-protocols")
+            self.assertEqual(protocols_response.status_code, 200)
+            self.assertEqual(protocols_response.json()[0]["id"], "waves-official-detection-v1")
+
+            leaderboard_response = client.get("/leaderboard?protocol_id=waves-official-detection-v1")
+            self.assertEqual(leaderboard_response.status_code, 200)
+            self.assertEqual(leaderboard_response.json()["protocol"]["id"], "waves-official-detection-v1")
+
             cancel_response = client.post(f"/runs/{run_response.json()['id']}/cancel")
             self.assertEqual(cancel_response.status_code, 200)
             self.assertEqual(cancel_response.json()["status"], "cancelled")

@@ -43,12 +43,16 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(run["status"], "queued")
             finished = service.execute_run(run["id"])
             results = service.get_run_results(run["id"])
+            score = service.get_run_score(run["id"])
 
             self.assertEqual(finished["status"], "succeeded")
             self.assertEqual(len(results["cells"]), 1)
             self.assertEqual(results["cells"][0]["bitAccuracy"], 1.0)
             self.assertEqual(results["cells"][0]["bitErrorRate"], 0.0)
             self.assertEqual(results["aggregates"][0]["meanBitAccuracy"], 1.0)
+            self.assertEqual(results["score"]["protocolId"], "waves-official-detection-v1")
+            self.assertEqual(score["score"]["status"], "provisional")
+            self.assertEqual(service.list_benchmark_protocols()[0]["id"], "waves-official-detection-v1")
             self.assertTrue(results["summaryExists"])
 
     def test_cancel_queued_run(self) -> None:

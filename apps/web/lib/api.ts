@@ -1,11 +1,14 @@
 import type {
   AlgorithmVersion,
   AttackPreset,
+  BenchmarkProtocol,
   DatasetVersion,
   DemoRunRecord,
   ExperimentSelection,
+  LeaderboardResponse,
   RunLogs,
   RunResults,
+  RunScoreResponse,
   RuntimeInfo,
   SavedExperimentConfig,
   SystemMetrics
@@ -81,6 +84,18 @@ export function createRun(configId: string): Promise<DemoRunRecord> {
 
 export function fetchRunResults(runId: string): Promise<RunResults> {
   return requestJson<RunResults>(`/runs/${runId}/results`);
+}
+
+export function fetchRunScore(runId: string): Promise<RunScoreResponse> {
+  return requestJson<RunScoreResponse>(`/runs/${runId}/score`);
+}
+
+export function fetchBenchmarkProtocols(): Promise<BenchmarkProtocol[]> {
+  return requestJson<BenchmarkProtocol[]>("/benchmark-protocols");
+}
+
+export function fetchLeaderboard(protocolId = "waves-official-detection-v1"): Promise<LeaderboardResponse> {
+  return requestJson<LeaderboardResponse>(`/leaderboard?protocol_id=${encodeURIComponent(protocolId)}`);
 }
 
 export function cancelRun(runId: string): Promise<DemoRunRecord> {

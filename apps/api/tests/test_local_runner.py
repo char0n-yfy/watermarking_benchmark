@@ -42,6 +42,10 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertEqual(summary["cellCount"], 1)
             self.assertEqual(summary["cells"][0]["bitAccuracy"], 1.0)
             self.assertEqual(summary["cells"][0]["bitErrorRate"], 0.0)
+            self.assertEqual(summary["score"]["status"], "provisional")
+            self.assertEqual(summary["score"]["protocolId"], "waves-official-detection-v1")
+            self.assertIn("leaderboardRows", summary["score"])
+            self.assertIsNotNone(summary["cells"][0]["scoring"]["tprAtFpr"])
             self.assertEqual(summary["aggregates"][0]["meanBitErrorRate"], 0.0)
             self.assertTrue((runs_root / "run_smoke" / "run_summary.json").exists())
 

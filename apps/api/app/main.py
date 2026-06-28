@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
@@ -153,6 +155,13 @@ def create_app() -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/runs/{run_id}/score")
+    def get_run_score(run_id: str) -> dict[str, object]:
+        try:
+            return service.get_run_score(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/runs/{run_id}/logs")
     def get_run_logs(run_id: str) -> dict[str, object]:
         try:
@@ -160,7 +169,28 @@ def create_app() -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/benchmark-protocols")
+    def get_benchmark_protocols() -> list[dict[str, object]]:
+        return service.list_benchmark_protocols()
+
     web_out = Path(settings.project_root) / "apps" / "web" / "out"
+
+    @app.get("/leaderboard")
+    def get_leaderboard(
+        protocol_id: Optional[str] = Query(default=None),
+    ) -> object:
+        if protocol_id is None and web_out.exists():
+            page = web_out / "leaderboard.html"
+            fallback = web_out / "leaderboard" / "index.html"
+            if page.exists():
+                return FileResponse(page)
+            if fallback.exists():
+                return FileResponse(fallback)
+        try:
+            return service.list_leaderboard(protocol_id or "waves-official-detection-v1")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     if web_out.exists():
         app.mount("/", StaticFiles(directory=web_out, html=True), name="web")
 

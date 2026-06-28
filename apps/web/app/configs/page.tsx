@@ -82,6 +82,20 @@ function parseSeeds(value: string) {
     .filter((seed) => Number.isFinite(seed));
 }
 
+function idsFromQuery(paramName: string, validIds: Set<string>): string[] | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = new URLSearchParams(window.location.search).get(paramName);
+  if (raw == null) {
+    return null;
+  }
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value && validIds.has(value));
+}
+
 export default function ConfigsPage() {
   const { language, t } = useLanguage();
   const [selection, setSelection] = useState<ExperimentSelection>(emptySelection);
@@ -164,10 +178,34 @@ export default function ConfigsPage() {
         if (cancelled) {
           return;
         }
+        const validDatasetIds = new Set(apiDatasets.map((dataset) => dataset.id));
+        const validAlgorithmIds = new Set(apiAlgorithms.map((algorithm) => algorithm.id));
+        const validAttackIds = new Set(apiAttacks.map((attack) => attack.id));
+        const queryDatasetIds = idsFromQuery("datasetIds", validDatasetIds);
+        const queryAlgorithmIds = idsFromQuery("algorithmIds", validAlgorithmIds);
+        const queryAttackIds = idsFromQuery("attackPresetIds", validAttackIds);
+        const hasQuerySelection =
+          Boolean(queryDatasetIds && queryDatasetIds.length > 0) ||
+          Boolean(queryAlgorithmIds && queryAlgorithmIds.length > 0) ||
+          Boolean(queryAttackIds && queryAttackIds.length > 0);
+
         setDatasets(apiDatasets);
         setAlgorithms(apiAlgorithms);
         setAttacks(apiAttacks);
         setSavedConfigs(apiConfigs);
+
+        if (hasQuerySelection) {
+          setSelection((current) => ({
+            ...current,
+            datasetIds: queryDatasetIds ?? current.datasetIds.filter((id) => validDatasetIds.has(id)),
+            algorithmIds: queryAlgorithmIds ?? current.algorithmIds.filter((id) => validAlgorithmIds.has(id)),
+            attackPresetIds: queryAttackIds ?? current.attackPresetIds.filter((id) => validAttackIds.has(id))
+          }));
+          setIsCreateOpen(true);
+          setMessage(t.configs.prefilledFromResources);
+          return;
+        }
+
         if (apiDatasets.length === 0) {
           setMessage("resources/datasets 下还没有可用图片，请先解压数据集。");
         }

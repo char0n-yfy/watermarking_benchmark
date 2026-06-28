@@ -17,6 +17,7 @@ from app.core.local_db import (
 from app.core.planner import ExperimentCell, ExperimentSpec, materialize_cells
 from app.core.storage import safe_segment
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
+from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "partially_failed"}
@@ -392,6 +393,51 @@ class ExperimentService:
             "summaryExists": summary_path.exists(),
             "summary": summary,
             "aggregates": summary.get("aggregates", []) if isinstance(summary, dict) else [],
+            "score": self._score_from_summary_or_cells(summary, cells),
+        }
+
+    def get_run_score(self, run_id: str) -> dict[str, Any]:
+        run = self.get_run(run_id)
+        results = self.get_run_results(run_id)
+        return {
+            "run": run,
+            "score": results["score"],
+            "summaryPath": results["summaryPath"],
+            "summaryExists": results["summaryExists"],
+        }
+
+    def list_benchmark_protocols(self) -> list[dict[str, Any]]:
+        return benchmark_protocols()
+
+    def list_leaderboard(self, protocol_id: str = PROTOCOL_ID) -> dict[str, Any]:
+        if protocol_id != PROTOCOL_ID:
+            raise KeyError(f"Unknown benchmark protocol: {protocol_id}")
+        rows: list[dict[str, Any]] = []
+        for run in self.list_runs():
+            if run["status"] not in {"succeeded", "partially_failed"}:
+                continue
+            score_response = self.get_run_score(run["id"])
+            score = score_response["score"]
+            for row in score.get("leaderboardRows", []):
+                rows.append(
+                    {
+                        **row,
+                        "runId": run["id"],
+                        "runStatus": run["status"],
+                        "configId": run["configId"],
+                        "configName": run["configName"],
+                        "updatedAt": run["updatedAt"],
+                    }
+                )
+        rows.sort(key=lambda row: (row["officialEligible"], row["wrs"] is not None, row["wrs"] or -1), reverse=True)
+        for index, row in enumerate(rows, start=1):
+            row["rank"] = index
+        return {
+            "protocol": benchmark_protocols()[0],
+            "rows": rows,
+            "officialRows": [row for row in rows if row.get("officialEligible")],
+            "provisionalRows": [row for row in rows if not row.get("officialEligible")],
+            "generatedAt": utc_now(),
         }
 
     def get_run_logs(self, run_id: str, *, max_lines: int = 200) -> dict[str, Any]:
@@ -463,6 +509,21 @@ class ExperimentService:
                 ("cancelled", now, now, run_id),
             )
         return self.get_run(run_id)
+
+    def _score_from_summary_or_cells(
+        self,
+        summary: dict[str, Any] | None,
+        cells: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if isinstance(summary, dict) and isinstance(summary.get("score"), dict):
+            return summary["score"]
+        if isinstance(summary, dict) and isinstance(summary.get("cells"), list):
+            return aggregate_benchmark_score(summary["cells"])
+        hydrated_cells: list[dict[str, Any]] = []
+        for cell in cells:
+            cell_summary = cell.get("summary") if isinstance(cell.get("summary"), dict) else {}
+            hydrated_cells.append({**cell, **cell_summary})
+        return aggregate_benchmark_score(hydrated_cells)
 
 
 def utc_now() -> str:

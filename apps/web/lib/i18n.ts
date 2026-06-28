@@ -38,6 +38,11 @@ export const translations = {
       degraded: "异常",
       rank: "排名",
       overallScore: "综合分",
+      wrs: "WRS",
+      provisional: "临时评分",
+      official: "正式评分",
+      coverage: "覆盖率",
+      runtime: "耗时",
       status: {
         draft: "草稿",
         queued: "排队中",
@@ -109,7 +114,8 @@ export const translations = {
       saveConfig: "保存配置",
       savedToast: "配置已保存到后端数据库",
       empty: "还没有保存的实验配置",
-      specPreview: "配置预览"
+      specPreview: "配置预览",
+      prefilledFromResources: "已从资源页预填实验配置草稿"
     },
     resources: {
       title: "资源",
@@ -118,7 +124,24 @@ export const translations = {
       name: "名称",
       type: "类型",
       status: "状态",
-      details: "详情"
+      details: "详情",
+      resourceBrowser: "资源浏览器",
+      allResources: "全部",
+      search: "搜索",
+      searchPlaceholder: "搜索 id、名称、方法或类别",
+      category: "类别",
+      device: "设备",
+      recommendedOnly: "只看推荐项",
+      availableOnly: "只看可用资源",
+      recommended: "推荐",
+      useInConfig: "用于实验配置",
+      showingResults: "当前显示",
+      resourceDetails: "资源详情",
+      strengthGrid: "强度网格",
+      weightFolders: "权重目录",
+      previousPage: "上一页",
+      nextPage: "下一页",
+      weightsConfigHint: "权重 artifact 不能单独加入实验配置，请通过对应水印算法使用。"
     },
     runs: {
       title: "运行",
@@ -144,6 +167,12 @@ export const translations = {
       matrixCells: "矩阵单元",
       aggregates: "聚合指标",
       runLeaderboard: "运行内排行",
+      benchmarkScore: "WAVES 评分",
+      radar: "攻击类别雷达图",
+      coverage: "协议覆盖",
+      tprAtFpr: "TPR@0.1%FPR",
+      nqd: "NQD",
+      cleanFidelity: "无攻击保真度",
       cell: "单元",
       manifest: "Manifest"
     },
@@ -158,6 +187,9 @@ export const translations = {
       imageQuality: "图像质量",
       speed: "速度",
       overall: "综合分",
+      officialRows: "正式榜单",
+      provisionalRows: "临时结果",
+      noRows: "还没有可评分的运行。完成一次包含攻击强度的实验后，这里会显示临时 WRS。",
       requirements: "上线前条件"
     },
     schema: {
@@ -215,6 +247,11 @@ export const translations = {
       degraded: "degraded",
       rank: "Rank",
       overallScore: "Overall score",
+      wrs: "WRS",
+      provisional: "Provisional",
+      official: "Official",
+      coverage: "Coverage",
+      runtime: "Runtime",
       status: {
         draft: "draft",
         queued: "queued",
@@ -286,7 +323,8 @@ export const translations = {
       saveConfig: "Save config",
       savedToast: "Config saved to the backend database",
       empty: "No saved experiment configs yet",
-      specPreview: "Spec preview"
+      specPreview: "Spec preview",
+      prefilledFromResources: "Experiment draft prefilled from Resources"
     },
     resources: {
       title: "Resources",
@@ -295,7 +333,24 @@ export const translations = {
       name: "Name",
       type: "Type",
       status: "Status",
-      details: "Details"
+      details: "Details",
+      resourceBrowser: "Resource browser",
+      allResources: "All",
+      search: "Search",
+      searchPlaceholder: "Search id, name, method, or category",
+      category: "Category",
+      device: "Device",
+      recommendedOnly: "Recommended only",
+      availableOnly: "Available only",
+      recommended: "Recommended",
+      useInConfig: "Use in Config",
+      showingResults: "Showing",
+      resourceDetails: "Resource details",
+      strengthGrid: "Strength grid",
+      weightFolders: "Weight folders",
+      previousPage: "Previous page",
+      nextPage: "Next page",
+      weightsConfigHint: "Weight artifacts cannot be added to a config directly. Use the corresponding watermark algorithm."
     },
     runs: {
       title: "Runs",
@@ -321,6 +376,12 @@ export const translations = {
       matrixCells: "Matrix cells",
       aggregates: "Aggregates",
       runLeaderboard: "Run-level leaderboard",
+      benchmarkScore: "WAVES score",
+      radar: "Attack-category radar",
+      coverage: "Protocol coverage",
+      tprAtFpr: "TPR@0.1%FPR",
+      nqd: "NQD",
+      cleanFidelity: "Clean fidelity",
       cell: "Cell",
       manifest: "Manifest"
     },
@@ -335,6 +396,9 @@ export const translations = {
       imageQuality: "Image quality",
       speed: "Speed",
       overall: "Overall score",
+      officialRows: "Official leaderboard",
+      provisionalRows: "Provisional results",
+      noRows: "No scoreable runs yet. Complete an experiment with attack strengths to show provisional WRS.",
       requirements: "Requirements"
     },
     schema: {
