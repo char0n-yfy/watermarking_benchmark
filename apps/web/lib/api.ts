@@ -2,6 +2,10 @@ import type {
   AlgorithmVersion,
   AttackPreset,
   BenchmarkProtocol,
+  DatasetCatalogItem,
+  DatasetCatalogResponse,
+  DatasetDownloadJob,
+  DatasetDownloadMode,
   DatasetVersion,
   DemoRunRecord,
   ExperimentSelection,
@@ -37,6 +41,61 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchDatasets(): Promise<DatasetVersion[]> {
   return requestJson<DatasetVersion[]>("/resources/datasets");
+}
+
+export function fetchDatasetCatalog(): Promise<DatasetCatalogResponse> {
+  return requestJson<DatasetCatalogResponse>("/resources/datasets/catalog").catch(async () => {
+    const datasets = await fetchDatasets();
+    return {
+      categories: [{ id: "local", nameZh: "本地数据集" }],
+      items: datasets.map((dataset) => ({
+        id: dataset.id,
+        name: dataset.name,
+        nameZh: dataset.name,
+        category: "local",
+        categoryZh: "本地数据集",
+        description: dataset.path ?? "Locally scanned dataset.",
+        descriptionZh: "本地扫描发现的数据集。",
+        sourceUrl: "",
+        manifestUrl: null,
+        compactSampleCount: dataset.sampleCount,
+        fullSampleCount: dataset.sampleCount,
+        customPoolCount: dataset.sampleCount,
+        officialTotalImages: null,
+        compactAvailable: dataset.sampleCount > 0,
+        localAvailable: dataset.sampleCount > 0,
+        installed: true,
+        customDownloadReady: dataset.sampleCount > 0,
+        remoteManifestConfigured: false,
+        compactUsesRoot: true,
+        rootPath: dataset.path,
+        compactPath: dataset.path,
+        fullPath: dataset.path
+      }))
+    };
+  });
+}
+
+export function fetchDatasetDetail(datasetId: string): Promise<DatasetCatalogItem> {
+  return requestJson<DatasetCatalogItem>(`/resources/datasets/${encodeURIComponent(datasetId)}`);
+}
+
+export function startDatasetDownload(
+  datasetId: string,
+  payload: { mode: DatasetDownloadMode; seed?: number; sampleCount?: number }
+): Promise<DatasetDownloadJob> {
+  return requestJson<DatasetDownloadJob>(`/resources/datasets/${encodeURIComponent(datasetId)}/downloads`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchDatasetDownloadJob(jobId: string): Promise<DatasetDownloadJob> {
+  return requestJson<DatasetDownloadJob>(`/resources/datasets/downloads/${encodeURIComponent(jobId)}`);
+}
+
+export function datasetDownloadArchiveUrl(jobId: string): string {
+  return `${apiBaseUrl}/resources/datasets/downloads/${encodeURIComponent(jobId)}/archive`;
 }
 
 export function fetchAlgorithms(): Promise<AlgorithmVersion[]> {

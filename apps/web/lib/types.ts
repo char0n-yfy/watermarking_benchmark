@@ -17,6 +17,56 @@ export interface DatasetVersion {
   path?: string;
 }
 
+export interface DatasetCatalogItem {
+  id: string;
+  name: string;
+  nameZh: string;
+  category: string;
+  categoryZh: string;
+  description: string;
+  descriptionZh: string;
+  sourceUrl: string;
+  manifestUrl?: string | null;
+  compactSampleCount: number;
+  fullSampleCount: number;
+  customPoolCount: number;
+  officialTotalImages?: number | null;
+  compactAvailable: boolean;
+  localAvailable: boolean;
+  installed: boolean;
+  customDownloadReady: boolean;
+  remoteManifestConfigured: boolean;
+  compactUsesRoot?: boolean;
+  rootPath?: string;
+  compactPath?: string;
+  fullPath?: string;
+}
+
+export interface DatasetCatalogResponse {
+  categories: Array<{ id: string; nameZh: string }>;
+  items: DatasetCatalogItem[];
+}
+
+export type DatasetDownloadMode = "compact" | "custom";
+export type DatasetDownloadStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface DatasetDownloadJob {
+  id: string;
+  datasetId: string;
+  mode: DatasetDownloadMode;
+  status: DatasetDownloadStatus;
+  progress: number;
+  totalItems: number;
+  completedItems: number;
+  seed?: number | null;
+  sampleCount?: number | null;
+  message?: string | null;
+  error?: string | null;
+  outputDir?: string | null;
+  archivePath?: string | null;
+  bytesDownloaded?: number;
+}
+
 export interface AlgorithmVersion {
   id: string;
   name: string;

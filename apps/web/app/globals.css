@@ -1457,6 +1457,84 @@ a.button {
   line-height: 1.5;
 }
 
+.dataset-download-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+}
+
+.dataset-download-mode.segmented-control {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.dataset-category-group {
+  display: grid;
+  gap: 8px;
+}
+
+.dataset-category-heading {
+  margin-top: 4px;
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.dataset-pool-summary {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.detail-metrics-grid.dataset-only-category {
+  grid-template-columns: 1fr;
+}
+
+.dataset-download-hint {
+  font-size: 13px;
+}
+
+.dataset-download-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dataset-download-fields label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dataset-download-fields input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+.dataset-download-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.dataset-download-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.dataset-download-progress small {
+  color: var(--muted);
+}
+
 .detail-metrics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

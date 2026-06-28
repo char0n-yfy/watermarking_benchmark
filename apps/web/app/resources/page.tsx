@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchAlgorithms, fetchAttacks, fetchDatasets } from "@/lib/api";
+import { fetchAlgorithms, fetchAttacks, fetchDatasetCatalog, fetchDatasetDownloadJob, datasetDownloadArchiveUrl, startDatasetDownload } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
@@ -25,7 +25,7 @@ import {
   attacks as fallbackAttacks,
   datasets as fallbackDatasets
 } from "@/lib/mock-data";
-import type { AlgorithmVersion, AttackPreset, DatasetVersion, ModelArtifact, ResourceStatus } from "@/lib/types";
+import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ModelArtifact, ResourceStatus } from "@/lib/types";
 
 type ResourceType = "datasets" | "watermarks" | "attacks" | "weights";
 type DeviceFilter = "all" | "cpu" | "gpu";
@@ -50,6 +50,7 @@ interface BrowserResource {
   available?: boolean;
   size?: string;
   checksum?: string;
+  catalog?: DatasetCatalogItem;
 }
 
 const PAGE_SIZE = 15;
@@ -57,6 +58,7 @@ const PAGE_SIZE = 15;
 export default function ResourcesPage() {
   const { language, t } = useLanguage();
   const [datasets, setDatasets] = useState<DatasetVersion[]>(fallbackDatasets);
+  const [catalogItems, setCatalogItems] = useState<DatasetCatalogItem[]>([]);
   const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>(fallbackAlgorithms);
   const [attacks, setAttacks] = useState<AttackPreset[]>(fallbackAttacks);
   const [activeType, setActiveType] = useState<ResourceType>("datasets");
@@ -70,12 +72,21 @@ export default function ResourcesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchDatasets(), fetchAlgorithms(), fetchAttacks()])
-      .then(([apiDatasets, apiAlgorithms, apiAttacks]) => {
+    Promise.all([fetchDatasetCatalog(), fetchAlgorithms(), fetchAttacks()])
+      .then(([catalog, apiAlgorithms, apiAttacks]) => {
         if (cancelled) {
           return;
         }
-        setDatasets(apiDatasets);
+        setCatalogItems(catalog.items);
+        setDatasets(
+          catalog.items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            sampleCount: item.compactAvailable ? item.compactSampleCount : item.fullSampleCount,
+            version: item.installed ? "local" : "catalog",
+            path: item.rootPath
+          }))
+        );
         setAlgorithms(apiAlgorithms.length > 0 ? apiAlgorithms : fallbackAlgorithms);
         setAttacks(apiAttacks.length > 0 ? apiAttacks : fallbackAttacks);
       })
@@ -87,12 +98,12 @@ export default function ResourcesPage() {
 
   const resourceGroups = useMemo(
     () => ({
-      datasets: datasets.map((dataset) => datasetToResource(dataset, language)),
+      datasets: catalogItems.map((item) => catalogToResource(item, language)),
       watermarks: algorithms.map(algorithmToResource),
       attacks: attacks.map((attack) => attackToResource(attack, language)),
       weights: artifacts.map(weightToResource)
     }),
-    [algorithms, attacks, datasets, language]
+    [algorithms, attacks, catalogItems, language]
   );
 
   const activeResources = resourceGroups[activeType];
@@ -117,8 +128,24 @@ export default function ResourcesPage() {
     });
   }, [activeResources, activeType, availableOnly, categoryFilter, deviceFilter, query, recommendedOnly]);
 
+  const groupedDatasetResources = useMemo(() => {
+    if (activeType !== "datasets") {
+      return null;
+    }
+    const groups = new Map<string, BrowserResource[]>();
+    for (const resource of filteredResources) {
+      const bucket = groups.get(resource.category) ?? [];
+      bucket.push(resource);
+      groups.set(resource.category, bucket);
+    }
+    return Array.from(groups.entries());
+  }, [activeType, filteredResources]);
+
   const pageCount = Math.max(1, Math.ceil(filteredResources.length / PAGE_SIZE));
-  const visibleResources = filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const visibleResources =
+    activeType === "datasets"
+      ? filteredResources
+      : filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const selectedResource =
     filteredResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null;
   const totalSamples = datasets.reduce((total, dataset) => total + dataset.sampleCount, 0);
@@ -264,25 +291,52 @@ export default function ResourcesPage() {
                 {t.resources.showingResults}: {visibleResources.length} / {filteredResources.length}
               </span>
             </div>
-            {visibleResources.map((resource) => (
-              <button
-                className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
-                key={resource.id}
-                onClick={() => setSelectedResourceId(resource.id)}
-                type="button"
-              >
-                <span className="resource-row-main">
-                  <strong>{resource.name}</strong>
-                  <small>{resource.subtitle}</small>
-                </span>
-                <span className="resource-row-meta">
-                  {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                  {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
-                  <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
-                </span>
-              </button>
-            ))}
-            {visibleResources.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+            {activeType === "datasets" && groupedDatasetResources
+              ? groupedDatasetResources.map(([category, resources]) => (
+                  <div className="dataset-category-group" key={category}>
+                    <div className="dataset-category-heading">{category}</div>
+                    {resources.map((resource) => (
+                      <button
+                        className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
+                        key={resource.id}
+                        onClick={() => setSelectedResourceId(resource.id)}
+                        type="button"
+                      >
+                        <span className="resource-row-main">
+                          <strong>{resource.name}</strong>
+                          <small>{resource.subtitle}</small>
+                        </span>
+                        <span className="resource-row-meta">
+                          {resource.catalog?.installed ? (
+                            <span className="badge ok">{t.resources.installed}</span>
+                          ) : (
+                            <span className="badge">{t.resources.notInstalled}</span>
+                          )}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))
+              : visibleResources.map((resource) => (
+                  <button
+                    className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
+                    key={resource.id}
+                    onClick={() => setSelectedResourceId(resource.id)}
+                    type="button"
+                  >
+                    <span className="resource-row-main">
+                      <strong>{resource.name}</strong>
+                      <small>{resource.subtitle}</small>
+                    </span>
+                    <span className="resource-row-meta">
+                      {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+                      {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
+                      <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
+                    </span>
+                  </button>
+                ))}
+            {filteredResources.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+            {activeType !== "datasets" ? (
             <div className="pagination-row">
               <button
                 className="icon-button"
@@ -306,6 +360,7 @@ export default function ResourcesPage() {
                 <ChevronRight size={16} />
               </button>
             </div>
+            ) : null}
           </div>
         </div>
 
@@ -338,18 +393,33 @@ export default function ResourcesPage() {
           <p>{resource.description || resource.subtitle}</p>
         </div>
 
-        <div className="detail-metrics-grid">
-          <DetailMetric label="ID" value={resource.id} />
-          <DetailMetric label={t.resources.category} value={resource.category} />
-          <DetailMetric label="Method" value={resource.method ?? "n/a"} />
-          <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
-          {resource.sampleCount != null ? (
-            <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
-          ) : null}
-          {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
-          {resource.size ? <DetailMetric label="Size" value={resource.size} /> : null}
-          {resource.checksum ? <DetailMetric label="Checksum" value={resource.checksum} /> : null}
+        <div className={resource.type === "datasets" ? "detail-metrics-grid dataset-only-category" : "detail-metrics-grid"}>
+          {resource.type === "datasets" ? (
+            <DetailMetric label={t.resources.category} value={resource.category} />
+          ) : (
+            <>
+              <DetailMetric label="ID" value={resource.id} />
+              <DetailMetric label={t.resources.category} value={resource.category} />
+              <DetailMetric label="Method" value={resource.method ?? "n/a"} />
+              <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
+              {resource.sampleCount != null ? (
+                <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
+              ) : null}
+              {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
+              {resource.size ? <DetailMetric label="Size" value={resource.size} /> : null}
+              {resource.checksum ? <DetailMetric label="Checksum" value={resource.checksum} /> : null}
+            </>
+          )}
         </div>
+
+        {resource.catalog?.sourceUrl ? (
+          <div className="detail-section">
+            <strong>{t.resources.sourceLink}</strong>
+            <a href={resource.catalog.sourceUrl} rel="noreferrer" target="_blank">
+              {resource.catalog.sourceUrl}
+            </a>
+          </div>
+        ) : null}
 
         {resource.strengths ? (
           <div className="detail-section">
@@ -371,11 +441,15 @@ export default function ResourcesPage() {
           </div>
         ) : null}
 
-        {resource.path ? (
+        {resource.path && resource.type !== "datasets" ? (
           <div className="detail-section">
             <strong>Path</strong>
             <code>{resource.path}</code>
           </div>
+        ) : null}
+
+        {resource.type === "datasets" && resource.catalog ? (
+          <DatasetDownloadPanel catalog={resource.catalog} language={language} t={t} />
         ) : null}
 
         {configHref ? (
@@ -417,6 +491,162 @@ function DetailMetric({ label, value }: { label: string; value: string }) {
     <div className="detail-metric">
       <span>{label}</span>
       <strong title={value}>{value}</strong>
+    </div>
+  );
+}
+
+function formatDatasetSubtitle(item: DatasetCatalogItem, language: "zh" | "en"): string {
+  if (item.officialTotalImages && item.officialTotalImages > 0) {
+    return language === "zh"
+      ? `官方约 ${item.officialTotalImages.toLocaleString()} 张`
+      : `official ~${item.officialTotalImages.toLocaleString()}`;
+  }
+  return language === "zh" ? "官方总量待公布" : "official total TBD";
+}
+
+function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): BrowserResource {
+  const displayName = language === "zh" ? item.nameZh : item.name;
+  const description = language === "zh" ? item.descriptionZh : item.description;
+  const category = language === "zh" ? item.categoryZh : item.category;
+  const sampleCount = item.compactAvailable ? item.compactSampleCount : item.fullSampleCount;
+  return {
+    id: item.id,
+    type: "datasets",
+    name: displayName,
+    subtitle: formatDatasetSubtitle(item, language),
+    category,
+    status: item.installed ? "enabled" : "reviewed",
+    statusTone: item.installed ? "ok" : "warn",
+    available: true,
+    sampleCount,
+    version: item.installed ? "local" : "catalog",
+    path: item.rootPath,
+    description,
+    catalog: item
+  };
+}
+
+function DatasetDownloadPanel({
+  catalog,
+  language,
+  t
+}: {
+  catalog: DatasetCatalogItem;
+  language: "zh" | "en";
+  t: ReturnType<typeof useLanguage>["t"];
+}) {
+  const [mode, setMode] = useState<DatasetDownloadMode>("compact");
+  const [seed, setSeed] = useState(42);
+  const [sampleCount, setSampleCount] = useState(100);
+  const [job, setJob] = useState<DatasetDownloadJob | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      fetchDatasetDownloadJob(job.id)
+        .then((next) => setJob(next))
+        .catch(() => undefined);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [job]);
+
+  const compactReady = catalog.compactAvailable;
+  const customReady = catalog.customDownloadReady;
+  const canStart = mode === "compact" ? compactReady : customReady;
+  const totalImages = catalog.officialTotalImages ?? 0;
+  const progressPercent =
+    job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
+
+  async function handleStart() {
+    setBusy(true);
+    try {
+      const created = await startDatasetDownload(catalog.id, {
+        mode,
+        seed,
+        sampleCount: mode === "compact" ? 1000 : sampleCount
+      });
+      setJob(created);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="detail-section dataset-download-panel">
+      <strong>{t.resources.downloadPanel}</strong>
+      <div className="segmented-control dataset-download-mode">
+        <button className={mode === "compact" ? "active" : ""} onClick={() => setMode("compact")} type="button">
+          {t.resources.compactDownload}
+        </button>
+        <button className={mode === "custom" ? "active" : ""} onClick={() => setMode("custom")} type="button">
+          {t.resources.customDownload}
+        </button>
+      </div>
+      {mode === "compact" ? (
+        <p className="dataset-download-hint">
+          {`${t.resources.compactDownloadHint}（${t.resources.compactPack}：${catalog.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}）`}
+        </p>
+      ) : null}
+      {mode === "custom" ? (
+        <div className="dataset-pool-summary">
+          <span>
+            {t.resources.datasetTotalImages}：
+            {totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : "—"}
+          </span>
+        </div>
+      ) : null}
+      {!compactReady && mode === "compact" ? <div className="risk warn">{t.resources.compactUnavailable}</div> : null}
+      {!customReady && mode === "custom" ? <div className="risk warn">{t.resources.customUnavailable}</div> : null}
+      {mode === "custom" ? (
+        <div className="dataset-download-fields">
+          <label>
+            {t.resources.randomSeed}
+            <input
+              min={0}
+              onChange={(event) => setSeed(Number(event.target.value) || 0)}
+              type="number"
+              value={seed}
+            />
+          </label>
+          <label>
+            {t.resources.downloadCount}
+            <input
+              min={1}
+              max={10000}
+              onChange={(event) => setSampleCount(Number(event.target.value) || 1)}
+              type="number"
+              value={sampleCount}
+            />
+          </label>
+        </div>
+      ) : null}
+      <button className="button primary" disabled={!canStart || busy || job?.status === "running"} onClick={handleStart} type="button">
+        {t.resources.startDownload}
+      </button>
+      {job ? (
+        <div className="dataset-download-progress">
+          <div className="dataset-download-progress-head">
+            <span>{t.resources.downloadProgress}</span>
+            <strong>{progressPercent}%</strong>
+          </div>
+          <div className="progress-track">
+            <div className="progress-bar" style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }} />
+          </div>
+          <small>
+            {job.completedItems}/{job.totalItems} · {job.status}
+            {job.message ? ` · ${job.message}` : ""}
+          </small>
+          {job.status === "failed" && job.error ? <div className="risk error">{t.resources.downloadFailed}: {job.error}</div> : null}
+          {job.status === "succeeded" ? (
+            <a className="button secondary" href={datasetDownloadArchiveUrl(job.id)}>
+              {t.resources.downloadReady}
+            </a>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

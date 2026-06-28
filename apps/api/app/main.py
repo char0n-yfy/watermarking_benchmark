@@ -11,7 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from .core.config import get_settings
 from .core.local_db import LocalDatabase
 from .core.status import RunStatus
+from .schemas.datasets import DatasetDownloadCreatePayload
 from .schemas.experiments import ExperimentConfigCreatePayload, ExperimentConfigRenamePayload, RunCreatePayload
+from .services.dataset_catalog import build_catalog_item, get_catalog_entry, list_categories, list_dataset_catalog
+from .services.dataset_download import DatasetDownloadService
 from .services.experiment_service import ExperimentService
 from .services.resources import (
     list_attack_resources,
@@ -28,6 +31,7 @@ def create_app() -> FastAPI:
         resources_root=settings.resources_root,
         runs_root=settings.runs_root,
     )
+    download_service = DatasetDownloadService(settings.resources_root)
 
     app = FastAPI(
         title="Watermark Benchmark API",
@@ -84,6 +88,67 @@ def create_app() -> FastAPI:
     @app.get("/resources/datasets")
     def datasets() -> list[dict[str, object]]:
         return [dataset.to_json() for dataset in scan_dataset_resources(settings.resources_root)]
+
+    @app.get("/resources/datasets/catalog")
+    def dataset_catalog() -> dict[str, object]:
+        return {
+            "categories": list_categories(),
+            "items": list_dataset_catalog(settings.resources_root),
+        }
+
+    @app.get("/resources/datasets/downloads/{job_id}")
+    def get_dataset_download(job_id: str) -> dict[str, object]:
+        try:
+            return download_service.get_job(job_id).to_json()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/resources/datasets/downloads/{job_id}/archive")
+    def download_dataset_archive(job_id: str) -> FileResponse:
+        try:
+            job = download_service.get_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if job.status != "succeeded" or not job.archive_path:
+            raise HTTPException(status_code=409, detail="Download job is not ready")
+        archive_path = Path(job.archive_path)
+        if not archive_path.exists():
+            raise HTTPException(status_code=404, detail="Archive file not found")
+        filename = f"{job.dataset_id}-{job.mode}-{job.id}.zip"
+        return FileResponse(
+            archive_path,
+            media_type="application/zip",
+            filename=filename,
+        )
+
+    @app.get("/resources/datasets/{dataset_id}")
+    def dataset_detail(dataset_id: str) -> dict[str, object]:
+        try:
+            entry = get_catalog_entry(dataset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return build_catalog_item(settings.resources_root, entry)
+
+    @app.post("/resources/datasets/{dataset_id}/downloads")
+    def start_dataset_download(dataset_id: str, payload: DatasetDownloadCreatePayload) -> dict[str, object]:
+        try:
+            get_catalog_entry(dataset_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            job = download_service.start_download(
+                dataset_id,
+                mode=payload.mode,
+                seed=payload.seed,
+                sample_count=payload.sample_count,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return job.to_json()
+
+    @app.get("/resources/datasets/{dataset_id}/downloads")
+    def list_dataset_downloads(dataset_id: str) -> list[dict[str, object]]:
+        return [job.to_json() for job in download_service.list_jobs(dataset_id)]
 
     @app.get("/resources/watermarks")
     def watermarks() -> list[dict[str, object]]:
