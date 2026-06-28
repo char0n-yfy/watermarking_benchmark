@@ -3,8 +3,12 @@ from __future__ import annotations
 import os
 import platform
 import re
-import resource
 import shutil
+
+try:
+    import resource
+except ModuleNotFoundError:
+    resource = None  # Windows has no resource module
 import socket
 import subprocess
 import sys
@@ -61,8 +65,11 @@ def _percent(used: float, total: float) -> float | None:
 
 
 def _load_average() -> list[float]:
+    getloadavg = getattr(os, "getloadavg", None)
+    if getloadavg is None:
+        return []
     try:
-        return [round(value, 2) for value in os.getloadavg()]
+        return [round(value, 2) for value in getloadavg()]
     except OSError:
         return []
 
@@ -302,6 +309,8 @@ def _uptime_seconds() -> float | None:
 
 
 def _process_rss_bytes() -> int | None:
+    if resource is None:
+        return None
     usage = resource.getrusage(resource.RUSAGE_SELF)
     if platform.system() == "Darwin":
         return int(usage.ru_maxrss)

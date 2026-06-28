@@ -6,7 +6,7 @@ import signal
 import socket
 import sys
 import time
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 
@@ -59,6 +59,21 @@ def _raise_timeout(_signum: int, _frame: object) -> None:
     raise RunTimeoutError("run exceeded WM_BENCH_RUN_TIMEOUT_SECONDS")
 
 
+@contextmanager
+def _run_timeout(seconds: int):
+    if seconds <= 0 or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    previous = signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def run_once(worker_id: str | None = None) -> int:
     settings = get_settings()
     service = build_service()
@@ -87,17 +102,13 @@ def run_once(worker_id: str | None = None) -> int:
             with redirect_stdout(log_file), redirect_stderr(log_file):
                 print(f"[worker] start run={run_id} worker={resolved_worker_id} device={device}", flush=True)
                 started = time.perf_counter()
-                signal.signal(signal.SIGALRM, _raise_timeout)
-                signal.alarm(max(0, settings.run_timeout_seconds))
-                try:
+                with _run_timeout(settings.run_timeout_seconds):
                     result = service.execute_run(
                         run_id,
                         worker_id=resolved_worker_id,
                         device=device,
                         log_path=log_path,
                     )
-                finally:
-                    signal.alarm(0)
                 elapsed = time.perf_counter() - started
                 print(
                     f"[worker] finish run={run_id} status={result['status']} elapsed={elapsed:.2f}s",
