@@ -111,6 +111,7 @@ WATERMARK_DISPLAY_NAMES = {
 }
 
 ATTACK_DISPLAY_NAMES = {
+    "3d_viewpoint_rerendering": "3D Viewpoint Re-rendering (SHARP)",
     "cew_c1": "CEW-C1 Basic Auto-Fix SR",
     "cew_c2": "CEW-C2 Color Retouch SR",
     "cew_c3": "CEW-C3 Detail Enhance SR",
@@ -131,7 +132,9 @@ ATTACK_DISPLAY_NAMES = {
     "4x_regen": "4x Regeneration",
     "gaussian_blur": "Gaussian Blur",
     "gaussian_noise": "Gaussian Noise",
+    "image_to_vedio": "NFPA Image-to-Vedio",
     "jpeg": "JPEG Compression",
+    "noise_to_image": "CtrlRegen Noise-to-Image",
     "regen_diffusion": "Diffusion Regeneration",
     "regen_vae": "VAE Regeneration",
     "resized_crop": "Resized Crop",
@@ -157,6 +160,7 @@ WATERMARK_PARAM_OVERRIDES: dict[str, dict[str, Any]] = {
 RECOMMENDED_WATERMARKS = {"traditional-lsb"}
 
 ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
+    "3d_viewpoint_rerendering": [0.01, 0.02, 0.04],
     "brightness": [0.25, 0.5, 0.75],
     "contrast": [0.25, 0.5, 0.75],
     "cew_e1": [0.25, 0.5, 0.75],
@@ -169,12 +173,15 @@ ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
     "erasing": [0.25, 0.5, 0.75],
     "gaussian_blur": [0.2, 0.4, 0.6],
     "gaussian_noise": [0.25, 0.5, 0.75],
+    "image_to_vedio": [20.0, 40.0, 60.0],
     "jpeg": [0.25, 0.5, 0.75],
+    "noise_to_image": [0.25, 0.5, 0.75, 1.0],
     "resized_crop": [0.1, 0.3, 0.5],
     "rotation": [0.25, 0.5, 0.75],
 }
 
 ATTACK_PARAM_BY_METHOD = {
+    "3d_viewpoint_rerendering": "max_disparity",
     "cew_e1": "strength",
     "cew_e2": "strength",
     "cew_e3": "strength",
@@ -182,6 +189,8 @@ ATTACK_PARAM_BY_METHOD = {
     "cew_s1": "scale",
     "cew_s2": "scale",
     "cew_s3": "scale",
+    "image_to_vedio": "xy",
+    "noise_to_image": "step",
 }
 
 LEGACY_ATTACK_PRESETS: dict[str, dict[str, Any]] = {
@@ -255,7 +264,7 @@ def _watermark_category(method: str) -> str:
 def _attack_category(method: str) -> str:
     if method.startswith("cew_"):
         return "consumer-enhancement"
-    if "regen" in method:
+    if "regen" in method or method in {"noise_to_image", "image_to_vedio", "3d_viewpoint_rerendering"}:
         return "regeneration"
     return "distortion"
 
@@ -267,6 +276,7 @@ def _has_explicit_init_param(cls: type[Any], parameter_name: str) -> bool:
 def _attack_requires_gpu(method: str) -> bool:
     return (
         "regen" in method
+        or method in {"noise_to_image", "image_to_vedio", "3d_viewpoint_rerendering"}
         or method.endswith("_deep")
         or method.startswith("cew_d")
         or method.startswith("cew_s")

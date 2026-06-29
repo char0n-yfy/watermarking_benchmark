@@ -68,6 +68,28 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(get_attack_catalog_item("cew_s1")["strengthParam"], "scale")
         self.assertEqual(get_attack_catalog_item("cew_s1")["strengths"], [2.0, 4.0])
 
+    def test_ctrlregen_and_nfpa_attacks_are_grouped_for_frontend(self) -> None:
+        noise_to_image = get_attack_catalog_item("noise_to_image")
+        image_to_vedio = get_attack_catalog_item("image_to_vedio")
+
+        self.assertEqual(noise_to_image["category"], "regeneration")
+        self.assertEqual(noise_to_image["strengthParam"], "step")
+        self.assertEqual(noise_to_image["strengths"], [0.25, 0.5, 0.75, 1.0])
+        self.assertTrue(noise_to_image["requiresGpu"])
+
+        self.assertEqual(image_to_vedio["category"], "regeneration")
+        self.assertEqual(image_to_vedio["strengthParam"], "xy")
+        self.assertEqual(image_to_vedio["strengths"], [20.0, 40.0, 60.0])
+        self.assertTrue(image_to_vedio["requiresGpu"])
+
+    def test_sharp_viewpoint_rerendering_attack_is_grouped_for_frontend(self) -> None:
+        attack = get_attack_catalog_item("3d_viewpoint_rerendering")
+
+        self.assertEqual(attack["category"], "regeneration")
+        self.assertEqual(attack["strengthParam"], "max_disparity")
+        self.assertEqual(attack["strengths"], [0.01, 0.02, 0.04])
+        self.assertTrue(attack["requiresGpu"])
+
     def test_legacy_attack_presets_remain_resolvable(self) -> None:
         jpeg_smoke = get_attack_catalog_item("atk-jpeg-smoke")
         blur_sweep = get_attack_catalog_item("atk-blur-sweep")
@@ -88,6 +110,12 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(_attack_params(cew_composite, 0.5), {})
         self.assertEqual(_attack_params(cew_edit, 0.75), {"strength": 0.75})
         self.assertEqual(_attack_params(cew_sr, 4.0), {"scale": 4})
+        self.assertEqual(_attack_params(get_attack_catalog_item("image_to_vedio"), 40.0), {"xy": 40})
+        self.assertEqual(_attack_params(get_attack_catalog_item("noise_to_image"), 0.75), {"step": 0.75})
+        self.assertEqual(
+            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering"), 0.02),
+            {"max_disparity": 0.02},
+        )
 
 
 if __name__ == "__main__":
