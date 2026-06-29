@@ -26,6 +26,9 @@ class ObjectStorageSettings:
 
     @classmethod
     def from_env(cls) -> ObjectStorageSettings:
+        from ..core.env_loader import load_project_env
+
+        load_project_env(override=True)
         bucket = os.getenv("WM_BENCH_OSS_BUCKET", "").strip()
         access_key = os.getenv("WM_BENCH_OSS_ACCESS_KEY", "").strip()
         secret_key = os.getenv("WM_BENCH_OSS_SECRET_KEY", "").strip()

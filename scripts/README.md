@@ -2,6 +2,26 @@
 
 这些脚本用于一键拉起 WM Bench 的 Web UI、FastAPI 后端和本地 Worker。
 
+## 首次配置（OSS 数据集下载）
+
+每台电脑只需配置一次：
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+copy .env.example .env
+```
+
+编辑项目根目录 `.env`，填入 RAM 用户的 `WM_BENCH_OSS_ACCESS_KEY` 和 `WM_BENCH_OSS_SECRET_KEY`（`.env` 已在 `.gitignore` 中，不会提交到 Git）。
+
+启动脚本和 API 会自动加载 `.env`，无需每次在终端手动 `export` / `$env:`。
+
+验证 OSS 是否生效：打开 `http://127.0.0.1:8000/resources/storage/status`，应看到 `"enabled": true`。
+
 ## macOS
 
 在项目根目录执行：

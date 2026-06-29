@@ -130,7 +130,9 @@ class ObjectStorageIntegrationTest(unittest.TestCase):
             self.assertEqual(len(list(output_dir.glob("*"))), 2)
 
     def test_object_storage_disabled_by_default(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "app.core.env_loader.load_project_env", return_value=False
+        ):
             from app.services.object_storage import ObjectStorageSettings
 
             settings = ObjectStorageSettings.from_env()

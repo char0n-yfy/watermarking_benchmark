@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+from .env_loader import PROJECT_ROOT, load_project_env
 
 
 @dataclass(frozen=True)
@@ -26,6 +25,7 @@ class Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    load_project_env(override=True)
     data_root = Path(os.getenv("WM_BENCH_DATA_ROOT", str(PROJECT_ROOT))).expanduser()
     runs_root = Path(os.getenv("WM_BENCH_RUNS_ROOT", str(PROJECT_ROOT / "runs" / "local"))).expanduser()
     database_path = Path(

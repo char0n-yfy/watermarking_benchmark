@@ -11,6 +11,9 @@ $ErrorActionPreference = "Stop"
 $RootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $RootDir
 
+. (Join-Path $PSScriptRoot "import-dotenv.ps1")
+Import-DotEnvFile -Path (Join-Path $RootDir ".env") -OverwriteExisting | Out-Null
+
 $VenvDir = if ($env:WM_BENCH_VENV) { $env:WM_BENCH_VENV } else { ".venv" }
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $RunsRoot = if ($env:WM_BENCH_RUNS_ROOT) { $env:WM_BENCH_RUNS_ROOT } else { Join-Path $RootDir "runs\local" }
