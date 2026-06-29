@@ -4,15 +4,21 @@ import type { BenchmarkScore, RunResults } from "@/lib/types";
 export function RobustnessCurve({
   results,
   score,
-  emptyText
+  emptyText,
+  selectedAlgorithmIds = []
 }: {
   results: RunResults | null;
   score?: BenchmarkScore | null;
   emptyText: string;
+  selectedAlgorithmIds?: string[];
 }) {
   if (score?.curvePoints?.length) {
+    const selected = new Set(selectedAlgorithmIds);
     const grouped = new Map<string, Array<{ x: number; y: number; attack: string }>>();
     for (const point of score.curvePoints) {
+      if (selected.size > 0 && !selected.has(point.algorithmId)) {
+        continue;
+      }
       const key = point.algorithmId;
       const current = grouped.get(key) ?? [];
       current.push({ x: point.xNqd, y: point.yTprAtFpr, attack: point.attackMethod });
@@ -29,7 +35,8 @@ export function RobustnessCurve({
     }
   }
 
-  const series = buildCurveSeries(results);
+  const selected = new Set(selectedAlgorithmIds);
+  const series = buildCurveSeries(results).filter((item) => selected.size === 0 || selected.has(item.algorithmId));
   if (series.length === 0) {
     return <div className="empty compact-empty">{emptyText}</div>;
   }

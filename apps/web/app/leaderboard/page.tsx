@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CheckCircle2, Gauge, ShieldCheck, Trophy } from "lucide-react";
+import { BarChart3, CheckCircle2, Download, Gauge, ShieldCheck, Trophy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { BenchmarkRadar } from "@/components/BenchmarkRadar";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -52,6 +52,12 @@ export default function LeaderboardPage() {
         <div className="title-block">
           <h1>{t.leaderboard.title}</h1>
           <p>{t.leaderboard.subtitle}</p>
+        </div>
+        <div className="toolbar">
+          <button className="button" disabled={rows.length === 0} onClick={() => exportLeaderboardCsv(rows)} type="button">
+            <Download size={16} />
+            {t.results.exportCsv}
+          </button>
         </div>
       </div>
 
@@ -117,6 +123,12 @@ export default function LeaderboardPage() {
               <span>{t.common.samples}</span>
               <strong>{protocol?.officialMinSamples ?? 5000}</strong>
             </div>
+            <div className="metric-row">
+              <span>{t.leaderboard.protocolStatus}</span>
+              <strong>
+                {officialRows.length} {t.common.official} · {provisionalRows.length} {t.common.provisional}
+              </strong>
+            </div>
           </div>
         </div>
 
@@ -176,4 +188,31 @@ export default function LeaderboardPage() {
       </table>
     );
   }
+}
+
+function exportLeaderboardCsv(rows: LeaderboardResponse["rows"]) {
+  const csvRows = [
+    ["rank", "algorithm_id", "protocol_status", "wrs", "clean_fidelity", "avg_nqd", "coverage", "runtime_ms", "run_id"],
+    ...rows.map((row) => [
+      String(row.rank),
+      row.algorithmId,
+      row.protocolStatus,
+      String(row.wrs ?? ""),
+      String(row.cleanFidelity ?? ""),
+      String(row.avgNqd ?? ""),
+      `${row.coverage.coveredCategoryCount}/${row.coverage.requiredCategoryCount}`,
+      String(row.runtimeMs ?? ""),
+      row.runId ?? ""
+    ])
+  ];
+  const csv = csvRows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "wm-bench-leaderboard.csv";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
