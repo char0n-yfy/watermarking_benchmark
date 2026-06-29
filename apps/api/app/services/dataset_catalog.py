@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -277,15 +278,44 @@ def resolve_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dic
     }
 
 
+def _probe_remote_availability(
+    oss: ObjectStorageClient | None,
+    entries: tuple[DatasetCatalogEntry, ...],
+) -> dict[str, tuple[bool, bool]]:
+    if not oss or not oss.enabled or not entries:
+        return {}
+
+    def probe(entry_id: str) -> tuple[str, bool, bool]:
+        compact = oss.exists(oss.dataset_compact_key(entry_id))
+        manifest = oss.exists(oss.dataset_manifest_key(entry_id))
+        return entry_id, compact, manifest
+
+    results: dict[str, tuple[bool, bool]] = {}
+    workers = min(8, max(1, len(entries)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(probe, entry.id) for entry in entries]
+        for future in as_completed(futures):
+            entry_id, compact, manifest = future.result()
+            results[entry_id] = (compact, manifest)
+    return results
+
+
 def build_catalog_item(
     resources_root: Path,
     entry: DatasetCatalogEntry,
     *,
     oss: ObjectStorageClient | None = None,
+    remote_availability: tuple[bool, bool] | None = None,
 ) -> dict[str, Any]:
     local = resolve_local_paths(resources_root, entry)
-    remote_compact = bool(oss and oss.enabled and oss.exists(oss.dataset_compact_key(entry.id)))
-    remote_manifest = bool(oss and oss.enabled and oss.exists(oss.dataset_manifest_key(entry.id)))
+    if remote_availability is not None:
+        remote_compact, remote_manifest = remote_availability
+    elif oss and oss.enabled:
+        remote_compact = oss.exists(oss.dataset_compact_key(entry.id))
+        remote_manifest = oss.exists(oss.dataset_manifest_key(entry.id))
+    else:
+        remote_compact = False
+        remote_manifest = False
     manifest_configured = entry.manifest_url is not None or remote_manifest
     custom_ready = manifest_configured or local["customPoolCount"] > 0
     compact_available = local["compactAvailable"] or remote_compact
@@ -306,7 +336,16 @@ def list_dataset_catalog(
     *,
     oss: ObjectStorageClient | None = None,
 ) -> list[dict[str, Any]]:
-    items = [build_catalog_item(resources_root, entry, oss=oss) for entry in DATASET_CATALOG]
+    remote = _probe_remote_availability(oss, DATASET_CATALOG)
+    items = [
+        build_catalog_item(
+            resources_root,
+            entry,
+            oss=oss,
+            remote_availability=remote.get(entry.id),
+        )
+        for entry in DATASET_CATALOG
+    ]
     scanned_ids = {item["id"] for item in items}
 
     datasets_root = resources_root / "datasets"

@@ -4,7 +4,11 @@
 
 ## 首次配置（OSS 数据集下载）
 
-每台电脑只需配置一次：
+**默认无需 AccessKey。** 项目已内置团队 OSS 地址（`watermarking-benchmark` / `wmbench` 前缀），开启公开读后，克隆仓库、启动脚本即可在资源页下载。
+
+管理员只需在阿里云 OSS 控制台做一次：**将 `wmbench/datasets/` 设为公共读**（或整个 bucket 公共读，仅建议团队内网使用）。
+
+可选：复制 `.env.example` 为 `.env` 以覆盖默认项（`.env` 已在 `.gitignore` 中，不会提交）：
 
 ```bash
 cp .env.example .env
@@ -16,11 +20,9 @@ Windows PowerShell:
 copy .env.example .env
 ```
 
-编辑项目根目录 `.env`，填入 RAM 用户的 `WM_BENCH_OSS_ACCESS_KEY` 和 `WM_BENCH_OSS_SECRET_KEY`（`.env` 已在 `.gitignore` 中，不会提交到 Git）。
+私有 bucket 时：在 `.env` 中设置 `WM_BENCH_OSS_PUBLIC_READ=false` 并填写 `WM_BENCH_OSS_ACCESS_KEY` / `WM_BENCH_OSS_SECRET_KEY`。
 
-启动脚本和 API 会自动加载 `.env`，无需每次在终端手动 `export` / `$env:`。
-
-验证 OSS 是否生效：打开 `http://127.0.0.1:8000/resources/storage/status`，应看到 `"enabled": true`。
+验证：打开 `http://127.0.0.1:8000/resources/storage/status`，应看到 `"enabled": true`, `"mode": "public-read"`。
 
 ## macOS
 

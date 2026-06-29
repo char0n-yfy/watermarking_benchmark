@@ -1250,12 +1250,24 @@ a.button {
   grid-template-columns: 260px minmax(420px, 1fr) 340px;
   gap: 12px;
   align-items: start;
+  min-width: 0;
+}
+
+.resource-list-panel {
+  min-width: 0;
 }
 
 .resource-filter-panel,
 .resource-detail-browser-panel {
   position: sticky;
   top: 12px;
+  min-width: 0;
+}
+
+.resource-detail-browser-panel .panel-body {
+  max-height: calc(100vh - 96px);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .resource-filter-stack,
@@ -1263,6 +1275,7 @@ a.button {
 .resource-detail-stack {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .resource-type-list {
@@ -1440,18 +1453,23 @@ a.button {
 
 .detail-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
 .detail-title-row h3 {
+  flex: 1 1 120px;
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: 17px;
 }
 
 .resource-detail-stack p {
   margin: 8px 0 0;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
@@ -1496,7 +1514,9 @@ a.button {
 }
 
 .dataset-download-hint {
+  overflow-wrap: anywhere;
   font-size: 13px;
+  line-height: 1.45;
 }
 
 .dataset-download-fields {

@@ -412,15 +412,6 @@ export default function ResourcesPage() {
           )}
         </div>
 
-        {resource.catalog?.sourceUrl ? (
-          <div className="detail-section">
-            <strong>{t.resources.sourceLink}</strong>
-            <a href={resource.catalog.sourceUrl} rel="noreferrer" target="_blank">
-              {resource.catalog.sourceUrl}
-            </a>
-          </div>
-        ) : null}
-
         {resource.strengths ? (
           <div className="detail-section">
             <strong>{t.resources.strengthGrid}</strong>

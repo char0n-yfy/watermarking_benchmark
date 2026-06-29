@@ -130,13 +130,35 @@ class ObjectStorageIntegrationTest(unittest.TestCase):
             self.assertEqual(len(list(output_dir.glob("*"))), 2)
 
     def test_object_storage_disabled_by_default(self) -> None:
-        with patch.dict("os.environ", {}, clear=True), patch(
+        with patch.dict("os.environ", {"WM_BENCH_OSS_ENABLED": "false"}, clear=True), patch(
             "app.core.env_loader.load_project_env", return_value=False
         ):
             from app.services.object_storage import ObjectStorageSettings
 
             settings = ObjectStorageSettings.from_env()
             self.assertFalse(settings.enabled)
+
+    def test_public_read_enabled_without_access_keys(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "WM_BENCH_OSS_ENABLED": "true",
+                "WM_BENCH_OSS_PUBLIC_READ": "true",
+                "WM_BENCH_OSS_BUCKET": "watermarking-benchmark",
+                "WM_BENCH_OSS_ENDPOINT": "https://oss-cn-shanghai.aliyuncs.com",
+                "WM_BENCH_OSS_PREFIX": "wmbench",
+            },
+            clear=True,
+        ), patch("app.core.env_loader.load_project_env", return_value=False):
+            settings = ObjectStorageSettings.from_env()
+            self.assertTrue(settings.enabled)
+            self.assertTrue(settings.public_read)
+            client = ObjectStorageClient(settings)
+            url = client.public_object_url("wmbench/datasets/ms-coco/compact-1000.zip")
+            self.assertEqual(
+                url,
+                "https://watermarking-benchmark.oss-cn-shanghai.aliyuncs.com/wmbench/datasets/ms-coco/compact-1000.zip",
+            )
 
 
 if __name__ == "__main__":
