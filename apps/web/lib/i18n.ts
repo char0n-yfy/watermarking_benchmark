@@ -269,6 +269,9 @@ export const translations = {
       "atk-jpeg": "JPEG 压缩",
       "atk-gaussian-blur": "高斯模糊",
       "atk-resized-crop": "缩放裁剪",
+      "atk-screen-shoot": "屏幕-拍摄信道",
+      "atk-2x-regen": "2轮扩散再生成",
+      "atk-4x-regen": "4轮扩散再生成",
       "run_20260626_001": "JPEG 基线扫描",
       "run_20260625_004": "Demo 冒烟集",
       "run_20260624_002": "上传包沙箱"

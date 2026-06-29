@@ -36,6 +36,10 @@ class ResourceCatalogTest(unittest.TestCase):
 
         self.assertEqual(set(WATERMARK_REGISTRY), exposed_methods)
         self.assertGreaterEqual(len(resources), 20)
+        self.assertEqual(
+            {item["category"] for item in resources},
+            {"traditional_watermark", "deep_watermark"},
+        )
 
         for method in WATERMARK_REGISTRY:
             item = get_watermark_catalog_item(method)
@@ -208,7 +212,7 @@ class ResourceCatalogTest(unittest.TestCase):
             normalized = normalize_selection(
                 {
                     "datasetIds": ["demo"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": [attack_id],
                     "attackStrengthOverrides": {
                         attack_id: [1.0, "0", 1.0, "bad", float("nan")],
@@ -239,7 +243,7 @@ class ResourceCatalogTest(unittest.TestCase):
             estimate = estimate_selection(
                 {
                     "datasetIds": ["demo"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": [attack_id],
                     "attackStrengthOverrides": {attack_id: [0.0, 1.0]},
                     "seeds": [42, 123],
@@ -258,7 +262,7 @@ class ResourceCatalogTest(unittest.TestCase):
             normalized = normalize_selection(
                 {
                     "datasetIds": ["demo"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": [attack_id],
                     "attackParamOverrides": {
                         attack_id: [
@@ -300,7 +304,7 @@ class ResourceCatalogTest(unittest.TestCase):
             estimate = estimate_selection(
                 {
                     "datasetIds": ["demo"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": [attack_id],
                     "attackStrengthOverrides": {attack_id: [0, 10, 20, 30, 40, 60]},
                     "seeds": [42],

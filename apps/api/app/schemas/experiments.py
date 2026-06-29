@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class ExperimentSelectionPayload(BaseModel):
     datasetIds: list[str] = Field(default_factory=list)
-    algorithmIds: list[str] = Field(default_factory=lambda: ["alg-traditional-lsb"])
+    algorithmIds: list[str] = Field(default_factory=lambda: ["alg-invisible-watermark-dwtdct"])
     attackPresetIds: list[str] = Field(default_factory=lambda: ["atk-identity", "atk-jpeg"])
     attackStrengthOverrides: dict[str, list[float]] = Field(default_factory=dict)
     attackParamOverrides: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)

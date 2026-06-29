@@ -1,6 +1,5 @@
 from .base import BaseWatermark, WatermarkContext, WatermarkEmbedResult, WatermarkExtractResult
 from .methods import (
-    BlindWatermark,
     ChunkySealWatermark,
     CINWatermark,
     HiDDeNWatermark,
@@ -15,10 +14,6 @@ from .methods import (
     RAWatermark,
     SSLWatermark,
     StegaStampWatermark,
-    TraditionalDctWatermark,
-    TraditionalHaarWatermark,
-    TraditionalLsbWatermark,
-    TraditionalSpreadDctWatermark,
     TrustMarkCWatermark,
     TrustMarkQWatermark,
     TrustMarkWatermark,
@@ -30,7 +25,6 @@ from .registry import WATERMARK_REGISTRY, build_watermark, list_watermarks, regi
 
 __all__ = [
     "BaseWatermark",
-    "BlindWatermark",
     "ChunkySealWatermark",
     "CINWatermark",
     "HiDDeNWatermark",
@@ -45,10 +39,6 @@ __all__ = [
     "RAWatermark",
     "SSLWatermark",
     "StegaStampWatermark",
-    "TraditionalDctWatermark",
-    "TraditionalHaarWatermark",
-    "TraditionalLsbWatermark",
-    "TraditionalSpreadDctWatermark",
     "TrustMarkCWatermark",
     "TrustMarkQWatermark",
     "TrustMarkWatermark",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -15,20 +16,20 @@ from app.services.local_runner import LocalRunRequest, run_local_experiment
 
 
 class LocalRunnerTest(unittest.TestCase):
-    def test_smoke_run_extracts_lsb_watermark(self) -> None:
+    def test_smoke_run_extracts_default_watermark(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
             runs_root = root / "runs"
             dataset_dir.mkdir(parents=True)
-            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
 
             summary = run_local_experiment(
                 LocalRunRequest(
                     run_id="run_smoke",
                     selection={
                         "datasetIds": ["smoke"],
-                        "algorithmIds": ["alg-traditional-lsb"],
+                        "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                         "attackPresetIds": ["atk-identity"],
                         "seeds": [42],
                         "maxSamples": 1,
@@ -40,13 +41,15 @@ class LocalRunnerTest(unittest.TestCase):
 
             self.assertEqual(summary["status"], "succeeded")
             self.assertEqual(summary["cellCount"], 1)
-            self.assertEqual(summary["cells"][0]["bitAccuracy"], 1.0)
-            self.assertEqual(summary["cells"][0]["bitErrorRate"], 0.0)
+            self.assertEqual(summary["cells"][0]["status"], "succeeded")
+            extract_manifest = json.loads(Path(summary["cells"][0]["manifestPath"]).read_text())
+            self.assertTrue(extract_manifest[0]["metadata"]["match"])
+            self.assertIsNone(summary["cells"][0]["bitAccuracy"])
             self.assertEqual(summary["score"]["status"], "provisional")
             self.assertEqual(summary["score"]["protocolId"], "waves-official-detection-v1")
             self.assertIn("leaderboardRows", summary["score"])
-            self.assertIsNotNone(summary["cells"][0]["scoring"]["tprAtFpr"])
-            self.assertEqual(summary["aggregates"][0]["meanBitErrorRate"], 0.0)
+            self.assertIsNone(summary["cells"][0]["scoring"]["tprAtFpr"])
+            self.assertIsNone(summary["aggregates"][0]["meanBitErrorRate"])
             self.assertTrue((runs_root / "run_smoke" / "run_summary.json").exists())
 
 

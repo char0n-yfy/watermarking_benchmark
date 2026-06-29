@@ -13,7 +13,7 @@ import {
   fetchSavedConfigs,
   renameSavedConfig
 } from "@/lib/api";
-import { localizedName } from "@/lib/i18n";
+import { localizedName, type Language } from "@/lib/i18n";
 import { estimateMatrix } from "@/lib/matrix";
 import type {
   AlgorithmVersion,
@@ -56,20 +56,21 @@ function removeIds(values: string[], ids: string[]) {
 
 function matchesResource(
   query: string,
-  resource: { id: string; name: string; method?: string; category?: string; description?: string }
+  resource: { id: string; name: string; method?: string; category?: string; description?: string },
+  extraTerms: Array<string | undefined> = []
 ) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {
     return true;
   }
-  return [resource.id, resource.name, resource.method, resource.category, resource.description]
+  return [resource.id, resource.name, resource.method, resource.category, resource.description, ...extraTerms]
     .filter(Boolean)
     .join(" ")
     .toLowerCase()
     .includes(normalizedQuery);
 }
 
-function categoryLabel(language: string, category: string) {
+function categoryLabel(language: Language, category: string) {
   const zh: Record<string, string> = {
     "3d_viewpoint_rerendering": "3D 视角重渲染",
     "3d-viewpoint-rerendering": "3D 视角重渲染",
@@ -108,6 +109,7 @@ const VIEWPOINT_CATEGORY = "3d_viewpoint_rerendering";
 const DISTORTION_CATEGORY = "distortion_attacks";
 const REGENERATION_CATEGORY = "regeneration_attacks";
 const PHYSICAL_CATEGORY = "physical_channel_attacks";
+const CONSUMER_CATEGORY = "consumer_enhancement_workflow_attacks";
 const PHYSICAL_CORRECTION_OPTIONS = [true, false];
 const HIDDEN_IDENTITY_ATTACK_METHOD = "identity";
 const REGENERATION_UNIT_METHODS = ["2x_regen", "4x_regen", "regen_diffusion", "noise_to_image"] as const;
@@ -122,10 +124,140 @@ const REGENERATION_VAE_QUALITY_BY_MODEL: Record<string, number[]> = {
   "mbt2018-mean": REGENERATION_VAE_QUALITIES
 };
 const REGENERATION_VAE_MODEL_NAMES = Object.keys(REGENERATION_VAE_QUALITY_BY_MODEL);
+const CONSUMER_STRENGTH_METHODS = ["cew_e1", "cew_e2", "cew_e3", "cew_e4"] as const;
+const CONSUMER_SUPER_RESOLUTION_METHODS = ["cew_s1", "cew_s2", "cew_s3"] as const;
+const CONSUMER_SUPER_RESOLUTION_SCALES = [2, 4];
 const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_phase(\d+)_(point|ahead)$/;
 const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
 const VIEWPOINT_LOOKAT_MODES = ["point", "ahead"] as const;
 const VIEWPOINT_PHASES = [0, 1, 2, 3, 4, 5, 6, 7];
+
+type DisplayMeta = {
+  en: string;
+  rank: number;
+  short?: string;
+  zh: string;
+};
+
+const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
+  "invisible-watermark-dwtdct": { en: "Invisible Watermark DWT-DCT", rank: 10, short: "DWT-DCT", zh: "Invisible Watermark DWT-DCT" },
+  "invisible-watermark-dwtdctsvd": {
+    en: "Invisible Watermark DWT-DCT-SVD",
+    rank: 11,
+    short: "DWT-DCT-SVD",
+    zh: "Invisible Watermark DWT-DCT-SVD"
+  },
+  hidden: { en: "HiDDeN", rank: 30, zh: "HiDDeN" },
+  stegastamp: { en: "StegaStamp", rank: 31, zh: "StegaStamp" },
+  "ssl-watermarking": { en: "SSL Watermarking", rank: 32, zh: "SSL Watermarking" },
+  mbrs: { en: "MBRS", rank: 33, zh: "MBRS" },
+  cin: { en: "CIN", rank: 34, zh: "CIN" },
+  pimog: { en: "PIMoG", rank: 35, zh: "PIMoG" },
+  invismark: { en: "InvisMark", rank: 36, zh: "InvisMark" },
+  "invisible-watermark-rivagan": {
+    en: "Invisible Watermark RivaGAN",
+    rank: 37,
+    short: "RivaGAN",
+    zh: "Invisible Watermark RivaGAN"
+  },
+  trustmark: { en: "TrustMark", rank: 38, zh: "TrustMark" },
+  "trustmark-c": { en: "TrustMark-C", rank: 39, zh: "TrustMark-C" },
+  "trustmark-q": { en: "TrustMark-Q", rank: 40, zh: "TrustMark-Q" },
+  rawatermark: { en: "RAWatermark", rank: 41, zh: "RAWatermark" },
+  "maskwm-d32": { en: "MaskWM-D32", rank: 42, zh: "MaskWM-D32" },
+  wam: { en: "WAM", rank: 43, zh: "WAM" },
+  videoseal: { en: "VideoSeal", rank: 60, zh: "VideoSeal" },
+  pixelseal: { en: "PixelSeal", rank: 61, zh: "PixelSeal" },
+  chunkyseal: { en: "ChunkySeal", rank: 62, zh: "ChunkySeal" },
+  vine: { en: "VINE", rank: 70, zh: "VINE" }
+};
+
+const ALGORITHM_CATEGORY_ORDER: Record<string, number> = {
+  traditional_watermark: 10,
+  deep_watermark: 20
+};
+
+const ATTACK_CATEGORY_ORDER: Record<string, number> = {
+  distortion_attacks: 10,
+  physical_channel_attacks: 20,
+  "3d_viewpoint_rerendering": 30,
+  regeneration_attacks: 40,
+  consumer_enhancement_workflow_attacks: 50
+};
+
+const ATTACK_DISPLAY: Record<string, DisplayMeta> = {
+  brightness: { en: "Brightness", rank: 10, zh: "亮度调整" },
+  contrast: { en: "Contrast", rank: 11, zh: "对比度调整" },
+  gaussian_blur: { en: "Gaussian Blur", rank: 12, zh: "高斯模糊" },
+  gaussian_noise: { en: "Gaussian Noise", rank: 13, zh: "高斯噪声" },
+  jpeg: { en: "JPEG Compression", rank: 14, zh: "JPEG 压缩" },
+  resize: { en: "Resize", rank: 15, zh: "缩放" },
+  resized_crop: { en: "Resized Crop", rank: 16, zh: "缩放裁剪" },
+  rotation: { en: "Rotation", rank: 17, zh: "旋转" },
+  erasing: { en: "Random Erasing", rank: 18, zh: "区域擦除" },
+  screen_shoot: { en: "PIMoG-style Screen-Camera", rank: 20, short: "Screen-camera", zh: "屏幕-拍摄信道" },
+  print_camera: { en: "CamMark-style Print-Camera", rank: 21, short: "Print-camera", zh: "打印-拍摄信道" },
+  combined_physical: { en: "Combined Physical Channel", rank: 22, short: "Combined", zh: "组合物理信道" },
+  "2x_regen": { en: "2-pass Diffusion Regeneration", rank: 40, short: "2-pass Regen", zh: "2轮扩散再生成" },
+  "4x_regen": { en: "4-pass Diffusion Regeneration", rank: 41, short: "4-pass Regen", zh: "4轮扩散再生成" },
+  regen_diffusion: { en: "WAVES Diffusion Regeneration", rank: 42, short: "Diffusion", zh: "扩散再生成" },
+  noise_to_image: { en: "CtrlRegen Noise-to-Image", rank: 43, short: "Noise-to-image", zh: "噪声到图像再生成" },
+  regen_vae: { en: "CompressAI VAE Reconstruction", rank: 44, short: "VAE", zh: "VAE 再生成" },
+  image_to_vedio: { en: "NFPA Image-to-Video", rank: 45, short: "Image-to-video", zh: "图像到视频再生成" },
+  cew_e1: { en: "CEW-E1 Auto-Tone", rank: 50, short: "E1 Auto tone", zh: "CEW-E1 自动色调" },
+  cew_e2: { en: "CEW-E2 Warm-Vivid", rank: 51, short: "E2 Warm vivid", zh: "CEW-E2 暖色鲜艳" },
+  cew_e3: { en: "CEW-E3 Film-Faded", rank: 52, short: "E3 Film faded", zh: "CEW-E3 胶片褪色" },
+  cew_e4: { en: "CEW-E4 Local-Clarity HDR", rank: 53, short: "E4 Local HDR", zh: "CEW-E4 局部清晰 HDR" },
+  cew_c1: { en: "CEW-C1 Basic Auto-Fix SR", rank: 54, short: "C1 Auto fix", zh: "CEW-C1 自动修复+超分" },
+  cew_c2: { en: "CEW-C2 Color Retouch SR", rank: 55, short: "C2 Retouch", zh: "CEW-C2 色彩修饰+超分" },
+  cew_c3: { en: "CEW-C3 Detail Enhance SR", rank: 56, short: "C3 Detail", zh: "CEW-C3 细节增强+超分" },
+  cew_c4: { en: "CEW-C4 Full Enhancement Chain", rank: 57, short: "C4 Full chain", zh: "CEW-C4 完整增强链" },
+  cew_d1: { en: "CEW-D1 Zero-DCE++ Auto-Light", rank: 58, short: "D1 Auto light", zh: "CEW-D1 自动补光" },
+  cew_d2: { en: "CEW-D2 DeepWB Auto-WhiteBalance", rank: 59, short: "D2 White balance", zh: "CEW-D2 自动白平衡" },
+  cew_d3: { en: "CEW-D3 Image-Adaptive 3D LUT", rank: 60, short: "D3 AI color", zh: "CEW-D3 自适应 AI 色彩" },
+  cew_d4: { en: "CEW-D4 Retinexformer Detail Low-Light Enhance", rank: 61, short: "D4 Low light", zh: "CEW-D4 低光细节增强" },
+  cew_d5: { en: "CEW-D5 NAFNet/Restormer AI-Denoise", rank: 62, short: "D5 Denoise", zh: "CEW-D5 AI 去噪" },
+  cew_s1: { en: "CEW-S1 Real-ESRGAN", rank: 63, short: "S1 Real-ESRGAN", zh: "CEW-S1 Real-ESRGAN" },
+  cew_s2: { en: "CEW-S2 SwinIR", rank: 64, short: "S2 SwinIR", zh: "CEW-S2 SwinIR" },
+  cew_s3: { en: "CEW-S3 BSRGAN", rank: 65, short: "S3 BSRGAN", zh: "CEW-S3 BSRGAN" }
+};
+
+const ATTACK_ENGLISH_NAME: Record<string, string> = {
+  brightness: "Brightness",
+  contrast: "Contrast",
+  gaussian_blur: "Gaussian Blur",
+  gaussian_noise: "Gaussian Noise",
+  jpeg: "JPEG Compression",
+  resize: "Resize",
+  resized_crop: "Resized Crop",
+  rotation: "Rotation",
+  erasing: "Random Erasing",
+  screen_shoot: "PIMoG-style Screen-Camera",
+  print_camera: "CamMark-style Print-Camera",
+  combined_physical: "Combined Physical Channel",
+  "2x_regen": "2-pass Diffusion Regeneration",
+  "4x_regen": "4-pass Diffusion Regeneration",
+  regen_diffusion: "WAVES Diffusion Regeneration",
+  noise_to_image: "CtrlRegen Noise-to-Image",
+  regen_vae: "CompressAI VAE Reconstruction",
+  image_to_vedio: "NFPA Image-to-Video",
+  cew_e1: "Auto-Tone",
+  cew_e2: "Warm-Vivid",
+  cew_e3: "Film-Faded",
+  cew_e4: "Local-Clarity HDR",
+  cew_c1: "Basic Auto-Fix SR",
+  cew_c2: "Color Retouch SR",
+  cew_c3: "Detail Enhance SR",
+  cew_c4: "Full Enhancement Chain",
+  cew_d1: "Zero-DCE++ Auto-Light",
+  cew_d2: "DeepWB Auto-WhiteBalance",
+  cew_d3: "Image-Adaptive 3D LUT",
+  cew_d4: "Retinexformer Detail Low-Light Enhance",
+  cew_d5: "NAFNet/Restormer AI-Denoise",
+  cew_s1: "Real-ESRGAN",
+  cew_s2: "SwinIR",
+  cew_s3: "BSRGAN"
+};
 
 type ViewpointMotion = (typeof VIEWPOINT_MOTION_ORDER)[number];
 type ViewpointLookatMode = (typeof VIEWPOINT_LOOKAT_MODES)[number];
@@ -148,6 +280,9 @@ type RegenerationSettings = StrengthRangeSettings & {
   vaeModelNames: string[];
   vaeQualities: number[];
   imageToVideoXy: number[];
+};
+type ConsumerEnhancementSettings = StrengthRangeSettings & {
+  superResolutionScales: number[];
 };
 
 const defaultViewpointSettings: ViewpointSettings = {
@@ -178,6 +313,12 @@ const defaultRegenerationSettings: RegenerationSettings = {
   vaeQualities: [3],
   imageToVideoXy: [20, 40, 60]
 };
+const defaultConsumerEnhancementSettings: ConsumerEnhancementSettings = {
+  strengthMin: 0,
+  strengthMax: 1,
+  strengthLevelCount: 5,
+  superResolutionScales: [2, 4]
+};
 
 function parseViewpointMethod(method: string):
   | {
@@ -199,12 +340,12 @@ function parseViewpointMethod(method: string):
   };
 }
 
-function viewpointMotionLabel(language: string, motion: ViewpointMotion) {
+function viewpointMotionLabel(language: Language, motion: ViewpointMotion) {
   const zh: Record<ViewpointMotion, string> = {
-    swipe: "Swipe 横向扫动",
-    shake: "Shake 抖动",
-    rotate: "Rotate 环绕",
-    rotate_forward: "Rotate forward 前向环绕"
+    swipe: "横向扫动",
+    shake: "抖动",
+    rotate: "环绕旋转",
+    rotate_forward: "前向环绕"
   };
   const en: Record<ViewpointMotion, string> = {
     swipe: "Swipe",
@@ -215,7 +356,17 @@ function viewpointMotionLabel(language: string, motion: ViewpointMotion) {
   return (language === "zh" ? zh : en)[motion];
 }
 
-function viewpointLookatLabel(language: string, lookatMode: ViewpointLookatMode) {
+function viewpointMotionEnglishLabel(motion: ViewpointMotion) {
+  const labels: Record<ViewpointMotion, string> = {
+    swipe: "Swipe",
+    shake: "Shake",
+    rotate: "Rotate",
+    rotate_forward: "Rotate Forward"
+  };
+  return labels[motion];
+}
+
+function viewpointLookatLabel(language: Language, lookatMode: ViewpointLookatMode) {
   const zh: Record<ViewpointLookatMode, string> = {
     point: "Look-at point",
     ahead: "Look ahead"
@@ -254,9 +405,125 @@ function strengthLevelsForSettings(settings: StrengthRangeSettings) {
   );
 }
 
+function displayText(language: Language, meta: DisplayMeta | undefined, fallback: string) {
+  if (meta === undefined) {
+    return fallback;
+  }
+  return language === "zh" ? meta.zh : meta.en;
+}
+
+function isAsciiText(value: string) {
+  return /^[\x00-\x7F]+$/.test(value.trim());
+}
+
+function englishSubtitleForTitle(language: Language, title: string, englishName: string | undefined) {
+  const normalizedTitle = title.trim();
+  const normalizedEnglish = englishName?.trim();
+  if (
+    language !== "zh" ||
+    !normalizedEnglish ||
+    !normalizedTitle ||
+    isAsciiText(normalizedTitle) ||
+    normalizedTitle.toLowerCase() === normalizedEnglish.toLowerCase()
+  ) {
+    return null;
+  }
+  return normalizedEnglish;
+}
+
+function algorithmMethod(algorithm: AlgorithmVersion) {
+  return algorithm.method ?? algorithm.id.replace(/^alg-/, "");
+}
+
+function displayMethodToken(method: string) {
+  if (method === "image_to_vedio") {
+    return "image_to_video";
+  }
+  return method;
+}
+
+function algorithmDisplayName(language: Language, algorithm: AlgorithmVersion) {
+  const method = algorithmMethod(algorithm);
+  return displayText(language, ALGORITHM_DISPLAY[method], algorithm.name);
+}
+
+function algorithmCategoryDisplay(language: Language, category: string | undefined) {
+  const normalized = normalizeAlgorithmCategory(category);
+  const zh: Record<string, string> = {
+    traditional_watermark: "传统水印",
+    deep_watermark: "深度水印"
+  };
+  const en: Record<string, string> = {
+    traditional_watermark: "Traditional watermark",
+    deep_watermark: "Deep watermark"
+  };
+  return (language === "zh" ? zh : en)[normalized] ?? normalized;
+}
+
+function normalizeAlgorithmCategory(category: string | undefined) {
+  if (category === "classical" || category === "traditional_watermark") {
+    return "traditional_watermark";
+  }
+  return "deep_watermark";
+}
+
+function algorithmRank(algorithm: AlgorithmVersion) {
+  const method = algorithmMethod(algorithm);
+  const categoryRank = ALGORITHM_CATEGORY_ORDER[normalizeAlgorithmCategory(algorithm.category)] ?? 90;
+  return categoryRank * 100 + (ALGORITHM_DISPLAY[method]?.rank ?? 99);
+}
+
+function attackDisplayName(language: Language, attack: AttackPreset) {
+  return displayText(language, ATTACK_DISPLAY[attack.method], localizedName(language, attack.id, attack.name));
+}
+
+function attackEnglishName(attack: AttackPreset) {
+  return ATTACK_ENGLISH_NAME[attack.method] ?? ATTACK_DISPLAY[attack.method]?.en ?? attack.name;
+}
+
+function attackRank(attack: AttackPreset) {
+  const categoryRank = ATTACK_CATEGORY_ORDER[attackCategory(attack)] ?? 90;
+  const parsed = parseViewpointMethod(attack.method);
+  const methodRank = parsed ? parsed.phaseIndex * 2 + (parsed.lookatMode === "point" ? 0 : 1) : ATTACK_DISPLAY[attack.method]?.rank ?? 99;
+  return categoryRank * 100 + methodRank;
+}
+
+function compareByRankAndName<T>(
+  left: T,
+  right: T,
+  rank: (value: T) => number,
+  name: (value: T) => string
+) {
+  const rankDelta = rank(left) - rank(right);
+  if (rankDelta !== 0) {
+    return rankDelta;
+  }
+  return name(left).localeCompare(name(right), undefined, { numeric: true });
+}
+
+function attackVariantSummary(language: Language, attack: AttackPreset) {
+  if (attack.strengthParam === "strength" || attack.strengthParam === "step") {
+    return language === "zh" ? "0-1 强度" : "0-1 strength";
+  }
+  if (attack.strengthParam === "xy") {
+    return "XY";
+  }
+  if (attack.strengthParam === "scale") {
+    return language === "zh" ? "倍率" : "scale";
+  }
+  return language === "zh" ? "固定参数" : "fixed";
+}
+
+function consumerAttackDisplayName(language: Language, attack: AttackPreset) {
+  if (language === "en") {
+    return attackEnglishName(attack);
+  }
+  return attackDisplayName(language, attack).replace(/^CEW-[A-Z]\d+\s*/i, "");
+}
+
 type StrengthRangeAxisProps = {
   id: string;
-  language: string;
+  language: Language;
   settings: StrengthRangeSettings;
   onChange: (settings: StrengthRangeSettings) => void;
 };
@@ -520,6 +787,52 @@ function isRegenerationUnitAttack(attack: AttackPreset) {
   return (REGENERATION_UNIT_METHODS as readonly string[]).includes(attack.method);
 }
 
+function isConsumerStrengthAttack(attack: AttackPreset) {
+  return (CONSUMER_STRENGTH_METHODS as readonly string[]).includes(attack.method);
+}
+
+function isConsumerSuperResolutionAttack(attack: AttackPreset) {
+  return (CONSUMER_SUPER_RESOLUTION_METHODS as readonly string[]).includes(attack.method);
+}
+
+function consumerSuperResolutionScalesForSettings(settings: ConsumerEnhancementSettings) {
+  return sortedSelectedNumbers(settings.superResolutionScales, CONSUMER_SUPER_RESOLUTION_SCALES);
+}
+
+function applyConsumerEnhancementSettings(
+  current: ExperimentSelection,
+  attacks: AttackPreset[],
+  settings: ConsumerEnhancementSettings
+): ExperimentSelection {
+  const attackIds = attacks.map((attack) => attack.id);
+  const selectedIds = new Set(current.attackPresetIds);
+  const strengthLevels = strengthLevelsForSettings(settings);
+  const superResolutionScales = consumerSuperResolutionScalesForSettings(settings);
+  const attackStrengthOverrides = { ...(current.attackStrengthOverrides ?? {}) };
+  const attackParamOverrides = { ...(current.attackParamOverrides ?? {}) };
+  for (const attackId of attackIds) {
+    delete attackStrengthOverrides[attackId];
+    delete attackParamOverrides[attackId];
+  }
+
+  for (const attack of attacks) {
+    if (!selectedIds.has(attack.id)) {
+      continue;
+    }
+    if (isConsumerStrengthAttack(attack) && attackSupportsStrengthOverride(attack)) {
+      attackStrengthOverrides[attack.id] = strengthLevels;
+    } else if (isConsumerSuperResolutionAttack(attack) && attack.strengthParam === "scale") {
+      attackStrengthOverrides[attack.id] = superResolutionScales;
+    }
+  }
+
+  return {
+    ...current,
+    attackStrengthOverrides: cleanAttackStrengthOverrides(attackStrengthOverrides, selectedIds),
+    attackParamOverrides: cleanAttackParamOverrides(attackParamOverrides, selectedIds)
+  };
+}
+
 function applyRegenerationSettings(
   current: ExperimentSelection,
   attacks: AttackPreset[],
@@ -707,6 +1020,9 @@ export default function ConfigsPage() {
   const [physicalSettings, setPhysicalSettings] = useState<PhysicalSettings>(defaultPhysicalSettings);
   const [regenerationSettings, setRegenerationSettings] =
     useState<RegenerationSettings>(defaultRegenerationSettings);
+  const [consumerEnhancementSettings, setConsumerEnhancementSettings] = useState<ConsumerEnhancementSettings>(
+    defaultConsumerEnhancementSettings
+  );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<SavedExperimentConfig | null>(null);
   const [renameName, setRenameName] = useState("");
@@ -722,15 +1038,56 @@ export default function ConfigsPage() {
     () => estimateMatrix(effectiveSelection, datasets, attacks),
     [effectiveSelection, datasets, attacks]
   );
+  const sortedDatasets = useMemo(
+    () =>
+      [...datasets].sort((left, right) =>
+        localizedName(language, left.id, left.name).localeCompare(localizedName(language, right.id, right.name), undefined, {
+          numeric: true
+        })
+      ),
+    [datasets, language]
+  );
   const filteredAlgorithms = useMemo(
-    () => algorithms.filter((algorithm) => matchesResource(algorithmFilter, algorithm)),
-    [algorithmFilter, algorithms]
+    () =>
+      algorithms
+        .filter((algorithm) =>
+          matchesResource(algorithmFilter, algorithm, [
+            algorithmDisplayName(language, algorithm),
+            algorithmCategoryDisplay(language, algorithm.category),
+            algorithmMethod(algorithm)
+          ])
+        )
+        .sort((left, right) =>
+          compareByRankAndName(
+            left,
+            right,
+            algorithmRank,
+            (algorithm) => `${algorithmDisplayName(language, algorithm)} ${algorithmMethod(algorithm)}`
+          )
+        ),
+    [algorithmFilter, algorithms, language]
   );
   const filteredAttacks = useMemo(
-    () => configurableAttacks.filter((attack) => matchesResource(attackFilter, attack)),
-    [attackFilter, configurableAttacks]
+    () =>
+      configurableAttacks
+        .filter((attack) =>
+          matchesResource(attackFilter, attack, [
+            attackDisplayName(language, attack),
+            categoryLabel(language, attackCategory(attack)),
+            attackVariantSummary(language, attack)
+          ])
+        )
+        .sort((left, right) =>
+          compareByRankAndName(
+            left,
+            right,
+            attackRank,
+            (attack) => `${attackDisplayName(language, attack)} ${attack.method}`
+          )
+        ),
+    [attackFilter, configurableAttacks, language]
   );
-  const visibleDatasetIds = useMemo(() => datasets.map((dataset) => dataset.id), [datasets]);
+  const visibleDatasetIds = useMemo(() => sortedDatasets.map((dataset) => dataset.id), [sortedDatasets]);
   const visibleAlgorithmIds = useMemo(
     () =>
       filteredAlgorithms
@@ -748,32 +1105,40 @@ export default function ConfigsPage() {
       const category = attackCategory(attack);
       groups.set(category, [...(groups.get(category) ?? []), attack]);
     }
-    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+    return [...groups.entries()].sort(
+      ([left], [right]) => (ATTACK_CATEGORY_ORDER[left] ?? 90) - (ATTACK_CATEGORY_ORDER[right] ?? 90)
+    );
   }, [filteredAttacks]);
 
-  const renderAttackTile = (attack: AttackPreset, onToggle?: (attack: AttackPreset) => void) => (
-    <label className="check-tile resource-check-tile" key={attack.id}>
-      <input
-        checked={selection.attackPresetIds.includes(attack.id)}
-        disabled={attack.available === false}
-        onChange={() =>
-          onToggle
-            ? onToggle(attack)
-            : setSelection((current) => toggleAttackIdInSelection(current, attack.id))
-        }
-        type="checkbox"
-      />
-      <span className="tile-copy">
-        <strong>{localizedName(language, attack.id, attack.name)}</strong>
-        <small>
-          {attack.method}
-          {attack.strengths.length > 1 ? ` · ${attack.strengths.length} strengths` : ""}
-        </small>
-      </span>
-      {attack.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-      {attack.available === false ? <span className="badge error">Missing</span> : null}
-    </label>
-  );
+  const renderAttackTile = (
+    attack: AttackPreset,
+    onToggle?: (attack: AttackPreset) => void,
+    options: { englishName?: string; title?: string } = {}
+  ) => {
+    const title = options.title ?? attackDisplayName(language, attack);
+    const subtitle = englishSubtitleForTitle(language, title, options.englishName ?? attackEnglishName(attack));
+
+    return (
+      <label className="check-tile resource-check-tile method-check-tile" key={attack.id}>
+        <input
+          checked={selection.attackPresetIds.includes(attack.id)}
+          disabled={attack.available === false}
+          onChange={() =>
+            onToggle
+              ? onToggle(attack)
+              : setSelection((current) => toggleAttackIdInSelection(current, attack.id))
+          }
+          type="checkbox"
+        />
+        <span className="tile-copy">
+          <strong>{title}</strong>
+          {subtitle ? <small>{subtitle}</small> : null}
+        </span>
+        {attack.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+        {attack.available === false ? <span className="badge error">Missing</span> : null}
+      </label>
+    );
+  };
 
   const canSave =
     configName.trim().length > 0 &&
@@ -896,6 +1261,7 @@ export default function ConfigsPage() {
     setDistortionSettings(defaultDistortionSettings);
     setPhysicalSettings(defaultPhysicalSettings);
     setRegenerationSettings(defaultRegenerationSettings);
+    setConsumerEnhancementSettings(defaultConsumerEnhancementSettings);
     setMessage("");
     setIsCreateOpen(true);
   };
@@ -1114,8 +1480,8 @@ export default function ConfigsPage() {
                   </div>
                 </div>
                 <div className="option-grid dense-options">
-                  {datasets.map((dataset) => (
-                    <label className="check-tile resource-check-tile" key={dataset.id}>
+                  {sortedDatasets.map((dataset) => (
+                    <label className="check-tile resource-check-tile method-check-tile" key={dataset.id}>
                       <input
                         checked={selection.datasetIds.includes(dataset.id)}
                         onChange={() =>
@@ -1189,7 +1555,7 @@ export default function ConfigsPage() {
                 </div>
                 <div className="option-grid dense-options">
                   {filteredAlgorithms.map((algorithm) => (
-                    <label className="check-tile resource-check-tile" key={algorithm.id}>
+                    <label className="check-tile resource-check-tile method-check-tile" key={algorithm.id}>
                       <input
                         checked={selection.algorithmIds.includes(algorithm.id)}
                         disabled={algorithm.status !== "enabled" || algorithm.available === false}
@@ -1202,10 +1568,10 @@ export default function ConfigsPage() {
                         type="checkbox"
                       />
                       <span className="tile-copy">
-                        <strong>{algorithm.name}</strong>
+                        <strong>{algorithmDisplayName(language, algorithm)}</strong>
                         <small>
-                          {algorithm.method ?? algorithm.id}
-                          {algorithm.category ? ` · ${algorithm.category}` : ""}
+                          {algorithmCategoryDisplay(language, algorithm.category)} ·{" "}
+                          {displayMethodToken(algorithmMethod(algorithm))}
                         </small>
                       </span>
                       {algorithm.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
@@ -1267,6 +1633,16 @@ export default function ConfigsPage() {
                               regenerationSettings
                             );
                           }
+                          const visibleConsumerAttacks = filteredAttacks.filter(
+                            (attack) => attackCategory(attack) === CONSUMER_CATEGORY
+                          );
+                          if (visibleConsumerAttacks.length > 0) {
+                            nextSelection = applyConsumerEnhancementSettings(
+                              nextSelection,
+                              visibleConsumerAttacks,
+                              consumerEnhancementSettings
+                            );
+                          }
                           return nextSelection;
                         })
                       }
@@ -1294,6 +1670,7 @@ export default function ConfigsPage() {
                     const isDistortionCategory = category === DISTORTION_CATEGORY;
                     const isRegenerationCategory = category === REGENERATION_CATEGORY;
                     const isPhysicalCategory = category === PHYSICAL_CATEGORY;
+                    const isConsumerCategory = category === CONSUMER_CATEGORY;
                     const regenerationUnitAttacks = REGENERATION_UNIT_METHODS.map((method) =>
                       categoryAttacks.find((attack) => attack.method === method)
                     ).filter((attack): attack is AttackPreset => attack !== undefined);
@@ -1309,9 +1686,21 @@ export default function ConfigsPage() {
                         attack.method !== REGENERATION_VAE_METHOD &&
                         attack.method !== REGENERATION_IMAGE_TO_VIDEO_METHOD
                     );
+                    const consumerStrengthAttacks = CONSUMER_STRENGTH_METHODS.map((method) =>
+                      categoryAttacks.find((attack) => attack.method === method)
+                    ).filter((attack): attack is AttackPreset => attack !== undefined);
+                    const consumerSuperResolutionAttacks = CONSUMER_SUPER_RESOLUTION_METHODS.map((method) =>
+                      categoryAttacks.find((attack) => attack.method === method)
+                    ).filter((attack): attack is AttackPreset => attack !== undefined);
+                    const remainingConsumerAttacks = categoryAttacks.filter(
+                      (attack) => !isConsumerStrengthAttack(attack) && !isConsumerSuperResolutionAttack(attack)
+                    );
                     const selectedViewpointIds = categoryAttacks
                       .map((attack) => attack.id)
                       .filter((attackId) => selection.attackPresetIds.includes(attackId));
+                    const selectedCategoryCount = categoryAttacks.filter((attack) =>
+                      selection.attackPresetIds.includes(attack.id)
+                    ).length;
                     const renderedViewpointSettings =
                       isViewpointCategory && selectedViewpointIds.length > 0 && !viewpointSettings.enabled
                         ? { ...viewpointSettings, enabled: true, motions: [...VIEWPOINT_MOTION_ORDER] }
@@ -1331,6 +1720,12 @@ export default function ConfigsPage() {
                     const updateRegenerationSettings = (nextSettings: RegenerationSettings) => {
                       setRegenerationSettings(nextSettings);
                       setSelection((current) => applyRegenerationSettings(current, categoryAttacks, nextSettings));
+                    };
+                    const updateConsumerEnhancementSettings = (nextSettings: ConsumerEnhancementSettings) => {
+                      setConsumerEnhancementSettings(nextSettings);
+                      setSelection((current) =>
+                        applyConsumerEnhancementSettings(current, categoryAttacks, nextSettings)
+                      );
                     };
                     const toggleDistortionAttack = (attack: AttackPreset) => {
                       setSelection((current) =>
@@ -1370,6 +1765,29 @@ export default function ConfigsPage() {
                           regenerationSettings
                         )
                       );
+                    };
+                    const toggleConsumerEnhancementAttack = (attack: AttackPreset) => {
+                      setSelection((current) =>
+                        applyConsumerEnhancementSettings(
+                          toggleAttackIdInSelection(current, attack.id),
+                          categoryAttacks,
+                          consumerEnhancementSettings
+                        )
+                      );
+                    };
+                    const selectedConsumerSuperResolutionScales =
+                      consumerSuperResolutionScalesForSettings(consumerEnhancementSettings);
+                    const toggleConsumerSuperResolutionScale = (scale: number) => {
+                      const selected = selectedConsumerSuperResolutionScales.includes(scale)
+                        ? selectedConsumerSuperResolutionScales.filter((value) => value !== scale)
+                        : sortStrengths([...selectedConsumerSuperResolutionScales, scale]);
+                      if (selected.length === 0) {
+                        return;
+                      }
+                      updateConsumerEnhancementSettings({
+                        ...consumerEnhancementSettings,
+                        superResolutionScales: selected
+                      });
                     };
                     const selectedVaeModelNames = regenerationVaeModelNamesForSettings(regenerationSettings);
                     const toggleRegenerationVaeModel = (vaeModelName: string) => {
@@ -1438,7 +1856,9 @@ export default function ConfigsPage() {
                       <div className="attack-group" key={category}>
                         <div className="attack-group-title">
                           <strong>{categoryLabel(language, category)}</strong>
-                          <span>{categoryAttacks.length}</span>
+                          <span>
+                            {selectedCategoryCount}/{categoryAttacks.length}
+                          </span>
                           <div className="bulk-actions group-bulk-actions">
                             <button
                               className="button compact"
@@ -1495,6 +1915,21 @@ export default function ConfigsPage() {
                                       ),
                                       categoryAttacks,
                                       regenerationSettings
+                                    )
+                                  );
+                                  return;
+                                }
+                                if (isConsumerCategory) {
+                                  setSelection((current) =>
+                                    applyConsumerEnhancementSettings(
+                                      addAttackIdsToSelection(
+                                        current,
+                                        categoryAttacks
+                                          .filter((attack) => attack.available !== false)
+                                          .map((attack) => attack.id)
+                                      ),
+                                      categoryAttacks,
+                                      consumerEnhancementSettings
                                     )
                                   );
                                   return;
@@ -1563,6 +1998,19 @@ export default function ConfigsPage() {
                                   );
                                   return;
                                 }
+                                if (isConsumerCategory) {
+                                  setSelection((current) =>
+                                    applyConsumerEnhancementSettings(
+                                      removeAttackIdsFromSelection(
+                                        current,
+                                        categoryAttacks.map((attack) => attack.id)
+                                      ),
+                                      categoryAttacks,
+                                      consumerEnhancementSettings
+                                    )
+                                  );
+                                  return;
+                                }
                                 setSelection((current) =>
                                   removeAttackIdsFromSelection(
                                     current,
@@ -1589,6 +2037,12 @@ export default function ConfigsPage() {
                                   .filter((attack) => attack.available !== false)
                                   .map((attack) => attack.id);
                                 const checked = renderedViewpointSettings.motions.includes(motion);
+                                const motionTitle = viewpointMotionLabel(language, motion);
+                                const motionSubtitle = englishSubtitleForTitle(
+                                  language,
+                                  motionTitle,
+                                  viewpointMotionEnglishLabel(motion)
+                                );
 
                                 return (
                                   <label className="check-tile resource-check-tile" key={motion}>
@@ -1599,10 +2053,8 @@ export default function ConfigsPage() {
                                       type="checkbox"
                                     />
                                     <span className="tile-copy">
-                                      <strong>{viewpointMotionLabel(language, motion)}</strong>
-                                      <small>
-                                        {motionAttacks.length} {language === "zh" ? "变体" : "variants"}
-                                      </small>
+                                      <strong>{motionTitle}</strong>
+                                      {motionSubtitle ? <small>{motionSubtitle}</small> : null}
                                     </span>
                                     {motionAttacks.some((attack) => attack.requiresGpu) ? (
                                       <span className="badge warn">{t.common.gpu}</span>
@@ -1615,7 +2067,9 @@ export default function ConfigsPage() {
 
                             <div className="viewpoint-settings-panel">
                               <div className="viewpoint-settings-row">
-                                <span className="viewpoint-settings-label">Lookat mode</span>
+                                <span className="viewpoint-settings-label">
+                                  {language === "zh" ? "视线模式" : "Lookat mode"}
+                                </span>
                                 <div className="viewpoint-toggle-grid two-options">
                                   {VIEWPOINT_LOOKAT_MODES.map((lookatMode) => (
                                     <label className="viewpoint-toggle" key={lookatMode}>
@@ -1631,7 +2085,9 @@ export default function ConfigsPage() {
                               </div>
 
                               <div className="viewpoint-settings-row">
-                                <span className="viewpoint-settings-label">Phase</span>
+                                <span className="viewpoint-settings-label">
+                                  {language === "zh" ? "相位" : "Phase"}
+                                </span>
                                 <div className="viewpoint-toggle-grid phase-options">
                                   {VIEWPOINT_PHASES.map((phase) => (
                                     <label className="viewpoint-toggle" key={phase}>
@@ -1719,7 +2175,7 @@ export default function ConfigsPage() {
                           <>
                             <div className="attack-subgroup">
                               <div className="attack-subgroup-title">
-                                <strong>{language === "zh" ? "0-1 强度组" : "0-1 strength group"}</strong>
+                                <strong>{language === "zh" ? "强度型再生成" : "Strength-based regeneration"}</strong>
                                 <span>{regenerationUnitAttacks.length}</span>
                               </div>
                               <div className="option-grid dense-options viewpoint-variant-grid">
@@ -1743,7 +2199,9 @@ export default function ConfigsPage() {
                             {regenerationVaeAttack ? (
                               <div className="attack-subgroup">
                                 <div className="attack-subgroup-title">
-                                  <strong>regen_vae</strong>
+                                  <strong>
+                                    {attackDisplayName(language, regenerationVaeAttack)}
+                                  </strong>
                                   <span>{selection.attackPresetIds.includes(regenerationVaeAttack.id) ? 1 : 0}</span>
                                 </div>
                                 <div className="option-grid dense-options">
@@ -1769,7 +2227,9 @@ export default function ConfigsPage() {
                                   </div>
 
                                   <div className="viewpoint-settings-row">
-                                    <span className="viewpoint-settings-label">Quality</span>
+                                    <span className="viewpoint-settings-label">
+                                      {language === "zh" ? "质量" : "Quality"}
+                                    </span>
                                     <div className="viewpoint-toggle-grid phase-options">
                                       {REGENERATION_VAE_QUALITIES.map((quality) => {
                                         const enabled = selectedVaeModelNames.every((modelName) =>
@@ -1796,7 +2256,9 @@ export default function ConfigsPage() {
                             {regenerationImageToVideoAttack ? (
                               <div className="attack-subgroup">
                                 <div className="attack-subgroup-title">
-                                  <strong>image_to_vedio</strong>
+                                  <strong>
+                                    {attackDisplayName(language, regenerationImageToVideoAttack)}
+                                  </strong>
                                   <span>
                                     {selection.attackPresetIds.includes(regenerationImageToVideoAttack.id) ? 1 : 0}
                                   </span>
@@ -1829,6 +2291,111 @@ export default function ConfigsPage() {
                                 {remainingRegenerationAttacks.map((attack) =>
                                   renderAttackTile(attack, toggleRegenerationAttack)
                                 )}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : isConsumerCategory ? (
+                          <>
+                            {consumerStrengthAttacks.length > 0 ? (
+                              <div className="attack-subgroup">
+                                <div className="attack-subgroup-title">
+                                  <strong>{language === "zh" ? "强度型增强" : "Strength-based enhancement"}</strong>
+                                  <span>
+                                    {
+                                      consumerStrengthAttacks.filter((attack) =>
+                                        selection.attackPresetIds.includes(attack.id)
+                                      ).length
+                                    }
+                                    /{consumerStrengthAttacks.length}
+                                  </span>
+                                </div>
+                                <div className="option-grid dense-options viewpoint-variant-grid">
+                                  {consumerStrengthAttacks.map((attack) =>
+                                    renderAttackTile(attack, toggleConsumerEnhancementAttack, {
+                                      title: consumerAttackDisplayName(language, attack)
+                                    })
+                                  )}
+                                </div>
+
+                                <div className="viewpoint-settings-panel">
+                                  <StrengthRangeAxis
+                                    id="consumer-enhancement"
+                                    language={language}
+                                    onChange={(nextSettings) =>
+                                      updateConsumerEnhancementSettings({
+                                        ...consumerEnhancementSettings,
+                                        ...nextSettings
+                                      })
+                                    }
+                                    settings={consumerEnhancementSettings}
+                                  />
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {consumerSuperResolutionAttacks.length > 0 ? (
+                              <div className="attack-subgroup">
+                                <div className="attack-subgroup-title">
+                                  <strong>{language === "zh" ? "超分辨率" : "Super-resolution"}</strong>
+                                  <span>
+                                    {
+                                      consumerSuperResolutionAttacks.filter((attack) =>
+                                        selection.attackPresetIds.includes(attack.id)
+                                      ).length
+                                    }
+                                    /{consumerSuperResolutionAttacks.length}
+                                  </span>
+                                </div>
+                                <div className="option-grid dense-options">
+                                  {consumerSuperResolutionAttacks.map((attack) =>
+                                    renderAttackTile(attack, toggleConsumerEnhancementAttack, {
+                                      title: consumerAttackDisplayName(language, attack)
+                                    })
+                                  )}
+                                </div>
+
+                                <div className="viewpoint-settings-panel">
+                                  <div className="viewpoint-settings-row">
+                                    <span className="viewpoint-settings-label">
+                                      {language === "zh" ? "倍率" : "Scale"}
+                                    </span>
+                                    <div className="viewpoint-toggle-grid consumer-scale-options">
+                                      {CONSUMER_SUPER_RESOLUTION_SCALES.map((scale) => (
+                                        <label className="viewpoint-toggle" key={scale}>
+                                          <input
+                                            checked={selectedConsumerSuperResolutionScales.includes(scale)}
+                                            onChange={() => toggleConsumerSuperResolutionScale(scale)}
+                                            type="checkbox"
+                                          />
+                                          <span>{scale}x</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {remainingConsumerAttacks.length > 0 ? (
+                              <div className="attack-subgroup">
+                                <div className="attack-subgroup-title">
+                                  <strong>{language === "zh" ? "固定增强流程" : "Fixed enhancement workflows"}</strong>
+                                  <span>
+                                    {
+                                      remainingConsumerAttacks.filter((attack) =>
+                                        selection.attackPresetIds.includes(attack.id)
+                                      ).length
+                                    }
+                                    /{remainingConsumerAttacks.length}
+                                  </span>
+                                </div>
+                                <div className="option-grid dense-options">
+                                  {remainingConsumerAttacks.map((attack) =>
+                                    renderAttackTile(attack, toggleConsumerEnhancementAttack, {
+                                      title: consumerAttackDisplayName(language, attack)
+                                    })
+                                  )}
+                                </div>
                               </div>
                             ) : null}
                           </>

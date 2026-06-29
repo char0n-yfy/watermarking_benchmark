@@ -169,7 +169,7 @@ export default function ResourcesPage() {
   const resourceGroups = useMemo(
     () => ({
       datasets: catalogItems.map((item) => catalogToResource(item, language)),
-      watermarks: algorithms.map(algorithmToResource),
+      watermarks: algorithms.map((algorithm) => algorithmToResource(algorithm, language)),
       attacks: attacks.map((attack) => attackToResource(attack, language))
     }),
     [algorithms, attacks, catalogItems, language]
@@ -1004,16 +1004,34 @@ function datasetToResource(dataset: DatasetVersion, language: "zh" | "en"): Brow
   };
 }
 
-function algorithmToResource(algorithm: AlgorithmVersion): BrowserResource {
+function normalizeWatermarkCategory(category: string | undefined) {
+  if (category === "classical" || category === "traditional_watermark") {
+    return "traditional_watermark";
+  }
+  return "deep_watermark";
+}
+
+function watermarkCategoryLabel(category: string, language: "zh" | "en") {
+  const labels = {
+    traditional_watermark: language === "zh" ? "传统水印" : "Traditional watermark",
+    deep_watermark: language === "zh" ? "深度水印" : "Deep watermark"
+  };
+  return labels[category as keyof typeof labels] ?? category;
+}
+
+function algorithmToResource(algorithm: AlgorithmVersion, language: "zh" | "en"): BrowserResource {
   const available = algorithm.available !== false && algorithm.status === "enabled";
   const needsWeights = algorithm.weightsPackRequired === true;
   const weightsReady = !needsWeights || algorithm.weightsInstalled === true;
+  const category = normalizeWatermarkCategory(algorithm.category);
+  const categoryLabel = watermarkCategoryLabel(category, language);
   return {
     id: algorithm.id,
     type: "watermarks",
     name: algorithm.name,
-    subtitle: `${algorithm.method ?? algorithm.id} · ${algorithm.category ?? "watermark"}`,
-    category: algorithm.category ?? "watermark",
+    subtitle: `${algorithm.method ?? algorithm.id} · ${categoryLabel}`,
+    category,
+    categoryLabel,
     status: algorithm.status,
     statusTone: available && weightsReady ? "ok" : needsWeights && !weightsReady ? "warn" : available ? "ok" : "warn",
     available,

@@ -21,11 +21,6 @@ resources/weights/watermarking/<method>/
 
 Current registered methods:
 
-- `traditional-dct`
-- `traditional-spread-dct`
-- `traditional-lsb`
-- `traditional-haar`
-- `blind_watermark`
 - `invisible-watermark-dwtdct`
 - `invisible-watermark-dwtdctsvd`
 - `invisible-watermark-rivagan`

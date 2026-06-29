@@ -116,7 +116,7 @@ def normalize_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
     datasets = scan_dataset_resources(resources_root)
     default_dataset_ids = [datasets[0].id] if datasets else []
     dataset_ids = _ensure_list(selection.get("datasetIds"), default_dataset_ids)
-    algorithm_ids = _ensure_list(selection.get("algorithmIds"), ["alg-traditional-lsb"])
+    algorithm_ids = _ensure_list(selection.get("algorithmIds"), ["alg-invisible-watermark-dwtdct"])
     attack_ids = _ensure_list(selection.get("attackPresetIds"), ["atk-identity", "atk-jpeg"])
     normalized_attack_ids = [str(value) for value in attack_ids]
     seeds = [int(seed) for seed in _ensure_list(selection.get("seeds"), [42])]

@@ -7,21 +7,21 @@ export const datasets: DatasetVersion[] = [
 
 export const algorithms: AlgorithmVersion[] = [
   {
-    id: "alg-traditional-lsb",
-    name: "Traditional LSB",
-    version: "local-smoke",
+    id: "alg-invisible-watermark-dwtdct",
+    name: "Invisible Watermark DWT-DCT",
+    version: "packaged",
     status: "enabled",
     requiresGpu: false,
-    method: "traditional-lsb",
+    method: "invisible-watermark-dwtdct",
     recommended: true
   },
   {
-    id: "alg-traditional-dct",
-    name: "Traditional DCT",
-    version: "local-smoke",
+    id: "alg-invisible-watermark-dwtdctsvd",
+    name: "Invisible Watermark DWT-DCT-SVD",
+    version: "packaged",
     status: "enabled",
     requiresGpu: false,
-    method: "traditional-dct"
+    method: "invisible-watermark-dwtdctsvd"
   },
   {
     id: "alg-hidden",

@@ -21,7 +21,7 @@ class ApiRoutesTest(unittest.TestCase):
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
             dataset_dir.mkdir(parents=True)
-            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
 
             os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
@@ -40,7 +40,7 @@ class ApiRoutesTest(unittest.TestCase):
                     "name": "Smoke",
                     "selection": {
                         "datasetIds": ["smoke"],
-                        "algorithmIds": ["alg-traditional-lsb"],
+                        "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                         "attackPresetIds": ["atk-identity"],
                         "seeds": [42],
                         "maxSamples": 1,

@@ -77,7 +77,7 @@ class WeightDownloadServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             service = WeightDownloadService(Path(tmp))
             with self.assertRaises(ValueError):
-                service.start_download("traditional-dct")
+                service.start_download("invisible-watermark-dwtdct")
 
 
 if __name__ == "__main__":

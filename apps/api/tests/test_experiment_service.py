@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -21,7 +22,7 @@ class ExperimentServiceTest(unittest.TestCase):
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
             dataset_dir.mkdir(parents=True)
-            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
                 database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
@@ -32,7 +33,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": ["atk-jpeg"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -47,7 +48,7 @@ class ExperimentServiceTest(unittest.TestCase):
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
             dataset_dir.mkdir(parents=True)
-            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
                 database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
@@ -58,7 +59,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -73,9 +74,11 @@ class ExperimentServiceTest(unittest.TestCase):
 
             self.assertEqual(finished["status"], "succeeded")
             self.assertEqual(len(results["cells"]), 1)
-            self.assertEqual(results["cells"][0]["bitAccuracy"], 1.0)
-            self.assertEqual(results["cells"][0]["bitErrorRate"], 0.0)
-            self.assertEqual(results["aggregates"][0]["meanBitAccuracy"], 1.0)
+            self.assertEqual(results["cells"][0]["status"], "succeeded")
+            extract_manifest = json.loads(Path(results["cells"][0]["manifestPath"]).read_text())
+            self.assertTrue(extract_manifest[0]["metadata"]["match"])
+            self.assertIsNone(results["cells"][0]["bitAccuracy"])
+            self.assertIsNone(results["aggregates"][0]["meanBitAccuracy"])
             self.assertEqual(results["score"]["protocolId"], "waves-official-detection-v1")
             self.assertEqual(score["score"]["status"], "provisional")
             self.assertEqual(service.list_benchmark_protocols()[0]["id"], "waves-official-detection-v1")
@@ -86,7 +89,7 @@ class ExperimentServiceTest(unittest.TestCase):
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
             dataset_dir.mkdir(parents=True)
-            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
                 database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
@@ -96,7 +99,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-traditional-lsb"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,

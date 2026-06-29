@@ -8,6 +8,10 @@
   --line: #d9dfd8;
   --teal: #0f766e;
   --teal-soft: #d9f0eb;
+  --accent: #2f7d68;
+  --accent-strong: #205746;
+  --steel: #385f8c;
+  --steel-soft: #e6edf5;
   --amber: #a16207;
   --red: #b42318;
   --blue: #2563eb;
@@ -447,9 +451,33 @@ a.button {
   font-size: 13px;
 }
 
+.check-tile:has(input:checked) {
+  border-color: rgba(47, 125, 104, 0.46);
+  background: linear-gradient(180deg, #ffffff, #f2f8f5);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.check-tile:has(input:disabled) {
+  opacity: 0.56;
+}
+
 .resource-check-tile {
   align-items: flex-start;
   min-width: 0;
+}
+
+.method-check-tile {
+  min-height: 58px;
+  padding: 10px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.method-check-tile:hover {
+  border-color: rgba(56, 95, 140, 0.42);
+  background: #fff;
 }
 
 .tile-copy {
@@ -468,6 +496,11 @@ a.button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.method-check-tile .tile-copy strong {
+  font-size: 13px;
+  line-height: 1.25;
 }
 
 .check-tile input {
@@ -2092,13 +2125,13 @@ a.button {
 
 .config-modal {
   display: grid;
-  width: min(1120px, 100%);
+  width: min(1240px, 100%);
   max-height: min(860px, calc(100vh - 40px));
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--panel);
+  background: #f8faf7;
   box-shadow: 0 24px 60px rgb(15 35 30 / 24%);
 }
 
@@ -2123,7 +2156,8 @@ a.button {
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--line);
-  padding: 14px 16px;
+  background: #fff;
+  padding: 16px 18px;
 }
 
 .modal-footer {
@@ -2149,26 +2183,37 @@ a.button {
 
 .config-modal-body {
   display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(420px, 1.1fr);
   gap: 14px;
+}
+
+.config-name-field,
+.config-modal-body .modal-section:last-child {
+  grid-column: 1 / -1;
 }
 
 .modal-section {
   display: grid;
-  gap: 10px;
+  align-content: start;
+  gap: 12px;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fbfcfa;
-  padding: 12px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 10px 24px rgba(37, 61, 52, 0.04);
 }
 
 .modal-section-heading {
   display: flex;
   align-items: center;
   gap: 9px;
+  min-height: 32px;
+  border-bottom: 1px solid #edf1ec;
+  padding-bottom: 10px;
 }
 
 .modal-section-heading svg {
-  color: var(--teal);
+  color: var(--steel);
 }
 
 .modal-section-heading h3 {
@@ -2184,6 +2229,7 @@ a.button {
   border: 1px solid var(--line);
   border-radius: 7px;
   background: white;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .field-icon-input svg {
@@ -2200,12 +2246,15 @@ a.button {
 
 .attack-group-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .attack-group {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  border-left: 3px solid #d8e4dc;
+  background: #fbfcfa;
+  padding: 10px 0 10px 12px;
 }
 
 .attack-group-title {
@@ -2213,16 +2262,18 @@ a.button {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: var(--muted);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 700;
 }
 
 .attack-group-title span {
   flex: 0 0 auto;
+  border: 1px solid #dce6dd;
   border-radius: 999px;
-  background: var(--panel-soft);
+  background: #fff;
   padding: 2px 8px;
+  color: var(--accent-strong);
 }
 
 .group-bulk-actions {
@@ -2232,10 +2283,12 @@ a.button {
 .attack-subgroup {
   display: grid;
   gap: 8px;
+  border-top: 1px solid #e7ece6;
+  padding-top: 10px;
 }
 
 .attack-subgroup + .attack-subgroup {
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .attack-subgroup-title {
@@ -2243,7 +2296,7 @@ a.button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: var(--muted);
+  color: #4c5c53;
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
@@ -2251,7 +2304,8 @@ a.button {
 
 .attack-subgroup-title span {
   border-radius: 999px;
-  background: var(--panel-soft);
+  background: var(--steel-soft);
+  color: var(--steel);
   padding: 2px 7px;
 }
 
@@ -2260,7 +2314,7 @@ a.button {
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfa;
+  background: linear-gradient(180deg, #ffffff, #f6f9f6);
   padding: 12px;
 }
 
@@ -2301,6 +2355,11 @@ a.button {
 
 .viewpoint-toggle-grid.xy-options {
   grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.viewpoint-toggle-grid.consumer-scale-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 220px;
 }
 
 .viewpoint-toggle {
@@ -2640,6 +2699,15 @@ a.button {
   .leaderboard-hero {
     grid-row: auto;
   }
+
+  .config-modal-body {
+    grid-template-columns: 1fr;
+  }
+
+  .config-name-field,
+  .config-modal-body .modal-section:last-child {
+    grid-column: auto;
+  }
 }
 
 @media (min-width: 900px) and (max-width: 1180px) {
@@ -2669,6 +2737,30 @@ a.button {
   .modal-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .modal-section-heading,
+  .selector-tools,
+  .viewpoint-settings-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .modal-section-heading {
+    flex-wrap: wrap;
+  }
+
+  .attack-group {
+    padding-left: 10px;
+  }
+
+  .viewpoint-variant-grid,
+  .viewpoint-toggle-grid.two-options,
+  .viewpoint-toggle-grid.phase-options,
+  .viewpoint-toggle-grid.vae-model-options,
+  .viewpoint-toggle-grid.xy-options,
+  .viewpoint-toggle-grid.consumer-scale-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .modal-footer .toolbar {

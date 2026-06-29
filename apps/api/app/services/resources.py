@@ -92,7 +92,6 @@ def get_dataset_by_id(resources_root: Path, dataset_id: str) -> DatasetResource:
 
 
 WATERMARK_DISPLAY_NAMES = {
-    "blind_watermark": "Blind Watermark",
     "chunkyseal": "ChunkySeal",
     "cin": "CIN",
     "hidden": "HiDDeN",
@@ -107,14 +106,11 @@ WATERMARK_DISPLAY_NAMES = {
     "rawatermark": "RAWatermark",
     "ssl-watermarking": "SSL Watermarking",
     "stegastamp": "StegaStamp",
-    "traditional-dct": "Traditional DCT",
-    "traditional-haar": "Traditional Haar",
-    "traditional-lsb": "Traditional LSB",
-    "traditional-spread-dct": "Traditional Spread DCT",
     "trustmark": "TrustMark",
     "trustmark-c": "TrustMark-C",
     "trustmark-q": "TrustMark-Q",
     "videoseal": "VideoSeal",
+    "vine": "VINE",
     "wam": "WAM",
 }
 
@@ -123,51 +119,41 @@ ATTACK_DISPLAY_NAMES = {
     "cew_c2": "CEW-C2 Color Retouch SR",
     "cew_c3": "CEW-C3 Detail Enhance SR",
     "cew_c4": "CEW-C4 Full Enhancement Chain",
-    "cew_d1": "CEW-D1 Auto-Light",
-    "cew_d2": "CEW-D2 Auto-WhiteBalance",
-    "cew_d3": "CEW-D3 Adaptive AI Color",
-    "cew_d4": "CEW-D4 Detail Low-Light Enhance",
-    "cew_d5": "CEW-D5 AI-Denoise Clean",
+    "cew_d1": "CEW-D1 Zero-DCE++ Auto-Light",
+    "cew_d2": "CEW-D2 DeepWB Auto-WhiteBalance",
+    "cew_d3": "CEW-D3 Image-Adaptive 3D LUT",
+    "cew_d4": "CEW-D4 Retinexformer Detail Low-Light Enhance",
+    "cew_d5": "CEW-D5 NAFNet/Restormer AI-Denoise",
     "cew_e1": "CEW-E1 Auto-Tone",
     "cew_e2": "CEW-E2 Warm-Vivid",
     "cew_e3": "CEW-E3 Film-Faded",
     "cew_e4": "CEW-E4 Local-Clarity HDR",
-    "cew_s1": "CEW-S1 RealESRGAN",
+    "cew_s1": "CEW-S1 Real-ESRGAN",
     "cew_s2": "CEW-S2 SwinIR",
     "cew_s3": "CEW-S3 BSRGAN",
-    "2x_regen": "2x Regeneration",
-    "4x_regen": "4x Regeneration",
-    "combined_physical": "Combined Physical",
+    "2x_regen": "2-pass Diffusion Regeneration",
+    "4x_regen": "4-pass Diffusion Regeneration",
+    "combined_physical": "Combined Physical Channel",
     "gaussian_blur": "Gaussian Blur",
     "gaussian_noise": "Gaussian Noise",
-    "image_to_vedio": "NFPA Image-to-Vedio",
+    "image_to_vedio": "NFPA Image-to-Video",
     "jpeg": "JPEG Compression",
     "noise_to_image": "CtrlRegen Noise-to-Image",
-    "print_camera": "Print-Camera",
-    "regen_diffusion": "Diffusion Regeneration",
-    "regen_vae": "VAE Regeneration",
+    "print_camera": "CamMark-style Print-Camera",
+    "regen_diffusion": "WAVES Diffusion Regeneration",
+    "regen_vae": "CompressAI VAE Reconstruction",
     "resized_crop": "Resized Crop",
-    "screen_shoot": "Screen-Shoot",
+    "screen_shoot": "PIMoG-style Screen-Camera",
 }
 
 WATERMARK_CPU_METHODS = {
-    "blind_watermark",
     "invisible-watermark-dwtdct",
     "invisible-watermark-dwtdctsvd",
-    "traditional-dct",
-    "traditional-haar",
-    "traditional-lsb",
-    "traditional-spread-dct",
 }
 
-WATERMARK_PARAM_OVERRIDES: dict[str, dict[str, Any]] = {
-    "traditional-dct": {"payload_bits": 16},
-    "traditional-haar": {"payload_bits": 16},
-    "traditional-lsb": {"payload_bits": 16},
-    "traditional-spread-dct": {"payload_bits": 16},
-}
+WATERMARK_PARAM_OVERRIDES: dict[str, dict[str, Any]] = {}
 
-RECOMMENDED_WATERMARKS = {"traditional-lsb"}
+RECOMMENDED_WATERMARKS = {"invisible-watermark-dwtdct"}
 
 ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
     "2x_regen": [0.0, 0.5, 1.0],
@@ -254,10 +240,8 @@ def _display_name(method: str, overrides: dict[str, str]) -> str:
 
 def _watermark_category(method: str) -> str:
     if method.startswith("traditional") or method in WATERMARK_CPU_METHODS:
-        return "classical"
-    if method in {"videoseal", "pixelseal", "chunkyseal"}:
-        return "videoseal-family"
-    return "neural"
+        return "traditional_watermark"
+    return "deep_watermark"
 
 
 ATTACK_CATEGORY_LABELS = {
