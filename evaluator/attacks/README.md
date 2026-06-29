@@ -78,6 +78,7 @@ evaluator/attacks/
 ├── runner.py               # 目录级批量执行
 ├── distortion_attacks/     # 基础数字失真攻击
 ├── content_preserve_workflow_attacks/ # 内容保持型数字工作流攻击
+├── physical_channel_attacks/ # 物理信道模拟攻击
 ├── regeneration_attacks/   # 再生成攻击预留
 └── adversarial_attacks/    # 对抗攻击预留
 ```
@@ -156,6 +157,19 @@ resources/weights/attacks/content_preserve_workflow_attacks/
 ```
 
 Deep 攻击已接入本地 PyTorch 推理 backend：Restormer、SwinIR JPEG/CAR 和 Real-ESRGAN RRDBNet x4。运行结果 metadata 会记录实际 `backend`、`weight_path`、`weight_exists` 和 `fallback_used`。传入 `allow_fallback=False` 可以强制验证真实 Deep 推理路径。
+
+## Physical Channel Attacks
+
+`physical_channel_attacks/` 实现 v2 物理信道复现模拟，已从
+`算法/attack/physical_channel_v2/` scratch 区提升到正式攻击注册表：
+
+- `screen_shoot`：屏摄链路，包含透视、光照、摩尔纹、相机成像和 JPEG。
+- `print_camera`：打印翻拍链路，包含打印渲染、透视、光照、相机成像和 JPEG。
+- `combined_physical`：打印翻拍到屏摄的跨媒介双跳链路。
+
+每类攻击提供 `mild / medium / strong` 三档命名变体；`screen_shoot` 和
+`print_camera` 还提供 `_uncorrected` 几何未校正变体。当前正式预设使用用户
+视觉复核后的降模糊版本，避免文字类图片被过度模糊。
 
 ## 新增攻击
 
