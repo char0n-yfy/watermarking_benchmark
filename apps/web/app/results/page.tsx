@@ -11,7 +11,9 @@ import {
   Gauge,
   Info,
   Layers3,
+  PlayCircle,
   Search,
+  SlidersHorizontal,
   Trophy
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
@@ -51,10 +53,11 @@ interface ScoringSummary {
 const RESULT_TABS: ResultsTab[] = ["overview", "attack", "quality", "debug"];
 
 export default function ResultsPage() {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [results, setResults] = useState<RunResults | null>(null);
   const [score, setScore] = useState<BenchmarkScore | null>(null);
   const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
   const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<string[]>([]);
   const [debugStatus, setDebugStatus] = useState<StatusFilter>("all");
@@ -104,6 +107,11 @@ export default function ResultsPage() {
       .catch(() => {
         if (!cancelled) {
           setNotice(t.results.apiUnavailable);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
         }
       });
     return () => {
@@ -166,6 +174,24 @@ export default function ResultsPage() {
     categories: row.categoryScores
   }));
   const radarCategories = score?.categoryScores ?? selectedScoreRows[0]?.categoryScores ?? [];
+  const emptyCopy =
+    language === "zh"
+      ? {
+          loadingTitle: "正在读取运行结果",
+          loadingBody: "如果 worker 正在执行，结果会在运行完成后出现在这里。",
+          title: "还没有可展示的真实结果",
+          body: "先创建实验配置，再到运行页提交并启动 worker；完成后这里会展示 WRS、覆盖率、曲线和调试单元。",
+          openRuns: "去运行页",
+          openConfigs: "去配置页"
+        }
+      : {
+          loadingTitle: "Loading run results",
+          loadingBody: "If a worker is running, results will appear here after completion.",
+          title: "No real results to show yet",
+          body: "Create a config, submit it on Runs, and start a worker. WRS, coverage, curves, and debug cells appear after completion.",
+          openRuns: "Open Runs",
+          openConfigs: "Open Configs"
+        };
 
   return (
     <AppShell active="results">
@@ -184,6 +210,26 @@ export default function ResultsPage() {
 
       {notice ? <div className="risk warn">{notice}</div> : null}
 
+      {!results ? (
+        <section className="result-empty-state">
+          <Info size={34} />
+          <h2>{loading ? emptyCopy.loadingTitle : emptyCopy.title}</h2>
+          <p>{loading ? emptyCopy.loadingBody : emptyCopy.body}</p>
+          {!loading ? (
+            <div className="toolbar">
+              <a className="button primary" href="/runs">
+                <PlayCircle size={16} />
+                {emptyCopy.openRuns}
+              </a>
+              <a className="button" href="/configs">
+                <SlidersHorizontal size={16} />
+                {emptyCopy.openConfigs}
+              </a>
+            </div>
+          ) : null}
+        </section>
+      ) : (
+        <>
       <section className="results-summary-grid">
         <SummaryCard label={t.runs.run} value={summary.runId} meta={summary.configName} />
         <SummaryCard label={t.runs.status} value={summary.statusLabel} meta={`${summary.progress}% ${t.common.progress}`} />
@@ -266,6 +312,8 @@ export default function ResultsPage() {
           setSelectedAlgorithmIds={setSelectedAlgorithmIds}
         />
       ) : null}
+        </>
+      )}
     </AppShell>
   );
 

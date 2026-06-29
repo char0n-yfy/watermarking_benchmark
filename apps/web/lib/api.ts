@@ -10,6 +10,7 @@ import type {
   DemoRunRecord,
   ExperimentSelection,
   LeaderboardResponse,
+  ReadinessReport,
   RunEvents,
   RunLogs,
   RunResults,
@@ -23,8 +24,21 @@ import type {
 
 const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
 
-export const apiBaseUrl =
-  configuredApiBaseUrl || (process.env.NODE_ENV === "development" ? "http://localhost:8000" : "");
+function defaultApiBaseUrl() {
+  if (typeof window === "undefined") {
+    return process.env.NODE_ENV === "development" ? "http://localhost:8000" : "";
+  }
+
+  const { hostname, port, protocol } = window.location;
+  const isLocalDevHost = hostname === "localhost" || hostname === "127.0.0.1";
+  if (isLocalDevHost && port === "3000") {
+    return `${protocol}//${hostname}:8000`;
+  }
+
+  return "";
+}
+
+export const apiBaseUrl = configuredApiBaseUrl || defaultApiBaseUrl();
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -243,6 +257,10 @@ export function fetchRunEvents(runId: string): Promise<RunEvents> {
 
 export function fetchRuntime(): Promise<RuntimeInfo> {
   return requestJson<RuntimeInfo>("/system/runtime");
+}
+
+export function fetchReadiness(): Promise<ReadinessReport> {
+  return requestJson<ReadinessReport>("/system/readiness");
 }
 
 export function fetchSystemMetrics(): Promise<SystemMetrics> {

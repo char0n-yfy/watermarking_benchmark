@@ -8,6 +8,14 @@ from pathlib import Path
 from .env_loader import PROJECT_ROOT, load_project_env
 
 
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:6006",
+    "http://127.0.0.1:6006",
+)
+
+
 def _resolve_repo_path(raw: str | None, default: Path) -> Path:
     path = Path(raw or str(default)).expanduser()
     if not path.is_absolute():
@@ -30,6 +38,14 @@ class Settings:
     device: str
     worker_poll_seconds: float
     run_timeout_seconds: int
+    cors_origins: tuple[str, ...]
+
+
+def _csv_env(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 @lru_cache(maxsize=1)
@@ -60,4 +76,5 @@ def get_settings() -> Settings:
         device=os.getenv("WM_BENCH_DEVICE", "cpu"),
         worker_poll_seconds=float(os.getenv("WM_BENCH_WORKER_POLL_SECONDS", "2")),
         run_timeout_seconds=int(os.getenv("WM_BENCH_RUN_TIMEOUT_SECONDS", "3600")),
+        cors_origins=_csv_env("WM_BENCH_CORS_ORIGINS", DEFAULT_CORS_ORIGINS),
     )

@@ -18,6 +18,7 @@ from .services.dataset_download import DatasetDownloadService
 from .services.experiment_service import ExperimentService
 from .services.object_storage import get_object_storage_client
 from .services.attack_weight_download import AttackWeightDownloadService
+from .services.readiness import collect_readiness
 from .services.resources import (
     get_attack_catalog_item,
     get_watermark_catalog_item,
@@ -46,15 +47,11 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Local-first service for experiment metadata and small run orchestration.",
     )
+    allow_all_cors = "*" in settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:6006",
-            "http://127.0.0.1:6006",
-        ],
-        allow_credentials=True,
+        allow_origins=["*"] if allow_all_cors else list(settings.cors_origins),
+        allow_credentials=not allow_all_cors,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -84,6 +81,10 @@ def create_app() -> FastAPI:
             "workerPollSeconds": settings.worker_poll_seconds,
             "workers": service.list_worker_heartbeats(),
         }
+
+    @app.get("/system/readiness")
+    def readiness() -> dict[str, object]:
+        return collect_readiness(settings, service)
 
     @app.get("/system/metrics")
     def system_metrics() -> dict[str, object]:

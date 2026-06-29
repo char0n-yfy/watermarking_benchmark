@@ -68,6 +68,15 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(runtime_response.status_code, 200)
             self.assertEqual(runtime_response.json()["device"], "cpu")
 
+            readiness_response = client.get("/system/readiness")
+            self.assertEqual(readiness_response.status_code, 200)
+            readiness = readiness_response.json()
+            self.assertIn(readiness["status"], {"ready", "degraded"})
+            check_ids = {check["id"] for check in readiness["checks"]}
+            self.assertIn("sqlite", check_ids)
+            self.assertIn("resource_catalog", check_ids)
+            self.assertIn("worker_heartbeat", check_ids)
+
             protocols_response = client.get("/benchmark-protocols")
             self.assertEqual(protocols_response.status_code, 200)
             self.assertEqual(protocols_response.json()[0]["id"], "waves-official-detection-v1")

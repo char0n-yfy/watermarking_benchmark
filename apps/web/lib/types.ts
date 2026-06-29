@@ -385,6 +385,26 @@ export interface RuntimeInfo {
   workers: WorkerHeartbeat[];
 }
 
+export type ReadinessCheckStatus = "ok" | "warn" | "error";
+export type ReadinessStatus = "ready" | "degraded" | "not_ready";
+
+export interface ReadinessCheck {
+  id: string;
+  label: string;
+  status: ReadinessCheckStatus;
+  detail: string;
+  required: boolean;
+  meta: Record<string, unknown>;
+}
+
+export interface ReadinessReport {
+  status: ReadinessStatus;
+  generatedAt: string;
+  environment: string;
+  device: string;
+  checks: ReadinessCheck[];
+}
+
 export interface SystemMetrics {
   timestamp: string;
   hostName: string;

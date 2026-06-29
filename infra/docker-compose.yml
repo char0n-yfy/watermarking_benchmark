@@ -24,6 +24,10 @@ services:
       DATABASE_URL: postgresql://wmbench:wmbench@postgres:5432/wmbench
       REDIS_URL: redis://redis:6379/0
       WM_BENCH_DATA_ROOT: /data/wm-bench
+      WM_BENCH_RESOURCES_ROOT: /data/wm-bench/resources
+      WM_BENCH_RUNS_ROOT: /data/wm-bench/runs
+      WM_BENCH_DB_PATH: /data/wm-bench/state/wmbench.sqlite
+      WM_BENCH_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "8000:8000"
     volumes:
@@ -40,6 +44,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_QUEUE: cpu
       WM_BENCH_DATA_ROOT: /data/wm-bench
+      WM_BENCH_RESOURCES_ROOT: /data/wm-bench/resources
+      WM_BENCH_RUNS_ROOT: /data/wm-bench/runs
+      WM_BENCH_DB_PATH: /data/wm-bench/state/wmbench.sqlite
     volumes:
       - wmbench-data:/data/wm-bench
       - /var/run/docker.sock:/var/run/docker.sock
@@ -54,6 +61,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_QUEUE: gpu
       WM_BENCH_DATA_ROOT: /data/wm-bench
+      WM_BENCH_RESOURCES_ROOT: /data/wm-bench/resources
+      WM_BENCH_RUNS_ROOT: /data/wm-bench/runs
+      WM_BENCH_DB_PATH: /data/wm-bench/state/wmbench.sqlite
     volumes:
       - wmbench-data:/data/wm-bench
       - /var/run/docker.sock:/var/run/docker.sock
@@ -71,8 +81,8 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/web.Dockerfile
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      args:
+        NEXT_PUBLIC_API_BASE_URL: /api
     ports:
       - "3000:3000"
     depends_on:

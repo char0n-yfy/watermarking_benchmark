@@ -148,32 +148,34 @@ export default function ExperimentConsole() {
   const [notice, setNotice] = useState("");
 
   const loadDashboard = async () => {
-    const [
-      loadedConfigs,
-      loadedRuns,
-      loadedRuntime,
-      loadedDatasets,
-      loadedAlgorithms,
-      loadedAttacks,
-      loadedSystemMetrics
-    ] =
-      await Promise.all([
-        fetchSavedConfigs(),
-        fetchRuns(),
-        fetchRuntime(),
-        fetchDatasets(),
-        fetchAlgorithms(),
-        fetchAttacks(),
-        fetchSystemMetrics()
-      ]);
-    setConfigs(loadedConfigs);
-    setRuns(loadedRuns);
-    setRuntime(loadedRuntime);
-    setDatasets(loadedDatasets);
-    setAlgorithms(loadedAlgorithms);
-    setAttacks(loadedAttacks);
-    setSystemMetrics(loadedSystemMetrics);
-    setNotice("");
+    try {
+      const [loadedConfigs, loadedRuns, loadedRuntime, loadedDatasets, loadedAlgorithms, loadedAttacks] =
+        await Promise.all([
+          fetchSavedConfigs(),
+          fetchRuns(),
+          fetchRuntime(),
+          fetchDatasets(),
+          fetchAlgorithms(),
+          fetchAttacks()
+        ]);
+      setConfigs(loadedConfigs);
+      setRuns(loadedRuns);
+      setRuntime(loadedRuntime);
+      setDatasets(loadedDatasets);
+      setAlgorithms(loadedAlgorithms);
+      setAttacks(loadedAttacks);
+      setNotice("");
+    } catch {
+      setNotice("API 未启动或不可访问，请先启动 FastAPI 服务。");
+      return;
+    }
+
+    try {
+      setSystemMetrics(await fetchSystemMetrics());
+    } catch {
+      setSystemMetrics(null);
+      setNotice("系统性能指标暂时不可用，队列和资源数据已加载。");
+    }
   };
 
   useEffect(() => {
