@@ -325,12 +325,12 @@ def _deep_enhance(image: Image.Image, operation: str, params: Mapping[str, Any],
     weight_meta = _weight_metadata(weight_path, task_name, model_name, allow_fallback)
     try:
         if operation == "d1":
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_models import run_zero_dce_plus_plus
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_zero_dce_plus_plus
 
             output = run_zero_dce_plus_plus(image, weight_path, context.device)
             return output, _torch_metadata(weight_meta, "torch_zero_dce_plus_plus")
         if operation == "d2":
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_backends import run_deepwb_awb
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.deep_enhance import run_deepwb_awb
 
             output = run_deepwb_awb(
                 image,
@@ -340,7 +340,7 @@ def _deep_enhance(image: Image.Image, operation: str, params: Mapping[str, Any],
             )
             return output, _torch_metadata(weight_meta, "torch_deepwb_awb")
         if operation == "d3":
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_backends import run_image_adaptive_3dlut
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.deep_enhance import run_image_adaptive_3dlut
 
             output = run_image_adaptive_3dlut(
                 image,
@@ -350,7 +350,7 @@ def _deep_enhance(image: Image.Image, operation: str, params: Mapping[str, Any],
             )
             return output, _torch_metadata(weight_meta, "torch_image_adaptive_3dlut")
         if operation == "d4":
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_backends import run_retinexformer_low_light
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.deep_enhance import run_retinexformer_low_light
 
             output = run_retinexformer_low_light(
                 image,
@@ -360,7 +360,7 @@ def _deep_enhance(image: Image.Image, operation: str, params: Mapping[str, Any],
             )
             return output, _torch_metadata(weight_meta, "torch_retinexformer_low_light")
         if operation == "d5":
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_models import run_restormer_denoise
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_restormer_denoise
 
             output = run_restormer_denoise(image, weight_path, context.device)
             return output, _torch_metadata(weight_meta, "torch_restormer_denoise")
@@ -405,17 +405,17 @@ def _sr(image: Image.Image, params: Mapping[str, Any], context: AttackContext) -
     }
     try:
         if model_name in {"realesrgan_x2plus", "bsrgan_x2", "bsrgan_x2_rescaled"} and scale == 2:
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_models import run_rrdbnet_x2
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_rrdbnet_x2
 
             output = run_rrdbnet_x2(image, weight_path, context.device)
             return output, {**_torch_metadata(weight_meta, "torch_rrdbnet_x2"), **runtime_meta}
         if model_name in {"realesrgan_x4plus", "bsrgan_x4"} and scale == 4:
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_models import run_rrdbnet_x4
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_rrdbnet_x4
 
             output = run_rrdbnet_x4(image, weight_path, context.device)
             return output, {**_torch_metadata(weight_meta, "torch_rrdbnet_x4"), **runtime_meta}
         if model_name in {"swinir_x2", "swinir_x4"}:
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.deep_models import run_swinir_classical_sr
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_swinir_classical_sr
 
             output = run_swinir_classical_sr(image, weight_path, scale, context.device)
             return output, {**_torch_metadata(weight_meta, f"torch_swinir_classical_sr_x{scale}"), **runtime_meta}

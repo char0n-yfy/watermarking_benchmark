@@ -19,6 +19,14 @@ The deep entries first look under:
 resources/weights/attacks/consumer_enhancement_workflow_attacks/
 ```
 
+The local torch backend implementations are kept under:
+
+```text
+evaluator/attacks/consumer_enhancement_workflow_attacks/backends/
+├── deep_enhance.py
+└── restoration_sr.py
+```
+
 `cew_d1`, `cew_d2`, `cew_d3`, `cew_d4`, `cew_d5`, and `cew_s*` all have local
 torch inference backends. When a checkpoint is unavailable or cannot be loaded,
 `allow_fallback=True` uses deterministic Pillow/NumPy/OpenCV-style image

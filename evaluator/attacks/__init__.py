@@ -22,9 +22,12 @@ from .physical_channel_attacks import (
 from .registry import ATTACK_REGISTRY, build_attack, list_attacks, register_attack
 from .regeneration_attacks import (
     FourTimesRegenDiffusionAttack,
+    ImageToVedioAttack,
+    NoiseToImageAttack,
     RegenDiffusionAttack,
     RegenVAEAttack,
     TwoTimesRegenDiffusionAttack,
+    ViewpointRerendering3DAttack,
 )
 
 __all__ = [
@@ -40,8 +43,10 @@ __all__ = [
     "FourTimesRegenDiffusionAttack",
     "GaussianBlurAttack",
     "GaussianNoiseAttack",
+    "ImageToVedioAttack",
     "IdentityAttack",
     "JPEGCompressionAttack",
+    "NoiseToImageAttack",
     "physical_channel_attacks",
     "PrintCameraAttack",
     "RegenDiffusionAttack",
@@ -51,6 +56,7 @@ __all__ = [
     "RotationAttack",
     "ScreenShootAttack",
     "TwoTimesRegenDiffusionAttack",
+    "ViewpointRerendering3DAttack",
     "build_attack",
     "list_attacks",
     "register_attack",

@@ -2,23 +2,41 @@ from __future__ import annotations
 
 import re
 import hashlib
+import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from evaluator.attacks.base import AttackContext, BaseAttack
 from evaluator.attacks.registry import register_attack
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PACKAGE_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = PACKAGE_ROOT.parents[2]
 DEFAULT_WEIGHT_ROOT = PROJECT_ROOT / "resources" / "weights" / "attacks" / "regeneration_attacks"
 DEFAULT_DIFFUSION_MODEL_ROOT = DEFAULT_WEIGHT_ROOT / "diffusion" / "sd2-1-base"
+DEFAULT_NOISE_TO_IMAGE_ROOT = DEFAULT_WEIGHT_ROOT / "noise_to_image"
+DEFAULT_BACKEND_ROOT = PACKAGE_ROOT / "backends"
+DEFAULT_NOISE_TO_IMAGE_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "ctrlregen"
+DEFAULT_IMAGE_TO_VEDIO_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "nfpa"
+DEFAULT_VIEWPOINT_RERENDERING_ROOT = DEFAULT_WEIGHT_ROOT / "3d_viewpoint_rerendering"
+DEFAULT_SHARP_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "ml_sharp"
+DEFAULT_SHARP_CHECKPOINT_PATH = DEFAULT_VIEWPOINT_RERENDERING_ROOT / "checkpoints" / "sharp_2572gikvuh.pt"
+DEFAULT_SHARP_ATTACK_DEFINITION = "REG-3D-SHARP-Rotate"
 DEFAULT_DIFFUSION_REPO_ID = "sd2-community/stable-diffusion-2-1-base"
+DEFAULT_CTRLREGEN_BASE_REPO_ID = "SG161222/Realistic_Vision_V4.0_noVAE"
+DEFAULT_CTRLREGEN_ADAPTER_REPO_ID = "yepengliu/ctrlregen"
+DEFAULT_CTRLREGEN_IMAGE_ENCODER_REPO_ID = "facebook/dinov2-giant"
+DEFAULT_CTRLREGEN_VAE_REPO_ID = "stabilityai/sd-vae-ft-mse"
+DEFAULT_SHARP_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+DEFAULT_SHARP_PHASES = tuple(index / 8 for index in range(8))
+DEFAULT_SHARP_LOOKAT_MODES = ("point", "ahead")
 
 DIFFUSION_REQUIRED_FILES = (
     "model_index.json",
@@ -190,6 +208,190 @@ def _load_compressai_model(model_name: str, quality: int, metric: str, weight_pa
 
 def _prepare_image(image: Image.Image, size: int) -> Image.Image:
     return image.convert("RGB").resize((size, size), Image.Resampling.BICUBIC)
+
+
+def _square_image(image: Image.Image, size: int, mode: str = "fit") -> Image.Image:
+    mode_l = (mode or "fit").lower()
+    if mode_l == "pad":
+        return ImageOps.pad(image.convert("RGB"), (size, size), method=Image.Resampling.BICUBIC)
+    return ImageOps.fit(image.convert("RGB"), (size, size), method=Image.Resampling.BICUBIC)
+
+
+def _load_module_from_file(module_name: str, file_path: Path):
+    if not file_path.exists():
+        raise FileNotFoundError(f"Required backend source file not found: {file_path}")
+    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot create import spec for {file_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ensure_backend_source_root(
+    source_root: str | Path | None,
+    default_root: Path,
+    required_files: tuple[str, ...],
+    backend_name: str,
+) -> Path:
+    root = Path(source_root).expanduser() if source_root is not None else default_root
+    missing = [relative for relative in required_files if not (root / relative).exists()]
+    if missing:
+        missing_list = ", ".join(missing)
+        raise FileNotFoundError(
+            f"{backend_name} backend source is missing under {root}: {missing_list}. "
+            f"Place the official source tree under {default_root} or pass source_root explicitly."
+        )
+    return root
+
+
+def _has_any_file(path: Path) -> bool:
+    if not path.exists():
+        return False
+    if path.is_file():
+        return True
+    return any(child.is_file() for child in path.rglob("*"))
+
+
+def _is_local_reference(value: str) -> bool:
+    path = Path(value).expanduser()
+    return (
+        path.is_absolute()
+        or value.startswith("./")
+        or value.startswith("../")
+        or value.startswith("~/")
+    )
+
+
+def _download_hf_snapshot(
+    repo_id: str,
+    local_dir: Path,
+    allow_download: bool,
+    allow_patterns: tuple[str, ...] | None = None,
+) -> tuple[Path, bool]:
+    if _has_any_file(local_dir):
+        return local_dir, False
+    if not allow_download:
+        raise FileNotFoundError(f"Hugging Face snapshot is missing and download is disabled: {local_dir}")
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as exc:
+        raise RuntimeError(f"huggingface_hub is required to download {repo_id}") from exc
+    local_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=repo_id,
+        local_dir=str(local_dir),
+        allow_patterns=list(allow_patterns) if allow_patterns is not None else None,
+    )
+    return local_dir, True
+
+
+def _resolve_hf_or_path(
+    value: str | Path | None,
+    *,
+    default_repo_id: str,
+    local_dir: Path,
+    allow_download: bool,
+    allow_patterns: tuple[str, ...] | None = None,
+) -> tuple[str, bool, str]:
+    raw = default_repo_id if value is None else str(value)
+    path = Path(raw).expanduser()
+    if path.exists():
+        return str(path.resolve()), False, raw
+    if _is_local_reference(raw):
+        raise FileNotFoundError(f"Configured local model path does not exist: {path}")
+    resolved, downloaded = _download_hf_snapshot(raw, local_dir, allow_download, allow_patterns)
+    return str(resolved.resolve()), downloaded, raw
+
+
+def _ensure_torch_diffusers_env() -> None:
+    os.environ.setdefault("USE_TF", "0")
+    os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    try:
+        import transformers  # type: ignore
+        from transformers import utils as transformers_utils  # type: ignore
+
+        if not hasattr(transformers_utils, "FLAX_WEIGHTS_NAME"):
+            transformers_utils.FLAX_WEIGHTS_NAME = "flax_model.msgpack"
+        if not hasattr(transformers, "FLAX_WEIGHTS_NAME"):
+            transformers.FLAX_WEIGHTS_NAME = transformers_utils.FLAX_WEIGHTS_NAME
+        if not hasattr(transformers, "CLIPFeatureExtractor") and hasattr(transformers, "CLIPImageProcessor"):
+            transformers.CLIPFeatureExtractor = transformers.CLIPImageProcessor
+    except Exception:
+        pass
+
+
+def _generator_device(device: Any) -> str:
+    device_type = getattr(device, "type", str(device).split(":", 1)[0])
+    return "cpu" if device_type == "mps" else device_type
+
+
+def _parse_float_sequence(value: Any, default: tuple[float, ...], label: str) -> tuple[float, ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",") if item.strip()]
+        if not items:
+            return default
+        parsed = tuple(float(item) for item in items)
+    else:
+        parsed = tuple(float(item) for item in value)
+    for item in parsed:
+        if item < 0.0 or item >= 1.0:
+            raise ValueError(f"{label} values must be in [0, 1): {item}")
+    return parsed
+
+
+def _parse_lookat_modes(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return DEFAULT_SHARP_LOOKAT_MODES
+    if isinstance(value, str):
+        modes = tuple(item.strip() for item in value.split(",") if item.strip())
+    else:
+        modes = tuple(str(item) for item in value)
+    invalid = [mode for mode in modes if mode not in DEFAULT_SHARP_LOOKAT_MODES]
+    if invalid:
+        valid = ", ".join(DEFAULT_SHARP_LOOKAT_MODES)
+        raise ValueError(f"Unsupported SHARP lookat_mode values {invalid}; choose from: {valid}")
+    return modes
+
+
+def _ensure_sharp_source_root(source_root: str | Path | None) -> Path:
+    root = Path(source_root).expanduser() if source_root is not None else DEFAULT_SHARP_SOURCE_ROOT
+    required = (
+        "src/sharp/cli/predict.py",
+        "src/sharp/models/__init__.py",
+        "src/sharp/utils/camera.py",
+        "src/sharp/utils/gsplat.py",
+        "src/sharp/utils/gaussians.py",
+    )
+    missing = [relative for relative in required if not (root / relative).exists()]
+    if missing:
+        missing_list = ", ".join(missing)
+        raise FileNotFoundError(
+            f"apple/ml-sharp source is missing under {root}: {missing_list}. "
+            f"Place the repository under {DEFAULT_SHARP_SOURCE_ROOT} or pass source_root explicitly."
+        )
+    src_path = root / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    return root
+
+
+def _resolve_sharp_checkpoint(
+    checkpoint_path: str | Path | None,
+    allow_download: bool,
+    progress: bool,
+) -> tuple[Path, str, bool]:
+    target = Path(checkpoint_path).expanduser() if checkpoint_path is not None else DEFAULT_SHARP_CHECKPOINT_PATH
+    downloaded = False
+    if not target.exists():
+        if not allow_download:
+            raise FileNotFoundError(f"SHARP checkpoint is missing and download is disabled: {target}")
+        _download_file(DEFAULT_SHARP_MODEL_URL, target, progress=progress)
+        downloaded = True
+    return target, DEFAULT_SHARP_MODEL_URL, downloaded
 
 
 def _torch_dtype_from_name(dtype_name: str, device: str):
@@ -683,3 +885,878 @@ class FourTimesRegenDiffusionAttack(_BaseRegenDiffusionAttack):
     name = "4x_regen"
     description = "Four repeated Stable Diffusion 2.1-base regeneration passes."
     passes = 4
+
+
+@register_attack
+class ViewpointRerendering3DAttack(BaseAttack):
+    name = "3d_viewpoint_rerendering"
+    description = "REG-3D-SHARP-Rotate 3D Gaussian viewpoint re-rendering attack."
+
+    def __init__(
+        self,
+        source_root: str | Path | None = None,
+        checkpoint_path: str | Path | None = None,
+        max_disparity: float = 0.02,
+        phases: Any = None,
+        lookat_modes: Any = None,
+        image_size: int | None = None,
+        device: str | None = None,
+        allow_download: bool = True,
+        progress: bool = True,
+        save_intermediates: bool = True,
+        primary_phase: float = 0.0,
+        primary_lookat_mode: str = "point",
+    ) -> None:
+        max_disparity = float(max_disparity)
+        if max_disparity < 0.0:
+            raise ValueError("max_disparity must be non-negative")
+        if image_size is not None and int(image_size) <= 0:
+            raise ValueError("image_size must be positive when provided")
+        phase_values = _parse_float_sequence(phases, DEFAULT_SHARP_PHASES, "phases")
+        lookat_values = _parse_lookat_modes(lookat_modes)
+        if primary_phase < 0.0 or primary_phase >= 1.0:
+            raise ValueError("primary_phase must be in [0, 1)")
+        if primary_lookat_mode not in DEFAULT_SHARP_LOOKAT_MODES:
+            valid = ", ".join(DEFAULT_SHARP_LOOKAT_MODES)
+            raise ValueError(f"primary_lookat_mode must be one of: {valid}")
+        super().__init__(
+            source_root=str(source_root) if source_root is not None else str(DEFAULT_SHARP_SOURCE_ROOT),
+            checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else str(DEFAULT_SHARP_CHECKPOINT_PATH),
+            attack_definition=DEFAULT_SHARP_ATTACK_DEFINITION,
+            max_disparity=max_disparity,
+            trajectory_type="rotate",
+            max_zoom=0.0,
+            phases=list(phase_values),
+            lookat_modes=list(lookat_values),
+            image_size=None if image_size is None else int(image_size),
+            device=device,
+            allow_download=bool(allow_download),
+            save_intermediates=bool(save_intermediates),
+            primary_phase=float(primary_phase),
+            primary_lookat_mode=primary_lookat_mode,
+        )
+        self.source_root = source_root
+        self.checkpoint_path = checkpoint_path
+        self.max_disparity = max_disparity
+        self.phases = phase_values
+        self.lookat_modes = lookat_values
+        self.image_size = None if image_size is None else int(image_size)
+        self.device_override = device
+        self.allow_download = bool(allow_download)
+        self.progress = bool(progress)
+        self.save_intermediates = bool(save_intermediates)
+        self.primary_phase = float(primary_phase)
+        self.primary_lookat_mode = primary_lookat_mode
+        self._predictor: Any | None = None
+        self._predictor_device: str | None = None
+        self._checkpoint_path: Path | None = None
+        self._checkpoint_url: str | None = None
+        self._checkpoint_downloaded = False
+        self._source_root: Path | None = None
+        self._sharp_modules: dict[str, Any] = {}
+
+    def _ensure_predictor(self, device: str) -> None:
+        import torch
+
+        torch_device = torch.device(device)
+        if torch_device.type != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("3D Viewpoint Re-rendering with SHARP requires a CUDA GPU for gsplat rendering")
+        if self._predictor is not None and self._predictor_device == str(torch_device):
+            return
+
+        source_root = _ensure_sharp_source_root(self.source_root)
+        checkpoint_path, checkpoint_url, downloaded = _resolve_sharp_checkpoint(
+            self.checkpoint_path,
+            self.allow_download,
+            self.progress,
+        )
+        try:
+            from sharp.cli.predict import predict_image
+            from sharp.models import PredictorParams, create_predictor
+            from sharp.utils import camera, gsplat, io
+            from sharp.utils.gaussians import SceneMetaData, save_ply
+        except Exception as exc:
+            raise RuntimeError(
+                "Unable to import apple/ml-sharp. Install its requirements or place the source tree under "
+                f"{DEFAULT_SHARP_SOURCE_ROOT}."
+            ) from exc
+
+        try:
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        except TypeError:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+        predictor = create_predictor(PredictorParams())
+        predictor.load_state_dict(state_dict)
+        predictor.eval().to(torch_device)
+
+        self._predictor = predictor
+        self._predictor_device = str(torch_device)
+        self._checkpoint_path = checkpoint_path
+        self._checkpoint_url = checkpoint_url
+        self._checkpoint_downloaded = downloaded
+        self._source_root = source_root
+        self._sharp_modules = {
+            "predict_image": predict_image,
+            "camera": camera,
+            "gsplat": gsplat,
+            "io": io,
+            "SceneMetaData": SceneMetaData,
+            "save_ply": save_ply,
+        }
+
+    def _variant_output_dir(self, output_path: Path, context: AttackContext) -> Path:
+        sample_key = str(context.sample_id or output_path.stem).replace("/", "__").replace(os.sep, "__")
+        if context.workspace_dir is not None:
+            return context.workspace_dir / "_intermediates" / self.name / sample_key
+        return output_path.parent / f"{output_path.stem}_sharp_variants"
+
+    def _render_variant(
+        self,
+        gaussians: Any,
+        metadata: Any,
+        *,
+        phase: float,
+        lookat_mode: str,
+        device: str,
+        renderer: Any | None = None,
+        gaussians_device: Any | None = None,
+    ) -> Image.Image:
+        import numpy as np
+        import torch
+
+        camera = self._sharp_modules["camera"]
+        gsplat = self._sharp_modules["gsplat"]
+        torch_device = torch.device(device)
+        width, height = metadata.resolution_px
+        f_px = metadata.focal_length_px
+        intrinsics = torch.tensor(
+            [
+                [f_px, 0, (width - 1) / 2.0, 0],
+                [0, f_px, (height - 1) / 2.0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ],
+            device=torch_device,
+            dtype=torch.float32,
+        )
+        params = camera.TrajectoryParams(
+            type="rotate",
+            lookat_mode=lookat_mode,
+            max_disparity=self.max_disparity,
+            max_zoom=0.0,
+            distance_m=0.0,
+            num_steps=1,
+            num_repeats=1,
+        )
+        offset_x, offset_y, _ = camera.compute_max_offset(
+            gaussians,
+            params,
+            resolution_px=metadata.resolution_px,
+            f_px=f_px,
+        )
+        eye_position = torch.tensor(
+            [
+                float(offset_x) * np.sin(2 * np.pi * phase),
+                float(offset_y) * np.cos(2 * np.pi * phase),
+                0.0,
+            ],
+            dtype=torch.float32,
+        )
+        camera_model = camera.create_camera_model(
+            gaussians,
+            intrinsics,
+            resolution_px=metadata.resolution_px,
+            lookat_mode=lookat_mode,
+        )
+        if renderer is None:
+            renderer = gsplat.GSplatRenderer(color_space=metadata.color_space)
+        if gaussians_device is None:
+            gaussians_device = gaussians.to(torch_device)
+        camera_info = camera_model.compute(eye_position)
+        with torch.inference_mode():
+            rendering_output = renderer(
+                gaussians_device,
+                extrinsics=camera_info.extrinsics[None].to(torch_device),
+                intrinsics=camera_info.intrinsics[None].to(torch_device),
+                image_width=camera_info.width,
+                image_height=camera_info.height,
+            )
+        color = (rendering_output.color[0].permute(1, 2, 0) * 255.0).clamp(0, 255).to(dtype=torch.uint8)
+        return Image.fromarray(color.detach().cpu().numpy(), mode="RGB")
+
+    def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
+        import torch
+
+        device = self.device_override or context.device or "cuda"
+        self._ensure_predictor(device)
+        assert self._predictor is not None
+        assert self._checkpoint_path is not None
+        assert self._checkpoint_url is not None
+
+        torch_device = torch.device(self._predictor_device or device)
+        io = self._sharp_modules["io"]
+        predict_image = self._sharp_modules["predict_image"]
+        SceneMetaData = self._sharp_modules["SceneMetaData"]
+        save_ply = self._sharp_modules["save_ply"]
+        gsplat = self._sharp_modules["gsplat"]
+
+        image_np, _, f_px = io.load_rgb(input_path)
+        height, width = image_np.shape[:2]
+        gaussians = predict_image(self._predictor, image_np, f_px, torch_device)
+        metadata = SceneMetaData(float(f_px), (width, height), "linearRGB")
+
+        variant_dir = self._variant_output_dir(output_path, context)
+        if self.save_intermediates:
+            variant_dir.mkdir(parents=True, exist_ok=True)
+            save_ply(gaussians, f_px, (height, width), variant_dir / "scene.ply")
+
+        renderer = gsplat.GSplatRenderer(color_space=metadata.color_space)
+        gaussians_device = gaussians.to(torch_device)
+        variant_outputs: list[dict[str, Any]] = []
+        primary_image: Image.Image | None = None
+
+        for lookat_mode in self.lookat_modes:
+            for phase_index, phase in enumerate(self.phases):
+                rendered = self._render_variant(
+                    gaussians,
+                    metadata,
+                    phase=phase,
+                    lookat_mode=lookat_mode,
+                    device=str(torch_device),
+                    renderer=renderer,
+                    gaussians_device=gaussians_device,
+                )
+                variant_name = f"phase_{phase_index:02d}_{lookat_mode}.png"
+                variant_path = variant_dir / variant_name
+                if self.save_intermediates:
+                    rendered.save(variant_path, format="PNG")
+                if primary_image is None:
+                    primary_image = rendered
+                if abs(phase - self.primary_phase) < 1e-9 and lookat_mode == self.primary_lookat_mode:
+                    primary_image = rendered
+                variant_outputs.append(
+                    {
+                        "phase_index": phase_index,
+                        "phase": phase,
+                        "lookat_mode": lookat_mode,
+                        "output_path": str(variant_path) if self.save_intermediates else None,
+                    }
+                )
+
+        if primary_image is None:
+            raise RuntimeError("SHARP produced no viewpoint variants")
+        if self.image_size is not None:
+            primary_image = primary_image.resize((self.image_size, self.image_size), Image.Resampling.BICUBIC)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        primary_image.save(output_path, format="PNG")
+        if str(torch_device).startswith("cuda"):
+            torch.cuda.empty_cache()
+
+        return {
+            "backend": "apple/ml-sharp",
+            "attack_definition": DEFAULT_SHARP_ATTACK_DEFINITION,
+            "source_root": str(self._source_root),
+            "checkpoint_path": str(self._checkpoint_path),
+            "checkpoint_url": self._checkpoint_url,
+            "checkpoint_downloaded": self._checkpoint_downloaded,
+            "trajectory_type": "rotate",
+            "max_disparity": self.max_disparity,
+            "max_zoom": 0.0,
+            "phases": list(self.phases),
+            "lookat_modes": list(self.lookat_modes),
+            "variant_count": len(variant_outputs),
+            "variant_outputs": variant_outputs,
+            "primary_phase": self.primary_phase,
+            "primary_lookat_mode": self.primary_lookat_mode,
+            "input_size": [width, height],
+            "output_size": list(primary_image.size),
+            "note": "Metrics should be averaged over variant_outputs for the full 8 phase x 2 lookat SHARP benchmark definition.",
+        }
+
+
+@register_attack
+class NoiseToImageAttack(BaseAttack):
+    name = "noise_to_image"
+    description = "CtrlRegen noise-to-image controllable regeneration attack."
+
+    def __init__(
+        self,
+        source_root: str | Path | None = None,
+        weight_root: str | Path | None = None,
+        base_model: str | Path | None = None,
+        spatial_control_path: str | Path | None = None,
+        semantic_control_path: str | Path | None = None,
+        semantic_control_name: str = "semantic_control_ckp_435000.bin",
+        image_encoder: str | Path | None = None,
+        vae_model: str | Path | None = None,
+        image_size: int = 512,
+        square_mode: str = "fit",
+        step: float = 1.0,
+        seed: int | None = 1,
+        num_inference_steps: int = 50,
+        guidance_scale: float = 2.0,
+        controlnet_conditioning_scale: float = 1.0,
+        low_threshold: int = 100,
+        high_threshold: int = 150,
+        prompt: str = "best quality, high quality",
+        negative_prompt: str = "monochrome, lowres, bad anatomy, worst quality, low quality",
+        allow_download: bool = True,
+        dtype: str = "auto",
+    ) -> None:
+        image_size = int(image_size)
+        if image_size <= 0:
+            raise ValueError("image_size must be positive")
+        num_inference_steps = int(num_inference_steps)
+        if num_inference_steps <= 0:
+            raise ValueError("num_inference_steps must be positive")
+        step = max(0.0, min(1.0, float(step)))
+        super().__init__(
+            source_root=str(source_root) if source_root is not None else str(DEFAULT_NOISE_TO_IMAGE_SOURCE_ROOT),
+            weight_root=str(weight_root) if weight_root is not None else str(DEFAULT_WEIGHT_ROOT),
+            base_model=str(base_model) if base_model is not None else DEFAULT_CTRLREGEN_BASE_REPO_ID,
+            spatial_control_path=str(spatial_control_path) if spatial_control_path is not None else None,
+            semantic_control_path=str(semantic_control_path) if semantic_control_path is not None else None,
+            semantic_control_name=semantic_control_name,
+            image_encoder=str(image_encoder) if image_encoder is not None else DEFAULT_CTRLREGEN_IMAGE_ENCODER_REPO_ID,
+            vae_model=str(vae_model) if vae_model is not None else DEFAULT_CTRLREGEN_VAE_REPO_ID,
+            image_size=image_size,
+            square_mode=square_mode,
+            step=step,
+            seed=seed,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=float(guidance_scale),
+            controlnet_conditioning_scale=float(controlnet_conditioning_scale),
+            low_threshold=int(low_threshold),
+            high_threshold=int(high_threshold),
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            allow_download=bool(allow_download),
+            dtype=dtype,
+        )
+        self.source_root = source_root
+        self.weight_root = weight_root
+        self.base_model = base_model
+        self.spatial_control_path = spatial_control_path
+        self.semantic_control_path = semantic_control_path
+        self.semantic_control_name = semantic_control_name
+        self.image_encoder = image_encoder
+        self.vae_model = vae_model
+        self.image_size = image_size
+        self.square_mode = square_mode
+        self.step = step
+        self.seed = seed
+        self.num_inference_steps = num_inference_steps
+        self.guidance_scale = float(guidance_scale)
+        self.controlnet_conditioning_scale = float(controlnet_conditioning_scale)
+        self.low_threshold = int(low_threshold)
+        self.high_threshold = int(high_threshold)
+        self.prompt = prompt
+        self.negative_prompt = negative_prompt
+        self.allow_download = bool(allow_download)
+        self.dtype = dtype
+        self._pipe: Any | None = None
+        self._pipe_device: str | None = None
+        self._canny_impl: Any | None = None
+        self._color_match: Any | None = None
+        self._resolved_paths: dict[str, Any] = {}
+
+    def _seed_for_context(self, context: AttackContext) -> int:
+        if self.seed is not None:
+            return int(self.seed)
+        if context.seed is not None:
+            return int(context.seed)
+        return 1
+
+    def _resolve_ctrlregen_assets(self) -> dict[str, Any]:
+        weight_root = DEFAULT_WEIGHT_ROOT if self.weight_root is None else Path(self.weight_root).expanduser()
+        backend_root = weight_root / "noise_to_image"
+        source_root = _ensure_backend_source_root(
+            self.source_root,
+            DEFAULT_NOISE_TO_IMAGE_SOURCE_ROOT,
+            ("custom_ip_adapter.py", "custom_i2i_pipeline.py"),
+            "CtrlRegen",
+        )
+        base_ref, base_downloaded, base_repo = _resolve_hf_or_path(
+            self.base_model,
+            default_repo_id=DEFAULT_CTRLREGEN_BASE_REPO_ID,
+            local_dir=backend_root / "base_model" / "Realistic_Vision_V4.0_noVAE",
+            allow_download=self.allow_download,
+        )
+        encoder_ref, encoder_downloaded, encoder_repo = _resolve_hf_or_path(
+            self.image_encoder,
+            default_repo_id=DEFAULT_CTRLREGEN_IMAGE_ENCODER_REPO_ID,
+            local_dir=backend_root / "image_encoder" / "dinov2-giant",
+            allow_download=self.allow_download,
+        )
+        vae_ref, vae_downloaded, vae_repo = _resolve_hf_or_path(
+            self.vae_model,
+            default_repo_id=DEFAULT_CTRLREGEN_VAE_REPO_ID,
+            local_dir=backend_root / "vae" / "sd-vae-ft-mse",
+            allow_download=self.allow_download,
+        )
+
+        adapter_root = backend_root / "adapters" / "ctrlregen"
+        default_spatial = adapter_root / "spatialnet_ckp" / "spatial_control_ckp_14000"
+        default_semantic = adapter_root / "semanticnet_ckp"
+        semantic_weight = default_semantic / "models" / self.semantic_control_name
+        adapter_downloaded = False
+        if self.spatial_control_path is None and self.semantic_control_path is None:
+            if not default_spatial.exists() or not semantic_weight.exists():
+                _, adapter_downloaded = _download_hf_snapshot(
+                    DEFAULT_CTRLREGEN_ADAPTER_REPO_ID,
+                    adapter_root,
+                    self.allow_download,
+                    allow_patterns=(
+                        "README.md",
+                        "spatialnet_ckp/**",
+                        "semanticnet_ckp/**",
+                    ),
+                )
+            spatial_ref = str(default_spatial.resolve())
+            spatial_subfolder = None
+            spatial_local_only = True
+            semantic_ref = str(default_semantic.resolve())
+            semantic_subfolder = "models"
+            semantic_local_only = True
+        else:
+            spatial_path = Path(self.spatial_control_path).expanduser() if self.spatial_control_path is not None else default_spatial
+            semantic_path = Path(self.semantic_control_path).expanduser() if self.semantic_control_path is not None else default_semantic
+            if not spatial_path.exists():
+                raise FileNotFoundError(f"CtrlRegen spatial control path does not exist: {spatial_path}")
+            if not semantic_path.exists():
+                raise FileNotFoundError(f"CtrlRegen semantic control path does not exist: {semantic_path}")
+            spatial_ref = str(spatial_path.resolve())
+            spatial_subfolder = None
+            spatial_local_only = True
+            semantic_ref = str(semantic_path.resolve())
+            semantic_subfolder = "models"
+            semantic_local_only = True
+
+        return {
+            "source_root": source_root,
+            "base_ref": base_ref,
+            "base_repo": base_repo,
+            "base_downloaded": base_downloaded,
+            "encoder_ref": encoder_ref,
+            "encoder_repo": encoder_repo,
+            "encoder_downloaded": encoder_downloaded,
+            "vae_ref": vae_ref,
+            "vae_repo": vae_repo,
+            "vae_downloaded": vae_downloaded,
+            "spatial_ref": spatial_ref,
+            "spatial_subfolder": spatial_subfolder,
+            "spatial_local_only": spatial_local_only,
+            "semantic_ref": semantic_ref,
+            "semantic_subfolder": semantic_subfolder,
+            "semantic_local_only": semantic_local_only,
+            "adapter_repo": DEFAULT_CTRLREGEN_ADAPTER_REPO_ID,
+            "adapter_downloaded": adapter_downloaded,
+        }
+
+    def _ensure_pipe(self, device: str) -> None:
+        if self._pipe is not None and self._pipe_device == device:
+            return
+        _ensure_torch_diffusers_env()
+        import numpy as np
+        import torch
+
+        if torch.device(device).type == "mps":
+            device = "cpu"
+        assets = self._resolve_ctrlregen_assets()
+        source_root: Path = assets["source_root"]
+        if str(source_root) not in sys.path:
+            sys.path.insert(0, str(source_root))
+
+        backup_custom_ip = sys.modules.get("custom_ip_adapter")
+        try:
+            custom_ip_module = _load_module_from_file(
+                "ctrlregen_custom_ip_adapter",
+                source_root / "custom_ip_adapter.py",
+            )
+            sys.modules["custom_ip_adapter"] = custom_ip_module
+            custom_i2i_module = _load_module_from_file(
+                "ctrlregen_custom_i2i",
+                source_root / "custom_i2i_pipeline.py",
+            )
+        finally:
+            if backup_custom_ip is not None:
+                sys.modules["custom_ip_adapter"] = backup_custom_ip
+            else:
+                sys.modules.pop("custom_ip_adapter", None)
+
+        try:
+            from diffusers import AutoencoderKL, ControlNetModel, UniPCMultistepScheduler
+            from transformers import AutoImageProcessor, AutoModel
+        except Exception as exc:
+            raise RuntimeError("CtrlRegen requires diffusers and transformers in the active environment") from exc
+
+        torch_dtype = _torch_dtype_from_name(self.dtype, device)
+        CustomPipe = custom_i2i_module.CustomStableDiffusionControlNetImg2ImgPipeline
+        spatialnet = [
+            ControlNetModel.from_pretrained(
+                assets["spatial_ref"],
+                subfolder=assets["spatial_subfolder"],
+                torch_dtype=torch_dtype,
+                local_files_only=assets["spatial_local_only"],
+            )
+        ]
+        pipe = CustomPipe.from_pretrained(
+            assets["base_ref"],
+            controlnet=spatialnet,
+            torch_dtype=torch_dtype,
+            local_files_only=True,
+            safety_checker=None,
+            requires_safety_checker=False,
+        )
+        pipe.image_encoder = AutoModel.from_pretrained(
+            assets["encoder_ref"],
+            local_files_only=True,
+        ).to(device, dtype=torch_dtype)
+        pipe.feature_extractor = AutoImageProcessor.from_pretrained(
+            assets["encoder_ref"],
+            local_files_only=True,
+        )
+        try:
+            pipe.costum_load_ip_adapter(
+                assets["semantic_ref"],
+                subfolder=assets["semantic_subfolder"],
+                weight_name=self.semantic_control_name,
+                image_encoder_folder=None,
+                local_files_only=assets["semantic_local_only"],
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "CtrlRegen adapter/base mismatch. Use the official CtrlRegen SD1.5-family base model."
+            ) from exc
+        pipe.vae = AutoencoderKL.from_pretrained(
+            assets["vae_ref"],
+            torch_dtype=torch_dtype,
+            local_files_only=True,
+        ).to(device, dtype=torch_dtype)
+        pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+        pipe.set_ip_adapter_scale(1.0)
+        pipe.set_progress_bar_config(disable=True)
+        pipe.to(device)
+
+        try:
+            from controlnet_aux import CannyDetector
+
+            canny = CannyDetector()
+
+            def _run_canny(inp: Image.Image) -> Image.Image:
+                out = canny(inp, low_threshold=self.low_threshold, high_threshold=self.high_threshold)
+                if isinstance(out, Image.Image):
+                    return out.convert("RGB")
+                return Image.fromarray(np.asarray(out)).convert("RGB")
+
+            self._canny_impl = _run_canny
+        except Exception:
+            import cv2
+
+            def _run_canny(inp: Image.Image) -> Image.Image:
+                arr = np.asarray(inp.convert("RGB"))
+                edges = cv2.Canny(arr, self.low_threshold, self.high_threshold)
+                return Image.fromarray(edges).convert("RGB")
+
+            self._canny_impl = _run_canny
+
+        try:
+            from color_matcher import ColorMatcher
+            from color_matcher.normalizer import Normalizer
+
+            cm = ColorMatcher()
+
+            def _match(ref_img: Image.Image, src_img: Image.Image) -> Image.Image:
+                ref_np = Normalizer(np.asarray(ref_img)).type_norm()
+                src_np = Normalizer(np.asarray(src_img)).type_norm()
+                out_np = cm.transfer(src=src_np, ref=ref_np, method="hm-mkl-hm")
+                out_np = Normalizer(out_np).uint8_norm()
+                return Image.fromarray(out_np)
+
+            self._color_match = _match
+        except Exception:
+            self._color_match = lambda _ref_img, src_img: src_img
+
+        self._pipe = pipe
+        self._pipe_device = device
+        self._resolved_paths = assets
+        self._resolved_paths["dtype"] = str(torch_dtype).replace("torch.", "")
+
+    def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
+        import torch
+
+        device = context.device or "cpu"
+        self._ensure_pipe(device)
+        assert self._pipe is not None
+        assert self._canny_impl is not None
+        assert self._color_match is not None
+
+        image = Image.open(input_path)
+        input_size = image.size
+        watermarked = _square_image(image, self.image_size, self.square_mode)
+        control_img = self._canny_impl(watermarked)
+        generator = torch.Generator(device=_generator_device(torch.device(self._pipe_device or device))).manual_seed(
+            self._seed_for_context(context)
+        )
+
+        with torch.inference_mode():
+            attacked = self._pipe(
+                self.prompt,
+                negative_prompt=self.negative_prompt,
+                image=[watermarked],
+                control_image=[control_img],
+                ip_adapter_image=[watermarked],
+                strength=self.step,
+                generator=generator,
+                num_inference_steps=self.num_inference_steps,
+                controlnet_conditioning_scale=self.controlnet_conditioning_scale,
+                guidance_scale=self.guidance_scale,
+                control_guidance_start=0.0,
+                control_guidance_end=1.0,
+            ).images[0]
+
+        try:
+            attacked = self._color_match(watermarked, attacked)
+        except Exception:
+            pass
+        attacked = _square_image(attacked.convert("RGB"), self.image_size, "fit")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        attacked.save(output_path)
+        if str(self._pipe_device or device).startswith("cuda"):
+            torch.cuda.empty_cache()
+
+        return {
+            "backend": "ctrlregen",
+            "source_root": str(self._resolved_paths.get("source_root")),
+            "base_model": self._resolved_paths.get("base_ref"),
+            "base_repo_id": self._resolved_paths.get("base_repo"),
+            "base_downloaded": self._resolved_paths.get("base_downloaded"),
+            "adapter_repo_id": self._resolved_paths.get("adapter_repo"),
+            "adapter_downloaded": self._resolved_paths.get("adapter_downloaded"),
+            "image_encoder": self._resolved_paths.get("encoder_ref"),
+            "image_encoder_repo_id": self._resolved_paths.get("encoder_repo"),
+            "image_encoder_downloaded": self._resolved_paths.get("encoder_downloaded"),
+            "vae_model": self._resolved_paths.get("vae_ref"),
+            "vae_repo_id": self._resolved_paths.get("vae_repo"),
+            "vae_downloaded": self._resolved_paths.get("vae_downloaded"),
+            "dtype": self._resolved_paths.get("dtype"),
+            "step": self.step,
+            "seed": self._seed_for_context(context),
+            "num_inference_steps": self.num_inference_steps,
+            "guidance_scale": self.guidance_scale,
+            "controlnet_conditioning_scale": self.controlnet_conditioning_scale,
+            "image_size": self.image_size,
+            "input_size": list(input_size),
+            "output_size": list(attacked.size),
+        }
+
+
+@register_attack
+class ImageToVedioAttack(BaseAttack):
+    name = "image_to_vedio"
+    description = "NFPA image-to-video next-frame prediction attack."
+
+    def __init__(
+        self,
+        source_root: str | Path | None = None,
+        model_root: str | Path | None = None,
+        model_id_or_path: str | Path | None = None,
+        weight_root: str | Path | None = None,
+        image_size: int = 512,
+        square_mode: str = "fit",
+        num_inference_steps: int = 10,
+        xy: int = 40,
+        seed: int | None = 1234,
+        enforce_model_image_size: bool = True,
+        allow_download: bool = True,
+        local_files_only: bool = True,
+        dtype: str = "auto",
+    ) -> None:
+        if model_id_or_path is not None and model_root is None:
+            model_root = model_id_or_path
+        image_size = int(image_size)
+        if image_size <= 0:
+            raise ValueError("image_size must be positive")
+        num_inference_steps = int(num_inference_steps)
+        if num_inference_steps <= 0:
+            raise ValueError("num_inference_steps must be positive")
+        super().__init__(
+            source_root=str(source_root) if source_root is not None else str(DEFAULT_IMAGE_TO_VEDIO_SOURCE_ROOT),
+            model_root=str(model_root) if model_root is not None else str(DEFAULT_DIFFUSION_MODEL_ROOT),
+            weight_root=str(weight_root) if weight_root is not None else str(DEFAULT_WEIGHT_ROOT),
+            image_size=image_size,
+            square_mode=square_mode,
+            num_inference_steps=num_inference_steps,
+            xy=int(xy),
+            seed=seed,
+            enforce_model_image_size=bool(enforce_model_image_size),
+            allow_download=bool(allow_download),
+            local_files_only=bool(local_files_only),
+            dtype=dtype,
+        )
+        self.source_root = source_root
+        self.model_root = model_root
+        self.weight_root = weight_root
+        self.image_size = image_size
+        self.square_mode = square_mode
+        self.num_inference_steps = num_inference_steps
+        self.xy = int(xy)
+        self.seed = seed
+        self.enforce_model_image_size = bool(enforce_model_image_size)
+        self.allow_download = bool(allow_download)
+        self.local_files_only = bool(local_files_only)
+        self.dtype = dtype
+        self._pipe: Any | None = None
+        self._pipe_device: str | None = None
+        self._ddim_scheduler_cls: Any | None = None
+        self._ddim_inverse_cls: Any | None = None
+        self._model_path: Path | None = None
+        self._model_downloaded = False
+        self._model_repo_id: str | None = None
+        self._model_image_size: int | None = None
+        self._torch_dtype: Any | None = None
+        self._source_root: Path | None = None
+
+    def _seed_for_context(self, context: AttackContext) -> int:
+        if self.seed is not None:
+            return int(self.seed)
+        if context.seed is not None:
+            return int(context.seed)
+        return 1234
+
+    def _ensure_pipe(self, device: str) -> None:
+        if self._pipe is not None and self._pipe_device == device:
+            return
+        _ensure_torch_diffusers_env()
+        import torch
+
+        source_root = _ensure_backend_source_root(
+            self.source_root,
+            DEFAULT_IMAGE_TO_VEDIO_SOURCE_ROOT,
+            ("utils.py",),
+            "NFPA",
+        )
+        nfpa_utils = _load_module_from_file("nfpa_utils_module", source_root / "utils.py")
+        try:
+            from diffusers import DDIMInverseScheduler, DDIMScheduler
+        except Exception as exc:
+            raise RuntimeError("NFPA requires diffusers in the active environment") from exc
+
+        model_path, downloaded, repo_id = _resolve_diffusion_model_root(
+            self.model_root,
+            self.weight_root,
+            self.allow_download,
+        )
+        torch_dtype = _torch_dtype_from_name(self.dtype, device)
+        MyStableDiffusionPipeline = nfpa_utils.MyStableDiffusionPipeline
+        pipe = MyStableDiffusionPipeline.from_pretrained(
+            str(model_path),
+            torch_dtype=torch_dtype,
+            local_files_only=self.local_files_only and not downloaded,
+            safety_checker=None,
+            requires_safety_checker=False,
+        )
+        pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
+        pipe = pipe.to(device)
+        pipe.safety_checker = None
+        pipe.set_progress_bar_config(disable=True)
+        pipe.vae.requires_grad_(False)
+        pipe.text_encoder.requires_grad_(False)
+        pipe.unet.requires_grad_(False)
+
+        sample_size = int(getattr(pipe.unet.config, "sample_size", 0) or 0)
+        vae_scale_factor = int(getattr(pipe, "vae_scale_factor", 8) or 8)
+        model_image_size = sample_size * vae_scale_factor if sample_size > 0 else None
+        if model_image_size is not None and self.image_size != model_image_size:
+            message = (
+                f"NFPA model/image-size mismatch: model expects {model_image_size}x{model_image_size} "
+                f"(UNet sample_size={sample_size}), but image_size={self.image_size}."
+            )
+            if self.enforce_model_image_size:
+                raise ValueError(message)
+
+        self._pipe = pipe
+        self._pipe_device = device
+        self._ddim_scheduler_cls = DDIMScheduler
+        self._ddim_inverse_cls = DDIMInverseScheduler
+        self._model_path = model_path
+        self._model_downloaded = downloaded
+        self._model_repo_id = repo_id
+        self._model_image_size = model_image_size
+        self._torch_dtype = torch_dtype
+        self._source_root = source_root
+
+    def _invert_latents(self, image_tensor: Any, seed: int) -> Any:
+        import torch
+
+        assert self._pipe is not None
+        assert self._ddim_inverse_cls is not None
+        assert self._ddim_scheduler_cls is not None
+        image_tensor = image_tensor.to(self._pipe.device, dtype=self._pipe.unet.dtype)
+        image_tensor = image_tensor * 2.0 - 1.0
+        with torch.no_grad():
+            latents = self._pipe.vae.encode(image_tensor)["latent_dist"].mean
+            latents = latents * self._pipe.vae.config.scaling_factor
+            self._pipe.scheduler = self._ddim_inverse_cls.from_config(self._pipe.scheduler.config)
+            generator = torch.Generator(device=_generator_device(self._pipe.device)).manual_seed(seed)
+            inversed = self._pipe(
+                prompt="",
+                negative_prompt="",
+                num_inference_steps=self.num_inference_steps,
+                latents=latents,
+                output_type="latent",
+                width=self.image_size,
+                height=self.image_size,
+                generator=generator,
+            ).images
+            self._pipe.scheduler = self._ddim_scheduler_cls.from_config(self._pipe.scheduler.config)
+        return inversed
+
+    def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
+        import torch
+        from torchvision import transforms
+
+        device = context.device or "cpu"
+        self._ensure_pipe(device)
+        assert self._pipe is not None
+        assert self._model_path is not None
+
+        image = Image.open(input_path)
+        input_size = image.size
+        watermarked = _square_image(image, self.image_size, self.square_mode)
+        tensor = transforms.ToTensor()(watermarked).unsqueeze(0)
+        seed = self._seed_for_context(context)
+        inversed_latents = self._invert_latents(tensor, seed)
+        warped_timestep = torch.tensor([0], dtype=torch.long, device=self._pipe.device)
+        generator = torch.Generator(device=_generator_device(self._pipe.device)).manual_seed(seed)
+        with torch.no_grad():
+            images = self._pipe(
+                prompt="",
+                num_images_per_prompt=2,
+                latents=inversed_latents,
+                xyz=[self.xy, self.xy, 0],
+                num_inference_steps=self.num_inference_steps,
+                warped_latents_timestep=warped_timestep,
+                generator=generator,
+            ).images
+        attacked = _square_image(images[1].convert("RGB"), self.image_size, "fit")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        attacked.save(output_path)
+        if str(self._pipe_device or device).startswith("cuda"):
+            torch.cuda.empty_cache()
+
+        return {
+            "backend": "nfpa",
+            "source_root": str(self._source_root),
+            "model_repo_id": self._model_repo_id,
+            "model_path": str(self._model_path),
+            "model_downloaded": self._model_downloaded,
+            "model_image_size": self._model_image_size,
+            "dtype": str(self._torch_dtype).replace("torch.", ""),
+            "xy": self.xy,
+            "seed": seed,
+            "num_inference_steps": self.num_inference_steps,
+            "image_size": self.image_size,
+            "input_size": list(input_size),
+            "output_size": list(attacked.size),
+        }

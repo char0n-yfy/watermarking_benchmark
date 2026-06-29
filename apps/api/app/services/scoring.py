@@ -84,7 +84,14 @@ def attack_category(method: str, preset_id: str | None = None) -> str:
         return "adv-embedding-black-box"
     if "2x" in token or "4x" in token or "rinse" in token:
         return "regeneration-rinsing"
-    if "regen" in token or "vae" in token or "diffusion" in token:
+    if (
+        "regen" in token
+        or "vae" in token
+        or "diffusion" in token
+        or "noise_to_image" in token
+        or "image_to_vedio" in token
+        or "3d_viewpoint_rerendering" in token
+    ):
         return "regeneration-single"
     if "combo" in token or "distcom" in token:
         return "distortion-combination"
