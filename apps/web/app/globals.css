@@ -1891,6 +1891,22 @@ a.button {
   color: var(--muted);
 }
 
+.dataset-download-success {
+  display: grid;
+  gap: 8px;
+}
+
+.dataset-download-path {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dataset-download-path code {
+  word-break: break-all;
+}
+
 .detail-metrics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

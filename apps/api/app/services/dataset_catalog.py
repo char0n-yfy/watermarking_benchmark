@@ -164,7 +164,6 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         description_zh="Kaggle 虾皮商品匹配赛数据集，面向电商同款识别与版权保护场景。",
         source_url="https://www.kaggle.com/c/shopee-product-matching/data",
         official_total_images=51_000,
-        compact_uses_root=True,
     ),
     DatasetCatalogEntry(
         id="products-10k",
@@ -335,8 +334,12 @@ def list_dataset_catalog(
     resources_root: Path,
     *,
     oss: ObjectStorageClient | None = None,
+    probe_remote: bool = False,
 ) -> list[dict[str, Any]]:
-    remote = _probe_remote_availability(oss, DATASET_CATALOG)
+    if probe_remote:
+        remote = _probe_remote_availability(oss, DATASET_CATALOG)
+    else:
+        remote = {entry.id: (False, False) for entry in DATASET_CATALOG}
     items = [
         build_catalog_item(
             resources_root,

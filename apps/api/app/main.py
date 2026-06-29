@@ -96,10 +96,14 @@ def create_app() -> FastAPI:
         return oss_client.status()
 
     @app.get("/resources/datasets/catalog")
-    def dataset_catalog() -> dict[str, object]:
+    def dataset_catalog(remote: bool = False) -> dict[str, object]:
         return {
             "categories": list_categories(),
-            "items": list_dataset_catalog(settings.resources_root, oss=oss_client),
+            "items": list_dataset_catalog(
+                settings.resources_root,
+                oss=oss_client,
+                probe_remote=remote,
+            ),
         }
 
     @app.get("/resources/datasets/downloads/{job_id}")

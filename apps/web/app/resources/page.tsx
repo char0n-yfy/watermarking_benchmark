@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Boxes,
@@ -16,7 +16,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { ResourcePagination } from "@/components/ResourcePagination";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchAlgorithms, fetchAttacks, fetchDatasetCatalog, fetchDatasetDownloadJob, datasetDownloadArchiveUrl, startDatasetDownload } from "@/lib/api";
+import { fetchAlgorithms, fetchAttacks, fetchDatasetCatalog, fetchDatasetDownloadJob, startDatasetDownload } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
@@ -68,28 +68,55 @@ export default function ResourcesPage() {
   const [availableOnly, setAvailableOnly] = useState(false);
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [page, setPage] = useState(1);
+  const [catalogLoading, setCatalogLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchDatasetCatalog(), fetchAlgorithms(), fetchAttacks()])
-      .then(([catalog, apiAlgorithms, apiAttacks]) => {
+
+    const applyCatalog = (catalog: Awaited<ReturnType<typeof fetchDatasetCatalog>>) => {
+      setCatalogItems(catalog.items);
+      setDatasets(
+        catalog.items.map((item) => ({
+          id: item.id,
+          name: item.name,
+          sampleCount: item.compactAvailable ? item.compactSampleCount : item.fullSampleCount,
+          version: item.installed ? "local" : "catalog",
+          path: item.rootPath
+        }))
+      );
+    };
+
+    fetchDatasetCatalog()
+      .then((catalog) => {
         if (cancelled) {
           return;
         }
-        setCatalogItems(catalog.items);
-        setDatasets(
-          catalog.items.map((item) => ({
-            id: item.id,
-            name: item.name,
-            sampleCount: item.compactAvailable ? item.compactSampleCount : item.fullSampleCount,
-            version: item.installed ? "local" : "catalog",
-            path: item.rootPath
-          }))
-        );
+        applyCatalog(catalog);
+        setCatalogLoading(false);
+        return fetchDatasetCatalog({ remote: true });
+      })
+      .then((catalog) => {
+        if (cancelled || !catalog) {
+          return;
+        }
+        applyCatalog(catalog);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCatalogLoading(false);
+        }
+      });
+
+    Promise.all([fetchAlgorithms(), fetchAttacks()])
+      .then(([apiAlgorithms, apiAttacks]) => {
+        if (cancelled) {
+          return;
+        }
         setAlgorithms(apiAlgorithms.length > 0 ? apiAlgorithms : fallbackAlgorithms);
         setAttacks(apiAttacks.length > 0 ? apiAttacks : fallbackAttacks);
       })
       .catch(() => undefined);
+
     return () => {
       cancelled = true;
     };
@@ -188,6 +215,20 @@ export default function ResourcesPage() {
     }
   }, [filteredResources, selectedResource]);
 
+  async function refreshDatasetCatalog() {
+    const catalog = await fetchDatasetCatalog();
+    setCatalogItems(catalog.items);
+    setDatasets(
+      catalog.items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        sampleCount: item.compactAvailable ? item.compactSampleCount : item.fullSampleCount,
+        version: item.installed ? "local" : "catalog",
+        path: item.rootPath
+      }))
+    );
+  }
+
   return (
     <AppShell active="resources">
       <div className="topbar">
@@ -198,7 +239,7 @@ export default function ResourcesPage() {
       </div>
 
       <section className="resource-summary-grid">
-        <SummaryCard icon={Database} label={t.console.datasets} value={datasets.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
+        <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
         <SummaryCard icon={Shield} label={t.console.algorithms} value={algorithms.length.toString()} meta={countByGpu(algorithms)} />
         <SummaryCard icon={Gauge} label={t.console.attacks} value={attacks.length.toString()} meta={countByGpu(attacks)} />
         <SummaryCard icon={HardDrive} label={t.resources.weightFolders} value={artifacts.length.toString()} meta="resources/weights" />
@@ -377,7 +418,11 @@ export default function ResourcesPage() {
                 </button>
               ))
             )}
-            {filteredResources.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+            {filteredResources.length === 0 ? (
+              <div className="empty compact-empty">
+                {catalogLoading && activeType === "datasets" ? t.resources.catalogLoading : t.common.noData}
+              </div>
+            ) : null}
             {usesPagination ? (
               <ResourcePagination
                 onPageChange={setPage}
@@ -397,7 +442,7 @@ export default function ResourcesPage() {
           </div>
           <div className="panel-body">
             {selectedResource ? (
-              <ResourceDetail resource={selectedResource} />
+              <ResourceDetail onDatasetInstalled={refreshDatasetCatalog} resource={selectedResource} />
             ) : (
               <div className="empty compact-empty">{t.common.noData}</div>
             )}
@@ -407,7 +452,13 @@ export default function ResourcesPage() {
     </AppShell>
   );
 
-  function ResourceDetail({ resource }: { resource: BrowserResource }) {
+  function ResourceDetail({
+    resource,
+    onDatasetInstalled
+  }: {
+    resource: BrowserResource;
+    onDatasetInstalled: () => void;
+  }) {
     const configHref = buildConfigHref(resource);
     return (
       <div className="resource-detail-stack">
@@ -466,7 +517,7 @@ export default function ResourcesPage() {
         ) : null}
 
         {resource.type === "datasets" && resource.catalog ? (
-          <DatasetDownloadPanel catalog={resource.catalog} language={language} t={t} />
+          <DatasetDownloadPanel catalog={resource.catalog} language={language} onInstalled={onDatasetInstalled} t={t} />
         ) : null}
 
         {configHref ? (
@@ -546,10 +597,12 @@ function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): Bro
 function DatasetDownloadPanel({
   catalog,
   language,
+  onInstalled,
   t
 }: {
   catalog: DatasetCatalogItem;
   language: "zh" | "en";
+  onInstalled: () => void;
   t: ReturnType<typeof useLanguage>["t"];
 }) {
   const [mode, setMode] = useState<DatasetDownloadMode>("compact");
@@ -557,6 +610,7 @@ function DatasetDownloadPanel({
   const [sampleCount, setSampleCount] = useState(100);
   const [job, setJob] = useState<DatasetDownloadJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const installedJobRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
@@ -570,9 +624,18 @@ function DatasetDownloadPanel({
     return () => window.clearInterval(timer);
   }, [job]);
 
+  useEffect(() => {
+    if (job?.status !== "succeeded" || installedJobRef.current === job.id) {
+      return;
+    }
+    installedJobRef.current = job.id;
+    onInstalled();
+  }, [job, onInstalled]);
+
   const compactReady = catalog.compactAvailable;
   const customReady = catalog.customDownloadReady;
-  const canStart = mode === "compact" ? compactReady : customReady;
+  const compactInstalled = (catalog.compactSampleCount ?? 0) > 0;
+  const canStart = mode === "compact" ? compactReady && !compactInstalled : customReady;
   const totalImages = catalog.officialTotalImages ?? 0;
   const progressPercent =
     job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
@@ -608,14 +671,21 @@ function DatasetDownloadPanel({
         </p>
       ) : null}
       {mode === "custom" ? (
-        <div className="dataset-pool-summary">
-          <span>
-            {t.resources.datasetTotalImages}：
-            {totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : "—"}
-          </span>
-        </div>
+        <>
+          <p className="dataset-download-hint">{t.resources.customDownloadHint}</p>
+          <p className="dataset-download-hint muted">{t.resources.customFolderHint}</p>
+          <div className="dataset-pool-summary">
+            <span>
+              {t.resources.datasetTotalImages}：
+              {totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : "—"}
+            </span>
+          </div>
+        </>
       ) : null}
       {!compactReady && mode === "compact" ? <div className="risk warn">{t.resources.compactUnavailable}</div> : null}
+      {compactInstalled && mode === "compact" ? (
+        <div className="risk ok">{t.resources.compactAlreadyInstalled}</div>
+      ) : null}
       {!customReady && mode === "custom" ? <div className="risk warn">{t.resources.customUnavailable}</div> : null}
       {mode === "custom" ? (
         <div className="dataset-download-fields">
@@ -658,9 +728,15 @@ function DatasetDownloadPanel({
           </small>
           {job.status === "failed" && job.error ? <div className="risk error">{t.resources.downloadFailed}: {job.error}</div> : null}
           {job.status === "succeeded" ? (
-            <a className="button secondary" href={datasetDownloadArchiveUrl(job.id)}>
-              {t.resources.downloadReady}
-            </a>
+            <div className="dataset-download-success">
+              <div className="badge ok">{t.resources.downloadReady}</div>
+              {job.outputDir ? (
+                <div className="dataset-download-path">
+                  <span>{t.resources.downloadInstalledTo}</span>
+                  <code>{job.outputDir}</code>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}
