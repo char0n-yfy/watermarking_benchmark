@@ -48,7 +48,11 @@ def scan_dataset_resources(resources_root: Path) -> list[DatasetResource]:
     if not datasets_root.exists():
         return []
 
-    direct_images = iter_image_paths(datasets_root)
+    direct_images = sorted(
+        path
+        for path in datasets_root.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+    )
     children = sorted(path for path in datasets_root.iterdir() if path.is_dir())
     resources: list[DatasetResource] = []
 
@@ -115,7 +119,6 @@ WATERMARK_DISPLAY_NAMES = {
 }
 
 ATTACK_DISPLAY_NAMES = {
-    "3d_viewpoint_rerendering": "3D Viewpoint Re-rendering (SHARP)",
     "cew_c1": "CEW-C1 Basic Auto-Fix SR",
     "cew_c2": "CEW-C2 Color Retouch SR",
     "cew_c3": "CEW-C3 Detail Enhance SR",
@@ -134,14 +137,17 @@ ATTACK_DISPLAY_NAMES = {
     "cew_s3": "CEW-S3 BSRGAN",
     "2x_regen": "2x Regeneration",
     "4x_regen": "4x Regeneration",
+    "combined_physical": "Combined Physical",
     "gaussian_blur": "Gaussian Blur",
     "gaussian_noise": "Gaussian Noise",
     "image_to_vedio": "NFPA Image-to-Vedio",
     "jpeg": "JPEG Compression",
     "noise_to_image": "CtrlRegen Noise-to-Image",
+    "print_camera": "Print-Camera",
     "regen_diffusion": "Diffusion Regeneration",
     "regen_vae": "VAE Regeneration",
     "resized_crop": "Resized Crop",
+    "screen_shoot": "Screen-Shoot",
 }
 
 WATERMARK_CPU_METHODS = {
@@ -164,8 +170,10 @@ WATERMARK_PARAM_OVERRIDES: dict[str, dict[str, Any]] = {
 RECOMMENDED_WATERMARKS = {"traditional-lsb"}
 
 ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
-    "3d_viewpoint_rerendering": [0.01, 0.02, 0.04],
+    "2x_regen": [0.0, 0.5, 1.0],
+    "4x_regen": [0.0, 0.5, 1.0],
     "brightness": [0.25, 0.5, 0.75],
+    "combined_physical": [0.0, 0.5, 1.0],
     "contrast": [0.25, 0.5, 0.75],
     "cew_e1": [0.25, 0.5, 0.75],
     "cew_e2": [0.25, 0.5, 0.75],
@@ -180,12 +188,16 @@ ATTACK_STRENGTH_SWEEPS: dict[str, list[float]] = {
     "image_to_vedio": [20.0, 40.0, 60.0],
     "jpeg": [0.25, 0.5, 0.75],
     "noise_to_image": [0.25, 0.5, 0.75, 1.0],
+    "print_camera": [0.0, 0.5, 1.0],
+    "regen_diffusion": [0.0, 0.5, 1.0],
     "resized_crop": [0.1, 0.3, 0.5],
     "rotation": [0.25, 0.5, 0.75],
+    "screen_shoot": [0.0, 0.5, 1.0],
 }
 
 ATTACK_PARAM_BY_METHOD = {
-    "3d_viewpoint_rerendering": "max_disparity",
+    "2x_regen": "strength",
+    "4x_regen": "strength",
     "cew_e1": "strength",
     "cew_e2": "strength",
     "cew_e3": "strength",
@@ -193,56 +205,24 @@ ATTACK_PARAM_BY_METHOD = {
     "cew_s1": "scale",
     "cew_s2": "scale",
     "cew_s3": "scale",
+    "combined_physical": "strength",
     "image_to_vedio": "xy",
     "noise_to_image": "step",
+    "print_camera": "strength",
+    "regen_diffusion": "strength",
+    "screen_shoot": "strength",
 }
 
-LEGACY_ATTACK_PRESETS: dict[str, dict[str, Any]] = {
-    "atk-jpeg-smoke": {
-        "id": "atk-jpeg-smoke",
-        "name": "JPEG smoke",
-        "method": "jpeg",
-        "strengths": [0.5],
-        "strengthParam": "strength",
-        "recommended": True,
-        "params": {},
-    },
-    "atk-blur-smoke": {
-        "id": "atk-blur-smoke",
-        "name": "Blur smoke",
-        "method": "gaussian_blur",
-        "strengths": [0.2],
-        "strengthParam": "strength",
-        "recommended": False,
-        "params": {},
-    },
-    "atk-jpeg-sweep": {
-        "id": "atk-jpeg-sweep",
-        "name": "JPEG sweep",
-        "method": "jpeg",
-        "strengths": [0.25, 0.5, 0.75],
-        "strengthParam": "strength",
-        "recommended": False,
-        "params": {},
-    },
-    "atk-blur-sweep": {
-        "id": "atk-blur-sweep",
-        "name": "Blur sweep",
-        "method": "gaussian_blur",
-        "strengths": [0.2, 0.4, 0.6],
-        "strengthParam": "strength",
-        "recommended": False,
-        "params": {},
-    },
-    "atk-crop-sweep": {
-        "id": "atk-crop-sweep",
-        "name": "Crop sweep",
-        "method": "resized_crop",
-        "strengths": [0.1, 0.3, 0.5],
-        "strengthParam": "strength",
-        "recommended": False,
-        "params": {},
-    },
+PHYSICAL_CHANNEL_METHODS = {"screen_shoot", "print_camera", "combined_physical"}
+VIEWPOINT_RERENDERING_PREFIX = "3d_viewpoint_rerendering_phase"
+VIEWPOINT_RERENDERING_STRENGTHS = [0.0, 0.5, 1.0]
+
+LEGACY_ATTACK_ALIASES: dict[str, str] = {
+    "atk-jpeg-smoke": "atk-jpeg",
+    "atk-blur-smoke": "atk-gaussian-blur",
+    "atk-jpeg-sweep": "atk-jpeg",
+    "atk-blur-sweep": "atk-gaussian-blur",
+    "atk-crop-sweep": "atk-resized-crop",
 }
 
 
@@ -251,9 +231,24 @@ def _slug(value: str) -> str:
     return slug or "resource"
 
 
+def _is_viewpoint_rerendering_variant(method: str) -> bool:
+    return method.startswith(VIEWPOINT_RERENDERING_PREFIX)
+
+
+def _viewpoint_display_name(method: str) -> str | None:
+    match = re.fullmatch(r"3d_viewpoint_rerendering_phase(\d+)_(point|ahead)", method)
+    if match is None:
+        return None
+    phase_index, lookat_mode = match.groups()
+    return f"3D Viewpoint Phase {phase_index} ({lookat_mode})"
+
+
 def _display_name(method: str, overrides: dict[str, str]) -> str:
     if method in overrides:
         return overrides[method]
+    viewpoint_name = _viewpoint_display_name(method)
+    if viewpoint_name is not None:
+        return viewpoint_name
     return method.replace("_", " ").replace("-", " ").title()
 
 
@@ -266,9 +261,11 @@ def _watermark_category(method: str) -> str:
 
 
 ATTACK_CATEGORY_LABELS = {
+    "3d_viewpoint_rerendering": "3D viewpoint re-rendering",
     "adversarial_attacks": "Adversarial attacks",
     "consumer_enhancement_workflow_attacks": "Consumer enhancement workflow attacks",
     "distortion_attacks": "Distortion attacks",
+    "identity": "Identity",
     "physical_channel_attacks": "Physical channel attacks",
     "regeneration_attacks": "Regeneration attacks",
 }
@@ -284,6 +281,18 @@ def _attack_category_from_class(cls: type[Any]) -> str:
     return "uncategorized_attacks"
 
 
+def _attack_category(method: str, cls: type[Any]) -> str:
+    if method == "identity":
+        return "identity"
+    return _attack_category_from_class(cls)
+
+
+def _attack_category_path(method: str, category: str) -> str:
+    if method == "identity":
+        return "evaluator/attacks/distortion_attacks"
+    return f"evaluator/attacks/{category}"
+
+
 def _attack_category_label(category: str) -> str:
     return ATTACK_CATEGORY_LABELS.get(category, category.replace("_", " ").title())
 
@@ -295,7 +304,8 @@ def _has_explicit_init_param(cls: type[Any], parameter_name: str) -> bool:
 def _attack_requires_gpu(method: str) -> bool:
     return (
         "regen" in method
-        or method in {"noise_to_image", "image_to_vedio", "3d_viewpoint_rerendering"}
+        or method in {"noise_to_image", "image_to_vedio"}
+        or _is_viewpoint_rerendering_variant(method)
         or method.endswith("_deep")
         or method.startswith("cew_d")
         or method.startswith("cew_s")
@@ -325,10 +335,16 @@ def _build_watermark_catalog() -> dict[str, dict[str, Any]]:
 
 def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
     strength_param = ATTACK_PARAM_BY_METHOD.get(method)
+    if _is_viewpoint_rerendering_variant(method):
+        strength_param = "strength"
     if strength_param is None and _has_explicit_init_param(cls, "strength"):
         strength_param = "strength"
-    strengths = ATTACK_STRENGTH_SWEEPS.get(method, [0.5] if strength_param else [0.0])
-    category = _attack_category_from_class(cls)
+    strengths = (
+        VIEWPOINT_RERENDERING_STRENGTHS
+        if _is_viewpoint_rerendering_variant(method)
+        else ATTACK_STRENGTH_SWEEPS.get(method, [0.5] if strength_param else [0.0])
+    )
+    category = _attack_category(method, cls)
     return {
         "id": f"atk-{_slug(method)}",
         "name": _display_name(method, ATTACK_DISPLAY_NAMES),
@@ -336,7 +352,7 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
         "description": cls.description,
         "category": category,
         "categoryLabel": _attack_category_label(category),
-        "categoryPath": f"evaluator/attacks/{category}",
+        "categoryPath": _attack_category_path(method, category),
         "strengths": strengths,
         "strengthParam": strength_param,
         "requiresGpu": _attack_requires_gpu(method),
@@ -347,22 +363,10 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
 
 
 def _build_attack_catalog() -> dict[str, dict[str, Any]]:
-    catalog = {
+    return {
         f"atk-{_slug(method)}": _base_attack_preset(method, cls)
         for method, cls in sorted(ATTACK_REGISTRY.items())
     }
-    for preset_id, preset in LEGACY_ATTACK_PRESETS.items():
-        if preset["method"] in ATTACK_REGISTRY:
-            base = _base_attack_preset(preset["method"], ATTACK_REGISTRY[preset["method"]])
-            catalog[preset_id] = {
-                **base,
-                **preset,
-                "description": base["description"],
-                "category": base["category"],
-                "requiresGpu": base["requiresGpu"],
-                "available": True,
-            }
-    return catalog
 
 
 def list_watermark_resources(
@@ -410,6 +414,8 @@ def get_attack_catalog_item(attack_preset_id: str) -> dict[str, Any]:
     catalog = _build_attack_catalog()
     if attack_preset_id in catalog:
         return catalog[attack_preset_id]
+    if attack_preset_id in LEGACY_ATTACK_ALIASES:
+        return catalog[LEGACY_ATTACK_ALIASES[attack_preset_id]]
     if attack_preset_id in {item["method"] for item in catalog.values()}:
         for item in catalog.values():
             if item["method"] == attack_preset_id:

@@ -6,7 +6,6 @@
 
 | name | 参数 | 说明 |
 | --- | --- | --- |
-| `identity` | 无 | 不攻击，直接复制图片 |
 | `rotation` | `angle` 或 `strength` | 旋转图片 |
 | `resized_crop` | `scale` 或 `strength` | 随机裁剪后缩放回原尺寸 |
 | `erasing` | `area_ratio` 或 `strength` | 随机擦除局部区域 |
@@ -16,6 +15,8 @@
 | `gaussian_noise` | `sigma` 或 `strength` | 高斯噪声 |
 | `jpeg` | `quality` 或 `strength` | JPEG 压缩后转回 PNG |
 | `resize` | `scale` | 缩放再恢复原尺寸 |
+
+`identity` 仍由本模块实现，但前端资源分类中单独归为 `identity`，不再作为经典失真展示。
 
 `strength` 默认是 `[0, 1]` 的相对强度，会映射到各攻击的实际参数范围。例如：
 

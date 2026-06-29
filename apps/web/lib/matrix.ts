@@ -22,7 +22,16 @@ export function estimateMatrix(
   const datasetCount = selectedDatasets.length;
   const algorithmCount = selection.algorithmIds.length;
   const attackCount = selectedAttacks.length;
-  const strengthCount = selectedAttacks.reduce((sum, attack) => sum + Math.max(1, attack.strengths.length), 0);
+  const strengthOverrides = selection.attackStrengthOverrides ?? {};
+  const paramOverrides = selection.attackParamOverrides ?? {};
+  const strengthCount = selectedAttacks.reduce((sum, attack) => {
+    const paramOverrideCount = paramOverrides[attack.id]?.length ?? 0;
+    if (paramOverrideCount > 0) {
+      return sum + paramOverrideCount;
+    }
+    const overrideCount = strengthOverrides[attack.id]?.filter((value) => Number.isFinite(value)).length ?? 0;
+    return sum + Math.max(1, overrideCount || attack.strengths.length);
+  }, 0);
   const seedCount = selection.seeds.length;
   const cellCount = datasetCount * algorithmCount * Math.max(1, strengthCount) * seedCount;
   const sampleCount = selectedDatasets.reduce(

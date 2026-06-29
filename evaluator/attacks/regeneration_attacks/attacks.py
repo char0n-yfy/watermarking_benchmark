@@ -25,18 +25,12 @@ DEFAULT_NOISE_TO_IMAGE_ROOT = DEFAULT_WEIGHT_ROOT / "noise_to_image"
 DEFAULT_BACKEND_ROOT = PACKAGE_ROOT / "backends"
 DEFAULT_NOISE_TO_IMAGE_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "ctrlregen"
 DEFAULT_IMAGE_TO_VEDIO_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "nfpa"
-DEFAULT_VIEWPOINT_RERENDERING_ROOT = DEFAULT_WEIGHT_ROOT / "3d_viewpoint_rerendering"
-DEFAULT_SHARP_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "ml_sharp"
-DEFAULT_SHARP_CHECKPOINT_PATH = DEFAULT_VIEWPOINT_RERENDERING_ROOT / "checkpoints" / "sharp_2572gikvuh.pt"
-DEFAULT_SHARP_ATTACK_DEFINITION = "REG-3D-SHARP-Rotate"
 DEFAULT_DIFFUSION_REPO_ID = "sd2-community/stable-diffusion-2-1-base"
 DEFAULT_CTRLREGEN_BASE_REPO_ID = "SG161222/Realistic_Vision_V4.0_noVAE"
 DEFAULT_CTRLREGEN_ADAPTER_REPO_ID = "yepengliu/ctrlregen"
 DEFAULT_CTRLREGEN_IMAGE_ENCODER_REPO_ID = "facebook/dinov2-giant"
 DEFAULT_CTRLREGEN_VAE_REPO_ID = "stabilityai/sd-vae-ft-mse"
-DEFAULT_SHARP_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
-DEFAULT_SHARP_PHASES = tuple(index / 8 for index in range(8))
-DEFAULT_SHARP_LOOKAT_MODES = ("point", "ahead")
+DEFAULT_REGEN_NOISE_STEP_RANGE = (20, 100)
 
 DIFFUSION_REQUIRED_FILES = (
     "model_index.json",
@@ -327,73 +321,6 @@ def _generator_device(device: Any) -> str:
     return "cpu" if device_type == "mps" else device_type
 
 
-def _parse_float_sequence(value: Any, default: tuple[float, ...], label: str) -> tuple[float, ...]:
-    if value is None:
-        return default
-    if isinstance(value, str):
-        items = [item.strip() for item in value.split(",") if item.strip()]
-        if not items:
-            return default
-        parsed = tuple(float(item) for item in items)
-    else:
-        parsed = tuple(float(item) for item in value)
-    for item in parsed:
-        if item < 0.0 or item >= 1.0:
-            raise ValueError(f"{label} values must be in [0, 1): {item}")
-    return parsed
-
-
-def _parse_lookat_modes(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return DEFAULT_SHARP_LOOKAT_MODES
-    if isinstance(value, str):
-        modes = tuple(item.strip() for item in value.split(",") if item.strip())
-    else:
-        modes = tuple(str(item) for item in value)
-    invalid = [mode for mode in modes if mode not in DEFAULT_SHARP_LOOKAT_MODES]
-    if invalid:
-        valid = ", ".join(DEFAULT_SHARP_LOOKAT_MODES)
-        raise ValueError(f"Unsupported SHARP lookat_mode values {invalid}; choose from: {valid}")
-    return modes
-
-
-def _ensure_sharp_source_root(source_root: str | Path | None) -> Path:
-    root = Path(source_root).expanduser() if source_root is not None else DEFAULT_SHARP_SOURCE_ROOT
-    required = (
-        "src/sharp/cli/predict.py",
-        "src/sharp/models/__init__.py",
-        "src/sharp/utils/camera.py",
-        "src/sharp/utils/gsplat.py",
-        "src/sharp/utils/gaussians.py",
-    )
-    missing = [relative for relative in required if not (root / relative).exists()]
-    if missing:
-        missing_list = ", ".join(missing)
-        raise FileNotFoundError(
-            f"apple/ml-sharp source is missing under {root}: {missing_list}. "
-            f"Place the repository under {DEFAULT_SHARP_SOURCE_ROOT} or pass source_root explicitly."
-        )
-    src_path = root / "src"
-    if str(src_path) not in sys.path:
-        sys.path.insert(0, str(src_path))
-    return root
-
-
-def _resolve_sharp_checkpoint(
-    checkpoint_path: str | Path | None,
-    allow_download: bool,
-    progress: bool,
-) -> tuple[Path, str, bool]:
-    target = Path(checkpoint_path).expanduser() if checkpoint_path is not None else DEFAULT_SHARP_CHECKPOINT_PATH
-    downloaded = False
-    if not target.exists():
-        if not allow_download:
-            raise FileNotFoundError(f"SHARP checkpoint is missing and download is disabled: {target}")
-        _download_file(DEFAULT_SHARP_MODEL_URL, target, progress=progress)
-        downloaded = True
-    return target, DEFAULT_SHARP_MODEL_URL, downloaded
-
-
 def _torch_dtype_from_name(dtype_name: str, device: str):
     import torch
 
@@ -601,6 +528,24 @@ def _run_diffusion_regeneration(
     }
 
 
+def _clamp_unit_strength(strength: float) -> float:
+    return max(0.0, min(1.0, float(strength)))
+
+
+def _noise_step_from_strength(strength: float, noise_step_min: int, noise_step_max: int) -> int:
+    if noise_step_min < 0:
+        raise ValueError("noise_step_min must be non-negative")
+    if noise_step_max < noise_step_min:
+        raise ValueError("noise_step_max must be >= noise_step_min")
+    return int(round(noise_step_min + (noise_step_max - noise_step_min) * _clamp_unit_strength(strength)))
+
+
+def _strength_from_noise_step(noise_step: int, noise_step_min: int, noise_step_max: int) -> float:
+    if noise_step_max == noise_step_min:
+        return 0.0
+    return _clamp_unit_strength((int(noise_step) - noise_step_min) / (noise_step_max - noise_step_min))
+
+
 @register_attack
 class RegenVAEAttack(BaseAttack):
     name = "regen_vae"
@@ -703,7 +648,10 @@ class _BaseRegenDiffusionAttack(BaseAttack):
 
     def __init__(
         self,
-        noise_step: int = 60,
+        noise_step: int | None = None,
+        strength: float | None = None,
+        noise_step_min: int = DEFAULT_REGEN_NOISE_STEP_RANGE[0],
+        noise_step_max: int = DEFAULT_REGEN_NOISE_STEP_RANGE[1],
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         image_size: int = 512,
@@ -719,7 +667,21 @@ class _BaseRegenDiffusionAttack(BaseAttack):
         dtype: str = "auto",
         save_intermediates: bool = False,
     ) -> None:
-        noise_step = int(noise_step)
+        noise_step_min = int(noise_step_min)
+        noise_step_max = int(noise_step_max)
+        if noise_step_min < 0:
+            raise ValueError("noise_step_min must be non-negative")
+        if noise_step_max < noise_step_min:
+            raise ValueError("noise_step_max must be >= noise_step_min")
+        if strength is not None:
+            strength = _clamp_unit_strength(float(strength))
+            noise_step = _noise_step_from_strength(strength, noise_step_min, noise_step_max)
+        elif noise_step is None:
+            noise_step = 60
+            strength = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
+        else:
+            noise_step = int(noise_step)
+            strength = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
         num_inference_steps = int(num_inference_steps)
         image_size = int(image_size)
         if image_size <= 0:
@@ -732,6 +694,9 @@ class _BaseRegenDiffusionAttack(BaseAttack):
             head_start_step = int(head_start_step)
         super().__init__(
             noise_step=noise_step,
+            strength=strength,
+            noise_step_min=noise_step_min,
+            noise_step_max=noise_step_max,
             num_inference_steps=num_inference_steps,
             guidance_scale=float(guidance_scale),
             image_size=image_size,
@@ -749,6 +714,9 @@ class _BaseRegenDiffusionAttack(BaseAttack):
             passes=self.passes,
         )
         self.noise_step = noise_step
+        self.strength = float(strength)
+        self.noise_step_min = noise_step_min
+        self.noise_step_max = noise_step_max
         self.num_inference_steps = num_inference_steps
         self.guidance_scale = float(guidance_scale)
         self.image_size = image_size
@@ -855,7 +823,10 @@ class _BaseRegenDiffusionAttack(BaseAttack):
             "model_downloaded": self._model_downloaded,
             "dtype": str(self._torch_dtype).replace("torch.", ""),
             "passes": self.passes,
+            "strength": self.strength,
             "noise_step": self.noise_step,
+            "noise_step_min": self.noise_step_min,
+            "noise_step_max": self.noise_step_max,
             "num_inference_steps": self.num_inference_steps,
             "guidance_scale": self.guidance_scale,
             "image_size": self.image_size,
@@ -885,293 +856,6 @@ class FourTimesRegenDiffusionAttack(_BaseRegenDiffusionAttack):
     name = "4x_regen"
     description = "Four repeated Stable Diffusion 2.1-base regeneration passes."
     passes = 4
-
-
-@register_attack
-class ViewpointRerendering3DAttack(BaseAttack):
-    name = "3d_viewpoint_rerendering"
-    description = "REG-3D-SHARP-Rotate 3D Gaussian viewpoint re-rendering attack."
-
-    def __init__(
-        self,
-        source_root: str | Path | None = None,
-        checkpoint_path: str | Path | None = None,
-        max_disparity: float = 0.02,
-        phases: Any = None,
-        lookat_modes: Any = None,
-        image_size: int | None = None,
-        device: str | None = None,
-        allow_download: bool = True,
-        progress: bool = True,
-        save_intermediates: bool = True,
-        primary_phase: float = 0.0,
-        primary_lookat_mode: str = "point",
-    ) -> None:
-        max_disparity = float(max_disparity)
-        if max_disparity < 0.0:
-            raise ValueError("max_disparity must be non-negative")
-        if image_size is not None and int(image_size) <= 0:
-            raise ValueError("image_size must be positive when provided")
-        phase_values = _parse_float_sequence(phases, DEFAULT_SHARP_PHASES, "phases")
-        lookat_values = _parse_lookat_modes(lookat_modes)
-        if primary_phase < 0.0 or primary_phase >= 1.0:
-            raise ValueError("primary_phase must be in [0, 1)")
-        if primary_lookat_mode not in DEFAULT_SHARP_LOOKAT_MODES:
-            valid = ", ".join(DEFAULT_SHARP_LOOKAT_MODES)
-            raise ValueError(f"primary_lookat_mode must be one of: {valid}")
-        super().__init__(
-            source_root=str(source_root) if source_root is not None else str(DEFAULT_SHARP_SOURCE_ROOT),
-            checkpoint_path=str(checkpoint_path) if checkpoint_path is not None else str(DEFAULT_SHARP_CHECKPOINT_PATH),
-            attack_definition=DEFAULT_SHARP_ATTACK_DEFINITION,
-            max_disparity=max_disparity,
-            trajectory_type="rotate",
-            max_zoom=0.0,
-            phases=list(phase_values),
-            lookat_modes=list(lookat_values),
-            image_size=None if image_size is None else int(image_size),
-            device=device,
-            allow_download=bool(allow_download),
-            save_intermediates=bool(save_intermediates),
-            primary_phase=float(primary_phase),
-            primary_lookat_mode=primary_lookat_mode,
-        )
-        self.source_root = source_root
-        self.checkpoint_path = checkpoint_path
-        self.max_disparity = max_disparity
-        self.phases = phase_values
-        self.lookat_modes = lookat_values
-        self.image_size = None if image_size is None else int(image_size)
-        self.device_override = device
-        self.allow_download = bool(allow_download)
-        self.progress = bool(progress)
-        self.save_intermediates = bool(save_intermediates)
-        self.primary_phase = float(primary_phase)
-        self.primary_lookat_mode = primary_lookat_mode
-        self._predictor: Any | None = None
-        self._predictor_device: str | None = None
-        self._checkpoint_path: Path | None = None
-        self._checkpoint_url: str | None = None
-        self._checkpoint_downloaded = False
-        self._source_root: Path | None = None
-        self._sharp_modules: dict[str, Any] = {}
-
-    def _ensure_predictor(self, device: str) -> None:
-        import torch
-
-        torch_device = torch.device(device)
-        if torch_device.type != "cuda" or not torch.cuda.is_available():
-            raise RuntimeError("3D Viewpoint Re-rendering with SHARP requires a CUDA GPU for gsplat rendering")
-        if self._predictor is not None and self._predictor_device == str(torch_device):
-            return
-
-        source_root = _ensure_sharp_source_root(self.source_root)
-        checkpoint_path, checkpoint_url, downloaded = _resolve_sharp_checkpoint(
-            self.checkpoint_path,
-            self.allow_download,
-            self.progress,
-        )
-        try:
-            from sharp.cli.predict import predict_image
-            from sharp.models import PredictorParams, create_predictor
-            from sharp.utils import camera, gsplat, io
-            from sharp.utils.gaussians import SceneMetaData, save_ply
-        except Exception as exc:
-            raise RuntimeError(
-                "Unable to import apple/ml-sharp. Install its requirements or place the source tree under "
-                f"{DEFAULT_SHARP_SOURCE_ROOT}."
-            ) from exc
-
-        try:
-            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-        except TypeError:
-            state_dict = torch.load(checkpoint_path, map_location="cpu")
-        predictor = create_predictor(PredictorParams())
-        predictor.load_state_dict(state_dict)
-        predictor.eval().to(torch_device)
-
-        self._predictor = predictor
-        self._predictor_device = str(torch_device)
-        self._checkpoint_path = checkpoint_path
-        self._checkpoint_url = checkpoint_url
-        self._checkpoint_downloaded = downloaded
-        self._source_root = source_root
-        self._sharp_modules = {
-            "predict_image": predict_image,
-            "camera": camera,
-            "gsplat": gsplat,
-            "io": io,
-            "SceneMetaData": SceneMetaData,
-            "save_ply": save_ply,
-        }
-
-    def _variant_output_dir(self, output_path: Path, context: AttackContext) -> Path:
-        sample_key = str(context.sample_id or output_path.stem).replace("/", "__").replace(os.sep, "__")
-        if context.workspace_dir is not None:
-            return context.workspace_dir / "_intermediates" / self.name / sample_key
-        return output_path.parent / f"{output_path.stem}_sharp_variants"
-
-    def _render_variant(
-        self,
-        gaussians: Any,
-        metadata: Any,
-        *,
-        phase: float,
-        lookat_mode: str,
-        device: str,
-        renderer: Any | None = None,
-        gaussians_device: Any | None = None,
-    ) -> Image.Image:
-        import numpy as np
-        import torch
-
-        camera = self._sharp_modules["camera"]
-        gsplat = self._sharp_modules["gsplat"]
-        torch_device = torch.device(device)
-        width, height = metadata.resolution_px
-        f_px = metadata.focal_length_px
-        intrinsics = torch.tensor(
-            [
-                [f_px, 0, (width - 1) / 2.0, 0],
-                [0, f_px, (height - 1) / 2.0, 0],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1],
-            ],
-            device=torch_device,
-            dtype=torch.float32,
-        )
-        params = camera.TrajectoryParams(
-            type="rotate",
-            lookat_mode=lookat_mode,
-            max_disparity=self.max_disparity,
-            max_zoom=0.0,
-            distance_m=0.0,
-            num_steps=1,
-            num_repeats=1,
-        )
-        offset_x, offset_y, _ = camera.compute_max_offset(
-            gaussians,
-            params,
-            resolution_px=metadata.resolution_px,
-            f_px=f_px,
-        )
-        eye_position = torch.tensor(
-            [
-                float(offset_x) * np.sin(2 * np.pi * phase),
-                float(offset_y) * np.cos(2 * np.pi * phase),
-                0.0,
-            ],
-            dtype=torch.float32,
-        )
-        camera_model = camera.create_camera_model(
-            gaussians,
-            intrinsics,
-            resolution_px=metadata.resolution_px,
-            lookat_mode=lookat_mode,
-        )
-        if renderer is None:
-            renderer = gsplat.GSplatRenderer(color_space=metadata.color_space)
-        if gaussians_device is None:
-            gaussians_device = gaussians.to(torch_device)
-        camera_info = camera_model.compute(eye_position)
-        with torch.inference_mode():
-            rendering_output = renderer(
-                gaussians_device,
-                extrinsics=camera_info.extrinsics[None].to(torch_device),
-                intrinsics=camera_info.intrinsics[None].to(torch_device),
-                image_width=camera_info.width,
-                image_height=camera_info.height,
-            )
-        color = (rendering_output.color[0].permute(1, 2, 0) * 255.0).clamp(0, 255).to(dtype=torch.uint8)
-        return Image.fromarray(color.detach().cpu().numpy(), mode="RGB")
-
-    def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
-        import torch
-
-        device = self.device_override or context.device or "cuda"
-        self._ensure_predictor(device)
-        assert self._predictor is not None
-        assert self._checkpoint_path is not None
-        assert self._checkpoint_url is not None
-
-        torch_device = torch.device(self._predictor_device or device)
-        io = self._sharp_modules["io"]
-        predict_image = self._sharp_modules["predict_image"]
-        SceneMetaData = self._sharp_modules["SceneMetaData"]
-        save_ply = self._sharp_modules["save_ply"]
-        gsplat = self._sharp_modules["gsplat"]
-
-        image_np, _, f_px = io.load_rgb(input_path)
-        height, width = image_np.shape[:2]
-        gaussians = predict_image(self._predictor, image_np, f_px, torch_device)
-        metadata = SceneMetaData(float(f_px), (width, height), "linearRGB")
-
-        variant_dir = self._variant_output_dir(output_path, context)
-        if self.save_intermediates:
-            variant_dir.mkdir(parents=True, exist_ok=True)
-            save_ply(gaussians, f_px, (height, width), variant_dir / "scene.ply")
-
-        renderer = gsplat.GSplatRenderer(color_space=metadata.color_space)
-        gaussians_device = gaussians.to(torch_device)
-        variant_outputs: list[dict[str, Any]] = []
-        primary_image: Image.Image | None = None
-
-        for lookat_mode in self.lookat_modes:
-            for phase_index, phase in enumerate(self.phases):
-                rendered = self._render_variant(
-                    gaussians,
-                    metadata,
-                    phase=phase,
-                    lookat_mode=lookat_mode,
-                    device=str(torch_device),
-                    renderer=renderer,
-                    gaussians_device=gaussians_device,
-                )
-                variant_name = f"phase_{phase_index:02d}_{lookat_mode}.png"
-                variant_path = variant_dir / variant_name
-                if self.save_intermediates:
-                    rendered.save(variant_path, format="PNG")
-                if primary_image is None:
-                    primary_image = rendered
-                if abs(phase - self.primary_phase) < 1e-9 and lookat_mode == self.primary_lookat_mode:
-                    primary_image = rendered
-                variant_outputs.append(
-                    {
-                        "phase_index": phase_index,
-                        "phase": phase,
-                        "lookat_mode": lookat_mode,
-                        "output_path": str(variant_path) if self.save_intermediates else None,
-                    }
-                )
-
-        if primary_image is None:
-            raise RuntimeError("SHARP produced no viewpoint variants")
-        if self.image_size is not None:
-            primary_image = primary_image.resize((self.image_size, self.image_size), Image.Resampling.BICUBIC)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        primary_image.save(output_path, format="PNG")
-        if str(torch_device).startswith("cuda"):
-            torch.cuda.empty_cache()
-
-        return {
-            "backend": "apple/ml-sharp",
-            "attack_definition": DEFAULT_SHARP_ATTACK_DEFINITION,
-            "source_root": str(self._source_root),
-            "checkpoint_path": str(self._checkpoint_path),
-            "checkpoint_url": self._checkpoint_url,
-            "checkpoint_downloaded": self._checkpoint_downloaded,
-            "trajectory_type": "rotate",
-            "max_disparity": self.max_disparity,
-            "max_zoom": 0.0,
-            "phases": list(self.phases),
-            "lookat_modes": list(self.lookat_modes),
-            "variant_count": len(variant_outputs),
-            "variant_outputs": variant_outputs,
-            "primary_phase": self.primary_phase,
-            "primary_lookat_mode": self.primary_lookat_mode,
-            "input_size": [width, height],
-            "output_size": list(primary_image.size),
-            "note": "Metrics should be averaged over variant_outputs for the full 8 phase x 2 lookat SHARP benchmark definition.",
-        }
 
 
 @register_attack

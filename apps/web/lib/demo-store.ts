@@ -8,7 +8,7 @@ const runsKey = "wm-bench-demo-runs-v2";
 export const defaultSelection: ExperimentSelection = {
   datasetIds: ["local-root"],
   algorithmIds: ["alg-traditional-lsb"],
-  attackPresetIds: ["atk-identity", "atk-jpeg-smoke"],
+  attackPresetIds: ["atk-identity", "atk-jpeg"],
   seeds: [42],
   maxSamples: 1
 };

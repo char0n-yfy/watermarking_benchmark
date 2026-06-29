@@ -8,11 +8,6 @@ Implemented registry names:
 - `screen_shoot`
 - `print_camera`
 - `combined_physical`
-- `screen_shoot_mild`, `screen_shoot_medium`, `screen_shoot_strong`
-- `print_camera_mild`, `print_camera_medium`, `print_camera_strong`
-- `combined_physical_mild`, `combined_physical_medium`, `combined_physical_strong`
-- `screen_shoot_mild_uncorrected`, `screen_shoot_medium_uncorrected`, `screen_shoot_strong_uncorrected`
-- `print_camera_mild_uncorrected`, `print_camera_medium_uncorrected`, `print_camera_strong_uncorrected`
 
 Design:
 
@@ -22,6 +17,15 @@ Design:
   print rendering, perspective, illumination, camera imaging, JPEG.
 - `combined_physical`: two-hop `print_camera -> screen_shoot` chain with
   reduced strength per hop.
+
+Strength control:
+
+- All three registry names accept `strength` in `[0, 1]`.
+- `0.0`, `0.5`, and `1.0` map to the original `mild`, `medium`, and
+  `strong` operating points for `screen_shoot` and `print_camera`.
+- `combined_physical` maps the global strength to the two-hop chain with the
+  same reduced-hop rule as the old presets: `mild=(mild, mild)`,
+  `medium=(medium, mild)`, and `strong=(medium, medium)`.
 
 The promoted presets use the less-blur version selected after visual review of
 the 12 uploaded real photos. The current defocus values are:

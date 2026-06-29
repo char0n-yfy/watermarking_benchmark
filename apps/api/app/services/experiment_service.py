@@ -21,12 +21,22 @@ from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchma
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "partially_failed"}
+HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
 
 
 @dataclass(frozen=True)
 class MaterializedExperiment:
     spec: ExperimentSpec
     cells: list[ExperimentCell]
+
+
+def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
+    next_selection = dict(selection)
+    attack_ids = [str(attack_id) for attack_id in next_selection.get("attackPresetIds") or []]
+    if HIDDEN_BASELINE_ATTACK_ID not in attack_ids:
+        attack_ids.append(HIDDEN_BASELINE_ATTACK_ID)
+    next_selection["attackPresetIds"] = attack_ids
+    return next_selection
 
 
 class ExperimentService:
@@ -56,7 +66,7 @@ class ExperimentService:
     def create_config(self, name: str, selection: dict[str, Any]) -> dict[str, Any]:
         now = utc_now()
         config_id = f"cfg-{uuid4().hex[:12]}"
-        estimate = estimate_selection(selection, self.resources_root)
+        estimate = estimate_selection(with_hidden_baseline_attack(selection), self.resources_root)
         normalized = estimate["selection"]
         with self.database.connect() as connection:
             connection.execute(

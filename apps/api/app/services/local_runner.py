@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 import shutil
 import time
 from dataclasses import dataclass
@@ -51,22 +53,136 @@ def _ensure_list(value: Any, fallback: list[Any]) -> list[Any]:
     return fallback
 
 
+def _normalize_strength_overrides(value: Any, valid_attack_ids: list[str]) -> dict[str, list[float]]:
+    if not isinstance(value, dict):
+        return {}
+
+    valid_ids = set(valid_attack_ids)
+    normalized: dict[str, list[float]] = {}
+    for attack_id, strengths in value.items():
+        normalized_attack_id = str(attack_id)
+        if normalized_attack_id not in valid_ids:
+            continue
+        strength_values: list[float] = []
+        for strength in _ensure_list(strengths, []):
+            try:
+                parsed = float(strength)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(parsed):
+                strength_values.append(parsed)
+        deduped = sorted(set(strength_values))
+        if deduped:
+            normalized[normalized_attack_id] = deduped
+    return normalized
+
+
+def _normalize_param_overrides(value: Any, valid_attack_ids: list[str]) -> dict[str, list[JsonDict]]:
+    if not isinstance(value, dict):
+        return {}
+
+    valid_ids = set(valid_attack_ids)
+    normalized: dict[str, list[JsonDict]] = {}
+    for attack_id, variants in value.items():
+        normalized_attack_id = str(attack_id)
+        if normalized_attack_id not in valid_ids:
+            continue
+        cleaned_variants: list[JsonDict] = []
+        seen: set[str] = set()
+        for variant in _ensure_list(variants, []):
+            if not isinstance(variant, dict):
+                continue
+            cleaned: JsonDict = {}
+            for key, raw_value in variant.items():
+                if not isinstance(key, str) or raw_value is None:
+                    continue
+                if isinstance(raw_value, (str, bool)):
+                    cleaned[key] = raw_value
+                elif isinstance(raw_value, (int, float)) and math.isfinite(float(raw_value)):
+                    cleaned[key] = raw_value
+            if not cleaned:
+                continue
+            marker = json.dumps(cleaned, sort_keys=True, ensure_ascii=True)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            cleaned_variants.append(cleaned)
+        if cleaned_variants:
+            normalized[normalized_attack_id] = cleaned_variants
+    return normalized
+
+
 def normalize_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
     datasets = scan_dataset_resources(resources_root)
     default_dataset_ids = [datasets[0].id] if datasets else []
     dataset_ids = _ensure_list(selection.get("datasetIds"), default_dataset_ids)
     algorithm_ids = _ensure_list(selection.get("algorithmIds"), ["alg-traditional-lsb"])
-    attack_ids = _ensure_list(selection.get("attackPresetIds"), ["atk-identity", "atk-jpeg-smoke"])
+    attack_ids = _ensure_list(selection.get("attackPresetIds"), ["atk-identity", "atk-jpeg"])
+    normalized_attack_ids = [str(value) for value in attack_ids]
     seeds = [int(seed) for seed in _ensure_list(selection.get("seeds"), [42])]
     max_samples = int(selection.get("maxSamples") or 1)
 
     return {
         "datasetIds": [str(value) for value in dataset_ids],
         "algorithmIds": [str(value) for value in algorithm_ids],
-        "attackPresetIds": [str(value) for value in attack_ids],
+        "attackPresetIds": normalized_attack_ids,
+        "attackStrengthOverrides": _normalize_strength_overrides(
+            selection.get("attackStrengthOverrides"), normalized_attack_ids
+        ),
+        "attackParamOverrides": _normalize_param_overrides(
+            selection.get("attackParamOverrides"), normalized_attack_ids
+        ),
         "seeds": seeds,
         "maxSamples": max(1, max_samples),
     }
+
+
+def _strengths_for_attack(selection: JsonDict, attack_id: str, attack: JsonDict) -> list[float]:
+    overrides = selection.get("attackStrengthOverrides") or {}
+    override_strengths = overrides.get(attack_id) if isinstance(overrides, dict) else None
+    if isinstance(override_strengths, list) and override_strengths:
+        return [float(strength) for strength in override_strengths]
+    return [float(strength) for strength in (attack["strengths"] or [0.0])]
+
+
+def _param_overrides_for_attack(selection: JsonDict, attack_id: str) -> list[JsonDict]:
+    overrides = selection.get("attackParamOverrides") or {}
+    override_params = overrides.get(attack_id) if isinstance(overrides, dict) else None
+    if not isinstance(override_params, list):
+        return []
+    return [dict(params) for params in override_params if isinstance(params, dict)]
+
+
+def _variant_strength(attack: JsonDict, params: JsonDict, fallback: float = 0.0) -> float:
+    strength_param = attack.get("strengthParam")
+    if strength_param and str(strength_param) in params:
+        try:
+            return float(params[str(strength_param)])
+        except (TypeError, ValueError):
+            return fallback
+    return fallback
+
+
+def _params_digest(params: JsonDict) -> str:
+    payload = json.dumps(params, sort_keys=True, ensure_ascii=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _attack_variants_for_attack(selection: JsonDict, attack_id: str, attack: JsonDict) -> list[tuple[float, JsonDict, str]]:
+    param_overrides = _param_overrides_for_attack(selection, attack_id)
+    if param_overrides:
+        variants: list[tuple[float, JsonDict, str]] = []
+        for index, override_params in enumerate(param_overrides):
+            strength = _variant_strength(attack, override_params, fallback=0.0)
+            params = _attack_params(attack, strength)
+            params.update(override_params)
+            variants.append((float(strength), params, _params_digest({"index": index, **params})))
+        return variants
+
+    return [
+        (float(strength), _attack_params(attack, float(strength)), f"{float(strength):g}")
+        for strength in _strengths_for_attack(selection, attack_id, attack)
+    ]
 
 
 def estimate_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
@@ -85,7 +201,7 @@ def estimate_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
             attack = get_attack_catalog_item(attack_id)
         except KeyError:
             continue
-        strength_count += max(1, len(attack["strengths"]))
+        strength_count += max(1, len(_attack_variants_for_attack(normalized, attack_id, attack)))
 
     cell_count = (
         len(normalized["datasetIds"])
@@ -127,8 +243,10 @@ def _cell_key(
     attack_id: str,
     strength: float,
     seed: int,
+    variant_key: str | None = None,
 ) -> str:
-    raw = f"{dataset_id}__{algorithm_id}__{attack_id}__{strength:g}__{seed}"
+    suffix = f"__{variant_key}" if variant_key else ""
+    raw = f"{dataset_id}__{algorithm_id}__{attack_id}__{strength:g}__{seed}{suffix}"
     return safe_segment(raw)
 
 
@@ -241,19 +359,25 @@ def run_local_experiment(
             algorithm = get_watermark_catalog_item(algorithm_id)
             for attack_id in selection["attackPresetIds"]:
                 attack = get_attack_catalog_item(attack_id)
-                for strength in attack["strengths"] or [0.0]:
+                for strength, attack_params, variant_key in _attack_variants_for_attack(selection, attack_id, attack):
                     for seed in selection["seeds"]:
                         if should_cancel is not None and should_cancel():
                             cancelled = True
                             break
-                        cell_key = _cell_key(dataset_id, algorithm_id, attack_id, float(strength), int(seed))
+                        cell_key = _cell_key(
+                            dataset_id,
+                            algorithm_id,
+                            attack_id,
+                            float(strength),
+                            int(seed),
+                            variant_key,
+                        )
                         cell_root = run_root / "cells" / cell_key
                         watermarked_dir = cell_root / "watermarked"
                         attacked_dir = cell_root / "attacked"
                         extracted_dir = cell_root / "extracted"
                         negative_attacked_dir = cell_root / "negative_attacked"
                         negative_extracted_dir = cell_root / "negative_extracted"
-                        attack_params = _attack_params(attack, float(strength))
                         status = "succeeded"
                         error = None
                         bit_accuracy = None

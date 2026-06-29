@@ -266,9 +266,9 @@ export const translations = {
       "ds-diffusiondb-v1": "DiffusionDB 精选集",
       "ds-demo-v1": "Demo 冒烟集",
       "atk-identity": "不攻击",
-      "atk-jpeg-sweep": "JPEG 强度扫描",
-      "atk-blur-sweep": "模糊强度扫描",
-      "atk-crop-sweep": "裁剪强度扫描",
+      "atk-jpeg": "JPEG 压缩",
+      "atk-gaussian-blur": "高斯模糊",
+      "atk-resized-crop": "缩放裁剪",
       "run_20260626_001": "JPEG 基线扫描",
       "run_20260625_004": "Demo 冒烟集",
       "run_20260624_002": "上传包沙箱"

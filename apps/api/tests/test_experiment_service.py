@@ -16,6 +16,32 @@ from app.services.experiment_service import ExperimentService
 
 
 class ExperimentServiceTest(unittest.TestCase):
+    def test_create_config_adds_hidden_identity_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-traditional-lsb"],
+                    "attackPresetIds": ["atk-jpeg"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+
+            self.assertEqual(config["selection"]["attackPresetIds"], ["atk-jpeg", "atk-identity"])
+            self.assertEqual(config["cellCount"], 4)
+
     def test_create_run_queues_then_executes_local_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -38,12 +38,10 @@ run_attack_dir(AttackJob(
 - `bmshj2018-hyperprior`
 - `mbt2018-mean`
 
-模型资源统一放在：
+再生成攻击模型资源放在：
 
 ```text
 resources/weights/attacks/regeneration_attacks/
-├── 3d_viewpoint_rerendering/
-│   └── checkpoints/sharp_2572gikvuh.pt
 ├── diffusion/sd2-1-base/       # Stable Diffusion 2.1-base 资源目录
 ├── noise_to_image/             # CtrlRegen 资源目录
 │   ├── adapters/ctrlregen/     # yepengliu/ctrlregen adapter snapshot
@@ -51,6 +49,13 @@ resources/weights/attacks/regeneration_attacks/
 │   ├── image_encoder/dinov2-giant/
 │   └── vae/sd-vae-ft-mse/
 └── vae/<vae_model_name>/*.pth.tar
+```
+
+3D viewpoint re-rendering 已分离为独立攻击类，权重也使用独立目录：
+
+```text
+resources/weights/attacks/3d_viewpoint_rerendering/
+└── checkpoints/sharp_2572gikvuh.pt
 ```
 
 第三方 backend/source 自包含在本代码包中，不放入权重目录：
@@ -113,79 +118,18 @@ run_attack_dir(AttackJob(
 
 当前 Anaconda 环境中，直接导入 Diffusers 可能触发 `transformers -> TensorFlow/Keras -> pandas/pyarrow` 的底层段错误。本实现会在内部加载 Diffusers 前设置 `USE_TF=0` 和 `TRANSFORMERS_NO_TF=1`，使攻击路径保持在 PyTorch/Diffusers。
 
-## `3d_viewpoint_rerendering`
+## 3D viewpoint re-rendering
 
-`3d_viewpoint_rerendering` 是平台内接口名；实验定义名为
-`REG-3D-SHARP-Rotate`。它基于 Apple SHARP (`apple/ml-sharp`) 实现
-3D viewpoint re-rendering attack，先从单张水印图像预测 3D Gaussian
-Splatting 表示，再用 SHARP/gsplat 渲染新视角 PNG。
-
-默认资源目录：
+3D viewpoint re-rendering 已从本 regeneration 包拆到
+`evaluator/attacks/3d_viewpoint_rerendering/`，权重也使用独立目录：
 
 ```text
-resources/weights/attacks/regeneration_attacks/3d_viewpoint_rerendering/
+resources/weights/attacks/3d_viewpoint_rerendering/
 └── checkpoints/sharp_2572gikvuh.pt
 ```
 
-SHARP 源码自包含在：
-
-```text
-evaluator/attacks/regeneration_attacks/backends/ml_sharp/
-```
-
-其中 `checkpoints/sharp_2572gikvuh.pt` 是 SHARP 官方 checkpoint。缺失且
-`allow_download=True` 时，checkpoint 会从 Apple 官方模型 URL 下载到上述资源目录。
-运行时会自动把 `backends/ml_sharp/src` 加入 Python 导入路径，但 CUDA worker
-环境仍需要安装 SHARP 依赖；官方依赖至少包括 `torch`、`torchvision`、
-`gsplat`、`timm`、`plyfile`、`scipy`、`imageio[ffmpeg]` 和 `pillow-heif`。
-在 AutoDL 上建议进入 worker 环境后执行：
-
-```bash
-python -m pip install -r evaluator/attacks/regeneration_attacks/backends/ml_sharp/requirements.txt
-```
-
-SHARP 的 `gsplat` 渲染路径需要 CUDA GPU；本地 macOS/CPU 环境只能完成资源和
-接口校验，不能实际跑该攻击推理。
-
-攻击定义固定为：
-
-- `trajectory_type="rotate"`
-- `max_zoom=0.0`
-- `phases=[0/8, 1/8, ..., 7/8]`
-- `lookat_modes=["point", "ahead"]`
-- 输出 PNG
-- 攻击强度只由 `max_disparity` 控制
-
-默认前端强度档位：
-
-```text
-0.01, 0.02, 0.04
-```
-
-每个 `max_disparity` 会生成 16 个子视角配置：
-
-```text
-8 phases x 2 lookat_modes
-```
-
-这些子输出会写入当前 run 的 `_intermediates/3d_viewpoint_rerendering/`
-目录，并记录在 `AttackResult.metadata.variant_outputs` 中。受当前平台
-“一张输入图 -> 一张攻击图”接口限制，主 `output_path` 会保存一个确定性代表
-PNG；如果要严格复现主表里的 SHARP 均值定义，后续 scoring 应基于
-`variant_outputs` 对 16 个子配置分别解码并取平均。
-
-示例：
-
-```python
-run_attack_dir(AttackJob(
-    run_id="sharp-viewpoint-demo",
-    attack_name="3d_viewpoint_rerendering",
-    params={"max_disparity": 0.02},
-    input_dir=Path("input_images"),
-    output_dir=Path("attacked_images"),
-    device="cuda",
-))
-```
+完整方法名、强度映射和运行要求见
+`evaluator/attacks/3d_viewpoint_rerendering/README.md`。
 
 ## `noise_to_image`
 

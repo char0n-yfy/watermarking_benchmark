@@ -89,7 +89,6 @@ evaluator/attacks/
 
 当前 `distortion_attacks/` 已实现：
 
-- `identity`
 - `rotation`
 - `resized_crop`
 - `erasing`
@@ -99,6 +98,8 @@ evaluator/attacks/
 - `gaussian_noise`
 - `jpeg`
 - `resize`
+
+`identity` 是无攻击基线，当前在前端资源分类中单独归为 `identity`，不并入经典失真。
 
 查询攻击：
 
@@ -117,9 +118,9 @@ print(list_attacks())
 - `print_camera`：打印翻拍链路，包含打印渲染、透视、光照、相机成像和 JPEG。
 - `combined_physical`：打印翻拍到屏摄的跨媒介双跳链路。
 
-每类攻击提供 `mild / medium / strong` 三档命名变体；`screen_shoot` 和
-`print_camera` 还提供 `_uncorrected` 几何未校正变体。当前正式预设使用用户
-视觉复核后的降模糊版本，避免文字类图片被过度模糊。
+三类攻击现在都通过 `strength in [0, 1]` 控制强度，`0 / 0.5 / 1`
+分别对应原 `mild / medium / strong` 档位。当前正式预设使用用户视觉复核后的
+降模糊版本，避免文字类图片被过度模糊。
 
 ## 新增攻击
 

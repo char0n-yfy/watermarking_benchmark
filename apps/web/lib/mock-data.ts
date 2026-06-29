@@ -48,11 +48,9 @@ export const algorithms: AlgorithmVersion[] = [
 
 export const attacks: AttackPreset[] = [
   { id: "atk-identity", name: "Identity", method: "identity", strengths: [0] },
-  { id: "atk-jpeg-smoke", name: "JPEG smoke", method: "jpeg", strengths: [0.5], recommended: true },
-  { id: "atk-blur-smoke", name: "Blur smoke", method: "gaussian_blur", strengths: [0.2] },
-  { id: "atk-jpeg-sweep", name: "JPEG sweep", method: "jpeg", strengths: [0.25, 0.5, 0.75] },
-  { id: "atk-blur-sweep", name: "Blur sweep", method: "gaussian_blur", strengths: [0.2, 0.4, 0.6] },
-  { id: "atk-crop-sweep", name: "Crop sweep", method: "resized_crop", strengths: [0.1, 0.3, 0.5] }
+  { id: "atk-jpeg", name: "JPEG Compression", method: "jpeg", strengths: [0.25, 0.5, 0.75], recommended: true },
+  { id: "atk-gaussian-blur", name: "Gaussian Blur", method: "gaussian_blur", strengths: [0.2, 0.4, 0.6] },
+  { id: "atk-resized-crop", name: "Resized Crop", method: "resized_crop", strengths: [0.1, 0.3, 0.5] }
 ];
 
 export const artifacts: ModelArtifact[] = [

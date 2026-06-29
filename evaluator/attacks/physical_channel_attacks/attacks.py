@@ -233,11 +233,67 @@ COMBINED_PRESETS: dict[str, tuple[str, str]] = {
     "strong": ("medium", "medium"),
 }
 
+LEVEL_STRENGTHS = {
+    "mild": 0.0,
+    "medium": 0.5,
+    "strong": 1.0,
+}
+
 
 def _merge(level, presets, over):
     base = dict(presets.get(level, presets["medium"]))
     base.update({k: v for k, v in over.items() if v is not None})
     return base
+
+
+def _clamp_unit_strength(strength):
+    return max(0.0, min(1.0, float(strength)))
+
+
+def _interp_piecewise(strength, mild, medium, strong):
+    value = _clamp_unit_strength(strength)
+    if value <= 0.5:
+        return mild + (medium - mild) * (value / 0.5)
+    return medium + (strong - medium) * ((value - 0.5) / 0.5)
+
+
+def _preset_for_strength(presets, strength):
+    numeric_keys = {
+        key
+        for key in presets["medium"]
+        if isinstance(presets["mild"].get(key), (int, float))
+        and isinstance(presets["medium"].get(key), (int, float))
+        and isinstance(presets["strong"].get(key), (int, float))
+    }
+    resolved = dict(presets["medium"])
+    for key in numeric_keys:
+        resolved[key] = _interp_piecewise(strength, presets["mild"][key], presets["medium"][key], presets["strong"][key])
+    return resolved
+
+
+def _merge_strength(level, strength, presets, over):
+    if strength is None:
+        resolved_strength = LEVEL_STRENGTHS.get(level, LEVEL_STRENGTHS["medium"])
+    else:
+        resolved_strength = _clamp_unit_strength(strength)
+    base = _preset_for_strength(presets, resolved_strength)
+    merged = dict(base)
+    merged.update({k: v for k, v in over.items() if v is not None})
+    return merged, resolved_strength, base
+
+
+def _combined_hop_strengths(level, strength):
+    if strength is None:
+        resolved_strength = LEVEL_STRENGTHS.get(level, LEVEL_STRENGTHS["medium"])
+    else:
+        resolved_strength = _clamp_unit_strength(strength)
+    if resolved_strength <= 0.5:
+        print_strength = resolved_strength
+        screen_strength = 0.0
+    else:
+        print_strength = 0.5
+        screen_strength = resolved_strength - 0.5
+    return resolved_strength, print_strength, screen_strength
 
 
 # =============================================================================
@@ -249,15 +305,15 @@ class ScreenShootAttack(BaseAttack):
     name = "screen_shoot"
     description = "Simulated screen-shooting (PIMoG-style: perspective+illumination+moire+imaging+jpeg)."
 
-    def __init__(self, level="medium", correct_perspective=True,
+    def __init__(self, level="medium", strength=None, correct_perspective=True,
                  yaw=None, pitch=None, roll=None, distance=None, moire=None, **kw):
-        super().__init__(level=level, correct_perspective=correct_perspective,
+        super().__init__(level=level, strength=strength, correct_perspective=correct_perspective,
                          yaw=yaw, pitch=pitch, roll=roll, distance=distance, moire=moire, **kw)
-        self.level, self.correct = level, correct_perspective
+        self.level, self.strength, self.correct = level, strength, correct_perspective
         self.over = dict(yaw=yaw, pitch=pitch, roll=roll, distance=distance, moire=moire, **kw)
 
     def apply(self, input_path, output_path, context) -> Mapping[str, Any]:
-        rng = _rng(context); p = _merge(self.level, SCREEN_PRESETS, self.over)
+        rng = _rng(context); p, strength, _ = _merge_strength(self.level, self.strength, SCREEN_PRESETS, self.over)
         bgr = _load_bgr(Path(input_path)); h, w = bgr.shape[:2]
         H = euler_homography(w, h, p["yaw"], p["pitch"], p["roll"])
         x = perspective(bgr, H)                                                   # 1 透视
@@ -273,7 +329,7 @@ class ScreenShootAttack(BaseAttack):
             x = cv2.warpPerspective(x, np.linalg.inv(H), (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
             corrected = True
         _save_png(x, Path(output_path))
-        return {"channel": "screen_shoot", "level": self.level, "perspective_corrected": corrected,
+        return {"channel": "screen_shoot", "level": self.level, "strength": strength, "perspective_corrected": corrected,
                 "yaw": p["yaw"], "pitch": p["pitch"], "roll": p["roll"],
                 "distance": p["distance"], "moire": p["moire"], "jpeg": p["jpeg"]}
 
@@ -287,16 +343,16 @@ class PrintCameraAttack(BaseAttack):
     name = "print_camera"
     description = "Simulated print-camera (CamMark-style capture + halftone/CMYK; no screen moire)."
 
-    def __init__(self, level="medium", correct_perspective=True,
+    def __init__(self, level="medium", strength=None, correct_perspective=True,
                  yaw=None, pitch=None, roll=None, distance=None, **kw):
-        super().__init__(level=level, correct_perspective=correct_perspective,
+        super().__init__(level=level, strength=strength, correct_perspective=correct_perspective,
                          yaw=yaw, pitch=pitch, roll=roll, distance=distance, **kw)
-        self.level, self.correct = level, correct_perspective
+        self.level, self.strength, self.correct = level, strength, correct_perspective
         self.over = dict(yaw=yaw, pitch=pitch, roll=roll, distance=distance, **kw)
 
     def apply(self, input_path, output_path, context) -> Mapping[str, Any]:
-        rng = _rng(context); p = _merge(self.level, PRINT_PRESETS, self.over)
-        base_distance = float(PRINT_PRESETS.get(self.level, PRINT_PRESETS["medium"])["distance"])
+        rng = _rng(context); p, strength, base = _merge_strength(self.level, self.strength, PRINT_PRESETS, self.over)
+        base_distance = float(base["distance"])
         distance_scale = float(np.clip(base_distance / max(0.3, float(p["distance"])), 0.65, 1.60))
         bgr = _load_bgr(Path(input_path)); h, w = bgr.shape[:2]
         x = cmyk_gamut(bgr, p["cmyk"]); x = halftone(x, p["halftone_cell"]); x = paper_texture(x, p["paper"], rng)  # 1 打印渲染
@@ -313,7 +369,7 @@ class PrintCameraAttack(BaseAttack):
             x = cv2.warpPerspective(x, np.linalg.inv(H), (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
             corrected = True
         _save_png(x, Path(output_path))
-        return {"channel": "print_camera", "level": self.level, "perspective_corrected": corrected,
+        return {"channel": "print_camera", "level": self.level, "strength": strength, "perspective_corrected": corrected,
                 "yaw": p["yaw"], "distance": p["distance"], "distance_scale": distance_scale,
                 "halftone_cell": p["halftone_cell"], "cmyk": p["cmyk"], "jpeg": p["jpeg"]}
 
@@ -327,22 +383,22 @@ class CombinedPhysicalAttack(BaseAttack):
     name = "combined_physical"
     description = "Cross-media chain: print_camera then screen_shoot, reduced strength per hop."
 
-    def __init__(self, level="medium", order="print_then_screen", correct_perspective=True,
+    def __init__(self, level="medium", strength=None, order="print_then_screen", correct_perspective=True,
                  yaw=None, pitch=None, roll=None, distance=None, **kw):
-        super().__init__(level=level, order=order, correct_perspective=correct_perspective,
+        super().__init__(level=level, strength=strength, order=order, correct_perspective=correct_perspective,
                          yaw=yaw, pitch=pitch, roll=roll, distance=distance, **kw)
-        self.level, self.order, self.correct = level, order, correct_perspective
+        self.level, self.strength, self.order, self.correct = level, strength, order, correct_perspective
         self.over = dict(yaw=yaw, pitch=pitch, roll=roll, distance=distance, **kw)
 
     def apply(self, input_path, output_path, context) -> Mapping[str, Any]:
-        print_lvl, screen_lvl = COMBINED_PRESETS.get(self.level, COMBINED_PRESETS["medium"])
+        strength, print_strength, screen_strength = _combined_hop_strengths(self.level, self.strength)
         work = Path(context.workspace_dir or "/tmp"); work.mkdir(parents=True, exist_ok=True)
         mid = work / f"_combined_mid_{context.sample_id}.png"
-        hops = ([("print", PrintCameraAttack(level=print_lvl, correct_perspective=self.correct, **self.over)),
-                 ("screen", ScreenShootAttack(level=screen_lvl, correct_perspective=self.correct, **self.over))]
+        hops = ([("print", PrintCameraAttack(strength=print_strength, correct_perspective=self.correct, **self.over)),
+                 ("screen", ScreenShootAttack(strength=screen_strength, correct_perspective=self.correct, **self.over))]
                 if self.order == "print_then_screen" else
-                [("screen", ScreenShootAttack(level=screen_lvl, correct_perspective=self.correct, **self.over)),
-                 ("print", PrintCameraAttack(level=print_lvl, correct_perspective=self.correct, **self.over))])
+                [("screen", ScreenShootAttack(strength=screen_strength, correct_perspective=self.correct, **self.over)),
+                 ("print", PrintCameraAttack(strength=print_strength, correct_perspective=self.correct, **self.over))])
         cur, log = Path(input_path), []
         for i, (tag, atk) in enumerate(hops):
             nxt = mid if i == 0 else Path(output_path)
@@ -350,24 +406,8 @@ class CombinedPhysicalAttack(BaseAttack):
                                 workspace_dir=work, device=context.device,
                                 seed=None if context.seed is None else context.seed*100 + i)
             m = atk.apply(cur, nxt, ctx); log.append({tag: m}); cur = nxt
-        return {"channel": "combined_physical", "level": self.level, "order": self.order,
-                "print_level": print_lvl, "screen_level": screen_lvl, "hops": log}
-
-
-# 注册三档命名变体（screen/print/combined 各 mild/medium/strong；屏摄/翻拍另出 uncorrected）
-def _variant(base_cls, level, corrected=True, suffix=""):
-    name = f"{base_cls.name}_{level}{suffix}"
-    cls = type(f"{base_cls.__name__}_{level}{suffix}", (base_cls,),
-               {"name": name,
-                "__init__": (lambda self, **kw: base_cls.__init__(self, level=level, correct_perspective=corrected, **kw))})
-    return register_attack(cls)
-
-for _lvl in ("mild", "medium", "strong"):
-    for _cls in (ScreenShootAttack, PrintCameraAttack):
-        try: _variant(_cls, _lvl, True); _variant(_cls, _lvl, False, "_uncorrected")
-        except Exception: pass
-    try: _variant(CombinedPhysicalAttack, _lvl, True)
-    except Exception: pass
+        return {"channel": "combined_physical", "level": self.level, "strength": strength, "order": self.order,
+                "print_strength": print_strength, "screen_strength": screen_strength, "hops": log}
 
 
 # =============================================================================

@@ -1,7 +1,11 @@
+import importlib
+
 from .base import AttackContext, AttackResult, BaseAttack
 from . import consumer_enhancement_workflow_attacks as consumer_enhancement_workflow_attacks
 from . import physical_channel_attacks as physical_channel_attacks
 from . import regeneration_attacks as regeneration_attacks
+viewpoint_rerendering_attacks = importlib.import_module(".3d_viewpoint_rerendering", __name__)
+ViewpointRerendering3DVariantAttack = viewpoint_rerendering_attacks.ViewpointRerendering3DVariantAttack
 from .distortion_attacks import (
     BrightnessAttack,
     ContrastAttack,
@@ -27,7 +31,6 @@ from .regeneration_attacks import (
     RegenDiffusionAttack,
     RegenVAEAttack,
     TwoTimesRegenDiffusionAttack,
-    ViewpointRerendering3DAttack,
 )
 
 __all__ = [
@@ -56,9 +59,10 @@ __all__ = [
     "RotationAttack",
     "ScreenShootAttack",
     "TwoTimesRegenDiffusionAttack",
-    "ViewpointRerendering3DAttack",
+    "ViewpointRerendering3DVariantAttack",
     "build_attack",
     "list_attacks",
     "register_attack",
     "regeneration_attacks",
+    "viewpoint_rerendering_attacks",
 ]

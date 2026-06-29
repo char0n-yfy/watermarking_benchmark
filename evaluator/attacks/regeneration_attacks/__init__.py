@@ -7,7 +7,6 @@ from .attacks import (
     RegenDiffusionAttack,
     RegenVAEAttack,
     TwoTimesRegenDiffusionAttack,
-    ViewpointRerendering3DAttack,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "RegenDiffusionAttack",
     "RegenVAEAttack",
     "TwoTimesRegenDiffusionAttack",
-    "ViewpointRerendering3DAttack",
 ]

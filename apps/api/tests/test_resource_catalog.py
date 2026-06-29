@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+from PIL import Image
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.services.local_runner import _attack_params
+from app.services.local_runner import (
+    _attack_params,
+    _attack_variants_for_attack,
+    _strengths_for_attack,
+    estimate_selection,
+    normalize_selection,
+)
 from app.services.resources import (
     get_attack_catalog_item,
     get_watermark_catalog_item,
     list_attack_resources,
     list_watermark_resources,
+    scan_dataset_resources,
 )
 from evaluator.attacks import ATTACK_REGISTRY
 from evaluator.watermarking import WATERMARK_REGISTRY
@@ -38,17 +48,49 @@ class ResourceCatalogTest(unittest.TestCase):
         exposed_methods = {item["method"] for item in resources}
 
         self.assertEqual(set(ATTACK_REGISTRY), exposed_methods)
-        self.assertGreaterEqual(len(resources), len(ATTACK_REGISTRY))
+        self.assertEqual(len(resources), len(ATTACK_REGISTRY))
 
         for method in ATTACK_REGISTRY:
             item = get_attack_catalog_item(method)
             self.assertEqual(item["method"], method)
             self.assertTrue(item["id"].startswith("atk-"))
             self.assertEqual(item["available"], True)
-            expected_category = ATTACK_REGISTRY[method].__module__.split("evaluator.attacks.", 1)[1].split(".", 1)[0]
+            expected_module_category = ATTACK_REGISTRY[method].__module__.split("evaluator.attacks.", 1)[1].split(".", 1)[0]
+            expected_category = "identity" if method == "identity" else expected_module_category
             self.assertEqual(item["category"], expected_category)
             self.assertIn("categoryLabel", item)
-            self.assertEqual(item["categoryPath"], f"evaluator/attacks/{expected_category}")
+            expected_path = (
+                "evaluator/attacks/distortion_attacks"
+                if method == "identity"
+                else f"evaluator/attacks/{expected_category}"
+            )
+            self.assertEqual(item["categoryPath"], expected_path)
+
+    def test_dataset_scan_does_not_add_local_root_for_child_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resources_root = Path(tmpdir)
+            child = resources_root / "datasets" / "demo"
+            child.mkdir(parents=True)
+            Image.new("RGB", (16, 16), (80, 120, 160)).save(child / "sample.png")
+
+            resources = scan_dataset_resources(resources_root)
+
+            self.assertEqual([item.id for item in resources], ["demo"])
+            self.assertEqual(resources[0].sample_count, 1)
+
+    def test_dataset_scan_adds_local_root_only_for_direct_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resources_root = Path(tmpdir)
+            datasets_root = resources_root / "datasets"
+            child = datasets_root / "demo"
+            child.mkdir(parents=True)
+            Image.new("RGB", (16, 16), (80, 120, 160)).save(child / "sample.png")
+            Image.new("RGB", (16, 16), (160, 120, 80)).save(datasets_root / "root.png")
+
+            resources = scan_dataset_resources(resources_root)
+
+            self.assertEqual([item.id for item in resources], ["local-root", "demo"])
+            self.assertEqual(resources[0].sample_count, 1)
 
     def test_consumer_enhancement_attacks_are_grouped_for_frontend(self) -> None:
         resources = list_attack_resources()
@@ -87,22 +129,57 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertTrue(image_to_vedio["requiresGpu"])
 
     def test_sharp_viewpoint_rerendering_attack_is_grouped_for_frontend(self) -> None:
-        attack = get_attack_catalog_item("3d_viewpoint_rerendering")
+        resources = list_attack_resources()
+        viewpoint_resources = [
+            item for item in resources if item["method"].startswith("3d_viewpoint_rerendering_phase")
+        ]
+        attack = get_attack_catalog_item("3d_viewpoint_rerendering_phase0_point")
 
-        self.assertEqual(attack["category"], "regeneration_attacks")
-        self.assertEqual(attack["strengthParam"], "max_disparity")
-        self.assertEqual(attack["strengths"], [0.01, 0.02, 0.04])
+        self.assertEqual(len(viewpoint_resources), 16)
+        self.assertNotIn("3d_viewpoint_rerendering", {item["method"] for item in resources})
+        self.assertEqual(attack["category"], "3d_viewpoint_rerendering")
+        self.assertTrue(all(item["category"] == "3d_viewpoint_rerendering" for item in viewpoint_resources))
+        self.assertEqual(attack["categoryPath"], "evaluator/attacks/3d_viewpoint_rerendering")
+        self.assertEqual(attack["strengthParam"], "strength")
+        self.assertEqual(attack["strengths"], [0.0, 0.5, 1.0])
         self.assertTrue(attack["requiresGpu"])
+        self.assertEqual(get_attack_catalog_item("3d_viewpoint_rerendering_phase7_ahead")["strengthParam"], "strength")
 
-    def test_legacy_attack_presets_remain_resolvable(self) -> None:
-        jpeg_smoke = get_attack_catalog_item("atk-jpeg-smoke")
-        blur_sweep = get_attack_catalog_item("atk-blur-sweep")
-        crop_sweep = get_attack_catalog_item("atk-crop-sweep")
+    def test_physical_channel_attacks_are_strength_mapped_without_level_variants(self) -> None:
+        resources = list_attack_resources()
+        exposed_methods = {item["method"] for item in resources}
 
-        self.assertEqual(jpeg_smoke["method"], "jpeg")
-        self.assertEqual(jpeg_smoke["strengthParam"], "strength")
-        self.assertEqual(blur_sweep["method"], "gaussian_blur")
-        self.assertEqual(crop_sweep["method"], "resized_crop")
+        for method in ("screen_shoot", "print_camera", "combined_physical"):
+            attack = get_attack_catalog_item(method)
+            self.assertEqual(attack["category"], "physical_channel_attacks")
+            self.assertEqual(attack["strengthParam"], "strength")
+            self.assertEqual(attack["strengths"], [0.0, 0.5, 1.0])
+            self.assertFalse(attack["requiresGpu"])
+
+        self.assertNotIn("screen_shoot_mild", exposed_methods)
+        self.assertNotIn("screen_shoot_strong_uncorrected", exposed_methods)
+        self.assertNotIn("print_camera_strong", exposed_methods)
+        self.assertNotIn("combined_physical_strong", exposed_methods)
+
+    def test_identity_attack_is_not_grouped_as_distortion(self) -> None:
+        identity = get_attack_catalog_item("identity")
+
+        self.assertEqual(identity["category"], "identity")
+        self.assertEqual(identity["categoryLabel"], "Identity")
+        self.assertEqual(identity["strengthParam"], None)
+        self.assertEqual(identity["strengths"], [0.0])
+
+    def test_legacy_attack_presets_are_hidden_from_frontend_catalog(self) -> None:
+        resources = list_attack_resources()
+        exposed_ids = {item["id"] for item in resources}
+
+        self.assertNotIn("atk-jpeg-smoke", exposed_ids)
+        self.assertNotIn("atk-blur-smoke", exposed_ids)
+        self.assertNotIn("atk-jpeg-sweep", exposed_ids)
+        self.assertNotIn("atk-blur-sweep", exposed_ids)
+        self.assertNotIn("atk-crop-sweep", exposed_ids)
+        self.assertEqual(get_attack_catalog_item("atk-jpeg-smoke")["id"], "atk-jpeg")
+        self.assertEqual(get_attack_catalog_item("atk-blur-sweep")["id"], "atk-gaussian-blur")
 
     def test_strength_is_only_injected_for_compatible_attacks(self) -> None:
         jpeg = get_attack_catalog_item("atk-jpeg")
@@ -116,10 +193,124 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(_attack_params(cew_sr, 4.0), {"scale": 4})
         self.assertEqual(_attack_params(get_attack_catalog_item("image_to_vedio"), 40.0), {"xy": 40})
         self.assertEqual(_attack_params(get_attack_catalog_item("noise_to_image"), 0.75), {"step": 0.75})
+        self.assertEqual(_attack_params(get_attack_catalog_item("2x_regen"), 1.0), {"strength": 1.0})
+        self.assertEqual(_attack_params(get_attack_catalog_item("4x_regen"), 0.0), {"strength": 0.0})
+        self.assertEqual(_attack_params(get_attack_catalog_item("screen_shoot"), 0.5), {"strength": 0.5})
+        self.assertEqual(_attack_params(get_attack_catalog_item("combined_physical"), 1.0), {"strength": 1.0})
         self.assertEqual(
-            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering"), 0.02),
-            {"max_disparity": 0.02},
+            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering_phase0_point"), 1.0),
+            {"strength": 1.0},
         )
+
+    def test_attack_strength_overrides_are_used_by_runner(self) -> None:
+        attack_id = "atk-3d-viewpoint-rerendering-phase0-point"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normalized = normalize_selection(
+                {
+                    "datasetIds": ["demo"],
+                    "algorithmIds": ["alg-traditional-lsb"],
+                    "attackPresetIds": [attack_id],
+                    "attackStrengthOverrides": {
+                        attack_id: [1.0, "0", 1.0, "bad", float("nan")],
+                        "atk-identity": [0.0],
+                    },
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+                Path(tmpdir),
+            )
+
+        attack = get_attack_catalog_item(attack_id)
+        self.assertEqual(normalized["attackStrengthOverrides"], {attack_id: [0.0, 1.0]})
+        self.assertEqual(_strengths_for_attack(normalized, attack_id, attack), [0.0, 1.0])
+        self.assertEqual(
+            _strengths_for_attack({"attackStrengthOverrides": {}}, attack_id, attack),
+            [0.0, 0.5, 1.0],
+        )
+
+    def test_attack_strength_overrides_are_used_by_estimator(self) -> None:
+        attack_id = "atk-3d-viewpoint-rerendering-phase0-point"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resources_root = Path(tmpdir)
+            dataset_dir = resources_root / "datasets" / "demo"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (16, 16), (80, 120, 160)).save(dataset_dir / "sample.png")
+
+            estimate = estimate_selection(
+                {
+                    "datasetIds": ["demo"],
+                    "algorithmIds": ["alg-traditional-lsb"],
+                    "attackPresetIds": [attack_id],
+                    "attackStrengthOverrides": {attack_id: [0.0, 1.0]},
+                    "seeds": [42, 123],
+                    "maxSamples": 1,
+                },
+                resources_root,
+            )
+
+        self.assertEqual(estimate["cellCount"], 4)
+        self.assertEqual(estimate["sampleCount"], 1)
+        self.assertEqual(estimate["imageOperationCount"], 4)
+
+    def test_attack_param_overrides_are_used_by_regeneration_variants(self) -> None:
+        attack_id = "atk-regen-vae"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normalized = normalize_selection(
+                {
+                    "datasetIds": ["demo"],
+                    "algorithmIds": ["alg-traditional-lsb"],
+                    "attackPresetIds": [attack_id],
+                    "attackParamOverrides": {
+                        attack_id: [
+                            {"vae_model_name": "cheng2020-anchor", "quality": 1},
+                            {"vae_model_name": "cheng2020-anchor", "quality": 3},
+                            {"quality": float("nan")},
+                            {"unknown": None},
+                        ],
+                    },
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+                Path(tmpdir),
+            )
+
+        attack = get_attack_catalog_item(attack_id)
+        variants = _attack_variants_for_attack(normalized, attack_id, attack)
+        self.assertEqual(
+            normalized["attackParamOverrides"],
+            {
+                attack_id: [
+                    {"vae_model_name": "cheng2020-anchor", "quality": 1},
+                    {"vae_model_name": "cheng2020-anchor", "quality": 3},
+                ]
+            },
+        )
+        self.assertEqual(len(variants), 2)
+        self.assertEqual(variants[0][1], {"vae_model_name": "cheng2020-anchor", "quality": 1})
+        self.assertEqual(variants[1][1], {"vae_model_name": "cheng2020-anchor", "quality": 3})
+
+    def test_xy_strength_overrides_are_used_by_regeneration_estimator(self) -> None:
+        attack_id = "atk-image-to-vedio"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resources_root = Path(tmpdir)
+            dataset_dir = resources_root / "datasets" / "demo"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (16, 16), (80, 120, 160)).save(dataset_dir / "sample.png")
+
+            estimate = estimate_selection(
+                {
+                    "datasetIds": ["demo"],
+                    "algorithmIds": ["alg-traditional-lsb"],
+                    "attackPresetIds": [attack_id],
+                    "attackStrengthOverrides": {attack_id: [0, 10, 20, 30, 40, 60]},
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+                resources_root,
+            )
+
+        self.assertEqual(estimate["cellCount"], 6)
+        self.assertEqual(_attack_params(get_attack_catalog_item(attack_id), 10.0), {"xy": 10})
 
 
 if __name__ == "__main__":

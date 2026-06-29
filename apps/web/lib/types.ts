@@ -140,6 +140,8 @@ export interface ExperimentSelection {
   datasetIds: string[];
   algorithmIds: string[];
   attackPresetIds: string[];
+  attackStrengthOverrides?: Record<string, number[]>;
+  attackParamOverrides?: Record<string, Array<Record<string, unknown>>>;
   seeds: number[];
   maxSamples: number;
 }

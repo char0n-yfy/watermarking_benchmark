@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 class ExperimentSelectionPayload(BaseModel):
     datasetIds: list[str] = Field(default_factory=list)
     algorithmIds: list[str] = Field(default_factory=lambda: ["alg-traditional-lsb"])
-    attackPresetIds: list[str] = Field(default_factory=lambda: ["atk-identity", "atk-jpeg-smoke"])
+    attackPresetIds: list[str] = Field(default_factory=lambda: ["atk-identity", "atk-jpeg"])
+    attackStrengthOverrides: dict[str, list[float]] = Field(default_factory=dict)
+    attackParamOverrides: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     seeds: list[int] = Field(default_factory=lambda: [42])
     maxSamples: int = 1
 
