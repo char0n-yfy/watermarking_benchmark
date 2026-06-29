@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ class DatasetCatalogEntry:
     official_total_images: int | None = None
     manifest_url: str | None = None
     compact_uses_root: bool = False
+    aliases: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -89,15 +91,16 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         official_total_images=100_000,
     ),
     DatasetCatalogEntry(
-        id="4k-benchmark",
-        name="4K Benchmark Images",
-        name_zh="4K Benchmark Images",
+        id="clic",
+        name="CLIC",
+        name_zh="CLIC",
         category="hd-copyright",
         category_zh="高清版权图",
-        description="4KLSDB is a native-4K image dataset for high-resolution restoration and text-to-image generation research.",
-        description_zh="4KLSDB 原生 4K 图像数据集，面向高分辨率修复与文生图生成研究。",
-        source_url="https://4klsdb.github.io/",
-        official_total_images=133_468,
+        description="CLIC provides high-quality photographic images for learned image compression and high-fidelity restoration research.",
+        description_zh="CLIC 提供高质量摄影图像，常用于学习式图像压缩与高保真图像恢复研究。",
+        source_url="https://clic.compression.cc/",
+        official_total_images=1_633,
+        aliases=("4k-benchmark", "4K Benchmark Images", "4KLSDB"),
     ),
     DatasetCatalogEntry(
         id="flickr2k",
@@ -155,15 +158,16 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         official_total_images=360_000,
     ),
     DatasetCatalogEntry(
-        id="shopee-product-matching",
-        name="Shopee Product Matching",
-        name_zh="Shopee Product Matching",
+        id="abo",
+        name="ABO (Amazon Berkeley Objects)",
+        name_zh="ABO (Amazon Berkeley Objects)",
         category="ecommerce",
         category_zh="电商版权保护",
-        description="Kaggle Shopee Product Matching provides e-commerce product photos for duplicate-listing and copyright detection.",
-        description_zh="Kaggle 虾皮商品匹配赛数据集，面向电商同款识别与版权保护场景。",
-        source_url="https://www.kaggle.com/c/shopee-product-matching/data",
-        official_total_images=51_000,
+        description="ABO contains Amazon product listings, catalog images, and object metadata for e-commerce recognition and protection.",
+        description_zh="ABO 收录 Amazon 商品条目、目录图像和物体元数据，面向电商识别与版权保护场景。",
+        source_url="https://amazon-berkeley-objects.s3.amazonaws.com/index.html",
+        official_total_images=398_212,
+        aliases=("shopee-product-matching", "Shopee Product Matching", "Amazon Berkeley Objects"),
     ),
     DatasetCatalogEntry(
         id="products-10k",
@@ -188,28 +192,71 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         official_total_images=66_000,
     ),
     DatasetCatalogEntry(
-        id="mobileviews",
-        name="MobileViews",
-        name_zh="MobileViews",
+        id="amex",
+        name="AMEX",
+        name_zh="AMEX",
         category="mobile-ui",
         category_zh="移动端截图和 UI 内容保护",
-        description="MobileViews is a large-scale Android GUI dataset with screenshot–view-hierarchy pairs for mobile agents.",
-        description_zh="MobileViews 是大规模 Android GUI 截图与视图层级配对数据集，面向移动端智能体研究。",
-        source_url="https://huggingface.co/datasets/mllmTeam/MobileViews",
-        official_total_images=1_200_000,
+        description="AMEX is used here as a mobile screenshot and UI-content dataset for mobile interface protection experiments.",
+        description_zh="AMEX 在本基准中作为移动端截图和 UI 内容数据集，用于移动界面内容保护实验。",
+        source_url="",
+        official_total_images=None,
+        aliases=("mobileviews", "MobileViews"),
     ),
 )
 
 
+def normalize_dataset_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def dataset_aliases(entry: DatasetCatalogEntry) -> set[str]:
+    aliases = {
+        entry.id,
+        entry.name,
+        entry.name_zh,
+        *entry.aliases,
+        entry.id.replace("-", " "),
+        entry.id.replace("-", "_"),
+    }
+    return {normalize_dataset_key(alias) for alias in aliases if alias}
+
+
 def get_catalog_entry(dataset_id: str) -> DatasetCatalogEntry:
+    normalized = normalize_dataset_key(dataset_id)
     for entry in DATASET_CATALOG:
-        if entry.id == dataset_id:
+        if entry.id == dataset_id or normalized in dataset_aliases(entry):
             return entry
     raise KeyError(f"Unknown dataset catalog id: {dataset_id}")
 
 
 def dataset_root(resources_root: Path, dataset_id: str) -> Path:
-    return resources_root / "datasets" / dataset_id
+    try:
+        return dataset_root_for_entry(resources_root, get_catalog_entry(dataset_id))
+    except KeyError:
+        return resources_root / "datasets" / dataset_id
+
+
+def dataset_root_for_entry(resources_root: Path, entry: DatasetCatalogEntry) -> Path:
+    datasets_root = resources_root / "datasets"
+    aliases = dataset_aliases(entry)
+    if datasets_root.exists():
+        children = sorted(path for path in datasets_root.iterdir() if path.is_dir())
+        for preferred_name in (entry.name, entry.name_zh, entry.id):
+            for child in children:
+                if child.name == preferred_name:
+                    return child
+        for child in children:
+            if normalize_dataset_key(child.name) in aliases:
+                return child
+    return datasets_root / entry.id
+
+
+def local_dataset_ids_for_catalog() -> set[str]:
+    ids: set[str] = set()
+    for entry in DATASET_CATALOG:
+        ids.update(dataset_aliases(entry))
+    return ids
 
 
 def compact_dir(resources_root: Path, dataset_id: str, *, compact_uses_root: bool = False) -> Path:
@@ -217,6 +264,8 @@ def compact_dir(resources_root: Path, dataset_id: str, *, compact_uses_root: boo
     compact = root / "compact"
     if compact.exists() and any(compact.iterdir()):
         return compact
+    if root.exists() and iter_image_paths(root):
+        return root
     if compact_uses_root and root.exists():
         return root
     return compact
@@ -318,10 +367,14 @@ def build_catalog_item(
     manifest_configured = entry.manifest_url is not None or remote_manifest
     custom_ready = manifest_configured or local["customPoolCount"] > 0
     compact_available = local["compactAvailable"] or remote_compact
+    compact_sample_count = local["compactSampleCount"]
+    if compact_sample_count == 0 and remote_compact:
+        compact_sample_count = COMPACT_SAMPLE_COUNT
     return {
         **entry.to_json(),
         **local,
         "compactAvailable": compact_available,
+        "compactSampleCount": compact_sample_count,
         "customDownloadReady": custom_ready,
         "remoteManifestConfigured": manifest_configured,
         "remoteCompactAvailable": remote_compact,
@@ -350,11 +403,16 @@ def list_dataset_catalog(
         for entry in DATASET_CATALOG
     ]
     scanned_ids = {item["id"] for item in items}
+    scanned_local_names = local_dataset_ids_for_catalog()
 
     datasets_root = resources_root / "datasets"
     if datasets_root.exists():
         for child in sorted(datasets_root.iterdir()):
-            if not child.is_dir() or child.name in scanned_ids:
+            if (
+                not child.is_dir()
+                or child.name in scanned_ids
+                or normalize_dataset_key(child.name) in scanned_local_names
+            ):
                 continue
             images = iter_image_paths(child)
             if not images:

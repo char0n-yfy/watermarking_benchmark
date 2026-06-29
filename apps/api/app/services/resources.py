@@ -43,6 +43,21 @@ def iter_image_paths(input_dir: Path) -> list[Path]:
     )
 
 
+def _dataset_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _dataset_resource_from_catalog_item(item: dict[str, Any]) -> DatasetResource:
+    sample_count = item["compactSampleCount"] if item["compactAvailable"] else item["fullSampleCount"]
+    return DatasetResource(
+        id=str(item["id"]),
+        name=str(item["name"]),
+        sample_count=int(sample_count),
+        version="local" if item["installed"] else "catalog",
+        path=Path(str(item["rootPath"])),
+    )
+
+
 def scan_dataset_resources(resources_root: Path) -> list[DatasetResource]:
     datasets_root = resources_root / "datasets"
     if not datasets_root.exists():
@@ -53,7 +68,6 @@ def scan_dataset_resources(resources_root: Path) -> list[DatasetResource]:
         for path in datasets_root.iterdir()
         if path.is_file() and path.suffix.lower() in IMAGE_EXTS
     )
-    children = sorted(path for path in datasets_root.iterdir() if path.is_dir())
     resources: list[DatasetResource] = []
 
     if direct_images:
@@ -67,26 +81,35 @@ def scan_dataset_resources(resources_root: Path) -> list[DatasetResource]:
             )
         )
 
-    for child in children:
-        images = iter_image_paths(child)
-        if not images:
-            continue
-        resources.append(
-            DatasetResource(
-                id=child.name,
-                name=child.name.replace("_", " ").replace("-", " ").title(),
-                sample_count=len(images),
-                version="local",
-                path=child,
-            )
-        )
+    from app.services.dataset_catalog import list_dataset_catalog
 
+    resources.extend(
+        _dataset_resource_from_catalog_item(item)
+        for item in list_dataset_catalog(resources_root)
+        if item["installed"]
+    )
     return resources
 
 
 def get_dataset_by_id(resources_root: Path, dataset_id: str) -> DatasetResource:
+    normalized = _dataset_key(dataset_id)
+    canonical_id = dataset_id
+    try:
+        from app.services.dataset_catalog import get_catalog_entry
+
+        canonical_id = get_catalog_entry(dataset_id).id
+    except (ImportError, KeyError):
+        pass
+
     for dataset in scan_dataset_resources(resources_root):
-        if dataset.id == dataset_id:
+        if (
+            dataset.id == dataset_id
+            or dataset.id == canonical_id
+            or dataset.name == dataset_id
+            or dataset.path.name == dataset_id
+            or _dataset_key(dataset.name) == normalized
+            or _dataset_key(dataset.path.name) == normalized
+        ):
             return dataset
     raise KeyError(f"Unknown dataset id: {dataset_id}")
 

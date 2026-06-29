@@ -1654,8 +1654,9 @@ a.button {
 
 .resource-type-button.active,
 .resource-row.active {
-  border-color: rgb(15 118 110 / 28%);
-  background: var(--teal-soft);
+  border-color: rgba(47, 125, 104, 0.46);
+  background: linear-gradient(180deg, #ffffff, #f2f8f5);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .resource-type-button.active svg {
@@ -1744,6 +1745,15 @@ a.button {
   align-items: center;
   min-height: 58px;
   padding: 10px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.resource-row:hover {
+  border-color: rgba(56, 95, 140, 0.42);
+  background: #fff;
 }
 
 .resource-row-main {
@@ -1901,11 +1911,30 @@ a.button {
 }
 
 .dataset-category-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: 4px;
-  color: var(--teal);
+  border-top: 1px solid #e7ece6;
+  padding-top: 8px;
+  color: var(--accent-strong);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.02em;
+}
+
+.dataset-category-heading span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dataset-category-heading strong {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--steel-soft);
+  color: var(--steel);
+  padding: 2px 7px;
+  font-size: 11px;
 }
 
 .dataset-pool-summary {

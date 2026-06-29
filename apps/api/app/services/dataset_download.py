@@ -16,6 +16,7 @@ import httpx
 from app.services.dataset_catalog import (
     COMPACT_SAMPLE_COUNT,
     compact_dir,
+    dataset_root,
     full_dir,
     get_catalog_entry,
 )
@@ -255,12 +256,13 @@ class DatasetDownloadService:
 
     def _install_dir(self, job: DatasetDownloadJob) -> Path:
         entry = get_catalog_entry(job.dataset_id)
-        dataset_root = self.resources_root / "datasets" / job.dataset_id
+        root = dataset_root(self.resources_root, job.dataset_id)
         if job.mode == "compact":
-            if entry.compact_uses_root:
-                return dataset_root
-            return dataset_root / "compact"
-        return dataset_root / "custom" / f"seed{job.seed}_{job.sample_count}"
+            source = compact_dir(self.resources_root, job.dataset_id, compact_uses_root=entry.compact_uses_root)
+            if entry.compact_uses_root or source == root:
+                return root
+            return root / "compact"
+        return root / "custom" / f"seed{job.seed}_{job.sample_count}"
 
     def _finalize_from_archive(self, job: DatasetDownloadJob, archive_path: Path) -> None:
         install_dir = self._install_dir(job)
@@ -539,4 +541,3 @@ class DatasetDownloadService:
                         if chunk:
                             handle.write(chunk)
                             job.bytes_downloaded += len(chunk)
-

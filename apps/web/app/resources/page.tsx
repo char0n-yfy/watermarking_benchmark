@@ -51,6 +51,139 @@ interface BrowserResource {
 }
 
 const DEFAULT_RESOURCE_PAGE_SIZE = 8;
+const HIDDEN_RESOURCE_ATTACK_METHODS = new Set(["identity"]);
+const DATASET_CATEGORY_ORDER: Record<string, number> = {
+  "natural-benchmark": 10,
+  aigc: 20,
+  "hd-copyright": 30,
+  "open-world": 40,
+  document: 50,
+  ecommerce: 60,
+  "mobile-ui": 70,
+  local: 90
+};
+const DATASET_METHOD_ORDER: Record<string, number> = {
+  "ms-coco": 10,
+  imagenet: 11,
+  diffusiondb: 20,
+  "w-bench": 21,
+  clic: 30,
+  flickr2k: 31,
+  "openimages-v7": 40,
+  "mapillary-vistas": 41,
+  doclaynet: 50,
+  publaynet: 51,
+  abo: 60,
+  "products-10k": 61,
+  rico: 70,
+  amex: 71
+};
+const WATERMARK_CATEGORY_ORDER: Record<string, number> = {
+  traditional_watermark: 10,
+  deep_watermark: 20
+};
+const ATTACK_CATEGORY_ORDER: Record<string, number> = {
+  distortion_attacks: 10,
+  physical_channel_attacks: 20,
+  "3d_viewpoint_rerendering": 30,
+  regeneration_attacks: 40,
+  consumer_enhancement_workflow_attacks: 50
+};
+const ATTACK_METHOD_ORDER: Record<string, number> = {
+  brightness: 10,
+  contrast: 11,
+  gaussian_blur: 12,
+  gaussian_noise: 13,
+  jpeg: 14,
+  resize: 15,
+  resized_crop: 16,
+  rotation: 17,
+  erasing: 18,
+  screen_shoot: 20,
+  print_camera: 21,
+  combined_physical: 22,
+  "2x_regen": 40,
+  "4x_regen": 41,
+  regen_diffusion: 42,
+  noise_to_image: 43,
+  regen_vae: 44,
+  image_to_vedio: 45,
+  cew_e1: 50,
+  cew_e2: 51,
+  cew_e3: 52,
+  cew_e4: 53,
+  cew_c1: 54,
+  cew_c2: 55,
+  cew_c3: 56,
+  cew_c4: 57,
+  cew_d1: 58,
+  cew_d2: 59,
+  cew_d3: 60,
+  cew_d4: 61,
+  cew_d5: 62,
+  cew_s1: 63,
+  cew_s2: 64,
+  cew_s3: 65
+};
+const WATERMARK_METHOD_ORDER: Record<string, number> = {
+  "invisible-watermark-dwtdct": 10,
+  "invisible-watermark-dwtdctsvd": 11,
+  hidden: 30,
+  stegastamp: 31,
+  "ssl-watermarking": 32,
+  mbrs: 33,
+  cin: 34,
+  pimog: 35,
+  invismark: 36,
+  "invisible-watermark-rivagan": 37,
+  trustmark: 38,
+  "trustmark-c": 39,
+  "trustmark-q": 40,
+  rawatermark: 41,
+  "maskwm-d32": 42,
+  wam: 43,
+  videoseal: 60,
+  pixelseal: 61,
+  chunkyseal: 62,
+  vine: 70
+};
+const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
+  brightness: { en: "Brightness", zh: "亮度调整" },
+  contrast: { en: "Contrast", zh: "对比度调整" },
+  gaussian_blur: { en: "Gaussian Blur", zh: "高斯模糊" },
+  gaussian_noise: { en: "Gaussian Noise", zh: "高斯噪声" },
+  jpeg: { en: "JPEG Compression", zh: "JPEG 压缩" },
+  resize: { en: "Resize", zh: "缩放" },
+  resized_crop: { en: "Resized Crop", zh: "缩放裁剪" },
+  rotation: { en: "Rotation", zh: "旋转" },
+  erasing: { en: "Random Erasing", zh: "区域擦除" },
+  screen_shoot: { en: "PIMoG-style Screen-Camera", zh: "屏幕-拍摄信道" },
+  print_camera: { en: "CamMark-style Print-Camera", zh: "打印-拍摄信道" },
+  combined_physical: { en: "Combined Physical Channel", zh: "组合物理信道" },
+  "2x_regen": { en: "2-pass Diffusion Regeneration", zh: "2轮扩散再生成" },
+  "4x_regen": { en: "4-pass Diffusion Regeneration", zh: "4轮扩散再生成" },
+  regen_diffusion: { en: "WAVES Diffusion Regeneration", zh: "扩散再生成" },
+  noise_to_image: { en: "CtrlRegen Noise-to-Image", zh: "噪声到图像再生成" },
+  regen_vae: { en: "CompressAI VAE Reconstruction", zh: "VAE 再生成" },
+  image_to_vedio: { en: "NFPA Image-to-Video", zh: "图像到视频再生成" },
+  cew_e1: { en: "CEW-E1 Auto-Tone", zh: "CEW-E1 自动色调" },
+  cew_e2: { en: "CEW-E2 Warm-Vivid", zh: "CEW-E2 暖色鲜艳" },
+  cew_e3: { en: "CEW-E3 Film-Faded", zh: "CEW-E3 胶片褪色" },
+  cew_e4: { en: "CEW-E4 Local-Clarity HDR", zh: "CEW-E4 局部清晰 HDR" },
+  cew_c1: { en: "CEW-C1 Basic Auto-Fix SR", zh: "CEW-C1 自动修复+超分" },
+  cew_c2: { en: "CEW-C2 Color Retouch SR", zh: "CEW-C2 色彩修饰+超分" },
+  cew_c3: { en: "CEW-C3 Detail Enhance SR", zh: "CEW-C3 细节增强+超分" },
+  cew_c4: { en: "CEW-C4 Full Enhancement Chain", zh: "CEW-C4 完整增强链" },
+  cew_d1: { en: "CEW-D1 Zero-DCE++ Auto-Light", zh: "CEW-D1 自动补光" },
+  cew_d2: { en: "CEW-D2 DeepWB Auto-WhiteBalance", zh: "CEW-D2 自动白平衡" },
+  cew_d3: { en: "CEW-D3 Image-Adaptive 3D LUT", zh: "CEW-D3 自适应 AI 色彩" },
+  cew_d4: { en: "CEW-D4 Retinexformer Detail Low-Light Enhance", zh: "CEW-D4 低光细节增强" },
+  cew_d5: { en: "CEW-D5 NAFNet/Restormer AI-Denoise", zh: "CEW-D5 AI 去噪" },
+  cew_s1: { en: "CEW-S1 Real-ESRGAN", zh: "CEW-S1 Real-ESRGAN" },
+  cew_s2: { en: "CEW-S2 SwinIR", zh: "CEW-S2 SwinIR" },
+  cew_s3: { en: "CEW-S3 BSRGAN", zh: "CEW-S3 BSRGAN" }
+};
+const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_phase(\d+)_(point|ahead)$/;
 
 function getResponsiveResourcePageSize(width: number, height: number): number {
   if (width >= 1680 && height >= 950) {
@@ -82,6 +215,63 @@ function useResponsiveResourcePageSize(): number {
   }, []);
 
   return pageSize;
+}
+
+function compareText(left: string, right: string) {
+  return left.localeCompare(right, undefined, { numeric: true });
+}
+
+function compareResources(left: BrowserResource, right: BrowserResource) {
+  const categoryDelta = categoryRank(left.type, left.category) - categoryRank(right.type, right.category);
+  if (categoryDelta !== 0) {
+    return categoryDelta;
+  }
+  const itemDelta = resourceRank(left) - resourceRank(right);
+  if (itemDelta !== 0) {
+    return itemDelta;
+  }
+  return compareText(left.name, right.name);
+}
+
+function categoryRank(type: ResourceType, category: string) {
+  if (type === "datasets") {
+    return DATASET_CATEGORY_ORDER[category] ?? 90;
+  }
+  if (type === "watermarks") {
+    return WATERMARK_CATEGORY_ORDER[category] ?? 90;
+  }
+  if (type === "attacks") {
+    return ATTACK_CATEGORY_ORDER[category] ?? 90;
+  }
+  return 0;
+}
+
+function resourceRank(resource: BrowserResource) {
+  if (resource.type === "datasets") {
+    return DATASET_METHOD_ORDER[resource.id] ?? 90;
+  }
+  if (resource.type === "watermarks") {
+    return WATERMARK_METHOD_ORDER[resource.method ?? ""] ?? 90;
+  }
+  if (resource.type === "attacks") {
+    const parsed = parseViewpointMethod(resource.method ?? "");
+    if (parsed) {
+      return 30 + parsed.phaseIndex * 2 + (parsed.lookatMode === "point" ? 0 : 1);
+    }
+    return ATTACK_METHOD_ORDER[resource.method ?? ""] ?? 90;
+  }
+  return 0;
+}
+
+function parseViewpointMethod(method: string) {
+  const match = VIEWPOINT_METHOD_PATTERN.exec(method);
+  if (!match) {
+    return null;
+  }
+  return {
+    phaseIndex: Number(match[1]),
+    lookatMode: match[2]
+  };
 }
 
 export default function ResourcesPage() {
@@ -168,9 +358,12 @@ export default function ResourcesPage() {
 
   const resourceGroups = useMemo(
     () => ({
-      datasets: catalogItems.map((item) => catalogToResource(item, language)),
-      watermarks: algorithms.map((algorithm) => algorithmToResource(algorithm, language)),
-      attacks: attacks.map((attack) => attackToResource(attack, language))
+      datasets: catalogItems.map((item) => catalogToResource(item, language)).sort(compareResources),
+      watermarks: algorithms.map((algorithm) => algorithmToResource(algorithm, language)).sort(compareResources),
+      attacks: attacks
+        .filter((attack) => !HIDDEN_RESOURCE_ATTACK_METHODS.has(attack.method))
+        .map((attack) => attackToResource(attack, language))
+        .sort(compareResources)
     }),
     [algorithms, attacks, catalogItems, language]
   );
@@ -184,10 +377,13 @@ export default function ResourcesPage() {
     return [
       { value: "all", label: t.resources.allResources },
       ...Array.from(labels.entries())
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => {
+          const rankDelta = categoryRank(activeType, left) - categoryRank(activeType, right);
+          return rankDelta !== 0 ? rankDelta : compareText(left, right);
+        })
         .map(([value, label]) => ({ value, label }))
     ];
-  }, [activeResources, t.resources.allResources]);
+  }, [activeResources, activeType, t.resources.allResources]);
 
   const filteredResources = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -208,23 +404,7 @@ export default function ResourcesPage() {
   const usesPagination = pageCount > 1;
   const visibleResources = filteredResources.slice((page - 1) * pageSize, page * pageSize);
 
-  const groupedDatasetResources = useMemo(() => {
-    if (activeType !== "datasets") {
-      return null;
-    }
-    const groups = new Map<string, BrowserResource[]>();
-    for (const resource of visibleResources) {
-      const bucket = groups.get(resource.category) ?? [];
-      bucket.push(resource);
-      groups.set(resource.category, bucket);
-    }
-    return Array.from(groups.entries());
-  }, [activeType, visibleResources]);
-
-  const groupedAttackResources = useMemo(() => {
-    if (activeType !== "attacks") {
-      return null;
-    }
+  const groupedResources = useMemo(() => {
     const groups = new Map<string, { label: string; resources: BrowserResource[] }>();
     for (const resource of visibleResources) {
       const current = groups.get(resource.category) ?? {
@@ -234,12 +414,45 @@ export default function ResourcesPage() {
       current.resources.push(resource);
       groups.set(resource.category, current);
     }
-    return Array.from(groups.entries()).map(([category, group]) => ({ category, ...group }));
+    return Array.from(groups.entries())
+      .map(([category, group]) => ({ category, ...group }))
+      .sort((left, right) => {
+        const rankDelta = categoryRank(activeType, left.category) - categoryRank(activeType, right.category);
+        return rankDelta !== 0 ? rankDelta : compareText(left.label, right.label);
+      });
   }, [activeType, visibleResources]);
 
   const selectedResource =
     visibleResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null;
   const totalSamples = datasets.reduce((total, dataset) => total + dataset.sampleCount, 0);
+  const renderResourceRow = (resource: BrowserResource) => (
+    <button
+      className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
+      key={resource.id}
+      onClick={() => setSelectedResourceId(resource.id)}
+      type="button"
+    >
+      <span className="resource-row-main">
+        <strong>{resource.name}</strong>
+        <small>{resource.subtitle}</small>
+      </span>
+      <span className="resource-row-meta">
+        {resource.type === "datasets" ? (
+          resource.catalog?.installed ? (
+            <span className="badge ok">{t.resources.installed}</span>
+          ) : (
+            <span className="badge">{t.resources.notInstalled}</span>
+          )
+        ) : (
+          <>
+            {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+            {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
+            <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
+          </>
+        )}
+      </span>
+    </button>
+  );
 
   useEffect(() => {
     setCategoryFilter("all");
@@ -308,8 +521,8 @@ export default function ResourcesPage() {
 
       <section className="resource-summary-grid">
         <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
-        <SummaryCard icon={Shield} label={t.console.algorithms} value={algorithms.length.toString()} meta={countByGpu(algorithms)} />
-        <SummaryCard icon={Gauge} label={t.console.attacks} value={attacks.length.toString()} meta={countByGpu(attacks)} />
+        <SummaryCard icon={Shield} label={t.console.algorithms} value={resourceGroups.watermarks.length.toString()} meta={countByGpu(resourceGroups.watermarks)} />
+        <SummaryCard icon={Gauge} label={t.console.attacks} value={resourceGroups.attacks.length.toString()} meta={countByGpu(resourceGroups.attacks)} />
       </section>
 
       <section className="resources-browser-grid">
@@ -415,82 +628,19 @@ export default function ResourcesPage() {
                 {t.resources.showingResults}: {visibleResources.length} / {filteredResources.length}
               </span>
             </div>
-            {activeType === "datasets" && groupedDatasetResources ? (
+            {groupedResources.length > 0 ? (
               <div className="resource-page-list">
-                {groupedDatasetResources.map(([category, resources]) => (
-                  <div className="dataset-category-group" key={category}>
-                    <div className="dataset-category-heading">{category}</div>
-                    {resources.map((resource) => (
-                      <button
-                        className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
-                        key={resource.id}
-                        onClick={() => setSelectedResourceId(resource.id)}
-                        type="button"
-                      >
-                        <span className="resource-row-main">
-                          <strong>{resource.name}</strong>
-                          <small>{resource.subtitle}</small>
-                        </span>
-                        <span className="resource-row-meta">
-                          {resource.catalog?.installed ? (
-                            <span className="badge ok">{t.resources.installed}</span>
-                          ) : (
-                            <span className="badge">{t.resources.notInstalled}</span>
-                          )}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ) : activeType === "attacks" && groupedAttackResources ? (
-              <div className="resource-page-list">
-                {groupedAttackResources.map((group) => (
+                {groupedResources.map((group) => (
                   <div className="dataset-category-group" key={group.category}>
-                    <div className="dataset-category-heading">{group.label}</div>
-                    {group.resources.map((resource) => (
-                      <button
-                        className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
-                        key={resource.id}
-                        onClick={() => setSelectedResourceId(resource.id)}
-                        type="button"
-                      >
-                        <span className="resource-row-main">
-                          <strong>{resource.name}</strong>
-                          <small>{resource.subtitle}</small>
-                        </span>
-                        <span className="resource-row-meta">
-                          {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                          {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
-                          <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
-                        </span>
-                      </button>
-                    ))}
+                    <div className="dataset-category-heading">
+                      <span>{group.label}</span>
+                      <strong>{group.resources.length}</strong>
+                    </div>
+                    {group.resources.map(renderResourceRow)}
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="resource-page-list">
-                {visibleResources.map((resource) => (
-                  <button
-                    className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
-                    key={resource.id}
-                    onClick={() => setSelectedResourceId(resource.id)}
-                    type="button"
-                  >
-                    <span className="resource-row-main">
-                      <strong>{resource.name}</strong>
-                      <small>{resource.subtitle}</small>
-                    </span>
-                    <span className="resource-row-meta">
-                      {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                      {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
-                      <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            ) : null}
             {filteredResources.length === 0 ? (
               <div className="empty compact-empty">
                 {catalogLoading && activeType === "datasets" ? t.resources.catalogLoading : t.common.noData}
@@ -681,14 +831,15 @@ function formatDatasetSubtitle(item: DatasetCatalogItem, language: "zh" | "en"):
 function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): BrowserResource {
   const displayName = language === "zh" ? item.nameZh : item.name;
   const description = language === "zh" ? item.descriptionZh : item.description;
-  const category = language === "zh" ? item.categoryZh : item.category;
+  const categoryLabel = language === "zh" ? item.categoryZh : item.category;
   const sampleCount = item.compactAvailable ? item.compactSampleCount : item.fullSampleCount;
   return {
     id: item.id,
     type: "datasets",
     name: displayName,
     subtitle: formatDatasetSubtitle(item, language),
-    category,
+    category: item.category,
+    categoryLabel,
     status: item.installed ? "enabled" : "reviewed",
     statusTone: item.installed ? "ok" : "warn",
     available: true,
@@ -1019,6 +1170,33 @@ function watermarkCategoryLabel(category: string, language: "zh" | "en") {
   return labels[category as keyof typeof labels] ?? category;
 }
 
+function algorithmDisplayName(algorithm: AlgorithmVersion) {
+  return algorithm.name;
+}
+
+function algorithmSubtitle(algorithm: AlgorithmVersion, categoryLabel: string) {
+  return `${algorithm.method ?? algorithm.id} · ${categoryLabel}`;
+}
+
+function isAsciiText(value: string) {
+  return /^[\x00-\x7F]+$/.test(value.trim());
+}
+
+function englishSubtitleForTitle(language: "zh" | "en", title: string, englishName: string | undefined) {
+  const normalizedTitle = title.trim();
+  const normalizedEnglish = englishName?.trim();
+  if (
+    language !== "zh" ||
+    !normalizedEnglish ||
+    !normalizedTitle ||
+    isAsciiText(normalizedTitle) ||
+    normalizedTitle.toLowerCase() === normalizedEnglish.toLowerCase()
+  ) {
+    return null;
+  }
+  return normalizedEnglish;
+}
+
 function algorithmToResource(algorithm: AlgorithmVersion, language: "zh" | "en"): BrowserResource {
   const available = algorithm.available !== false && algorithm.status === "enabled";
   const needsWeights = algorithm.weightsPackRequired === true;
@@ -1028,8 +1206,8 @@ function algorithmToResource(algorithm: AlgorithmVersion, language: "zh" | "en")
   return {
     id: algorithm.id,
     type: "watermarks",
-    name: algorithm.name,
-    subtitle: `${algorithm.method ?? algorithm.id} · ${categoryLabel}`,
+    name: algorithmDisplayName(algorithm),
+    subtitle: algorithmSubtitle(algorithm, categoryLabel),
     category,
     categoryLabel,
     status: algorithm.status,
@@ -1045,19 +1223,88 @@ function algorithmToResource(algorithm: AlgorithmVersion, language: "zh" | "en")
   };
 }
 
+function normalizeAttackCategory(attack: AttackPreset) {
+  return attack.category ?? "attack";
+}
+
+function attackCategoryLabel(category: string, language: "zh" | "en") {
+  const zh: Record<string, string> = {
+    "3d_viewpoint_rerendering": "3D 视角重渲染",
+    consumer_enhancement_workflow_attacks: "消费级增强",
+    distortion_attacks: "经典失真",
+    physical_channel_attacks: "物理信道",
+    regeneration_attacks: "再生成"
+  };
+  const en: Record<string, string> = {
+    "3d_viewpoint_rerendering": "3D viewpoint re-rendering",
+    consumer_enhancement_workflow_attacks: "Consumer enhancement",
+    distortion_attacks: "Distortion",
+    physical_channel_attacks: "Physical channel",
+    regeneration_attacks: "Regeneration"
+  };
+  return (language === "zh" ? zh : en)[category] ?? category;
+}
+
+function attackDisplayName(attack: AttackPreset, language: "zh" | "en") {
+  const viewpointName = viewpointDisplayName(attack.method, language);
+  if (viewpointName) {
+    return viewpointName;
+  }
+  const display = ATTACK_DISPLAY_NAMES[attack.method];
+  if (display) {
+    return language === "zh" ? display.zh : display.en;
+  }
+  return localizedName(language, attack.id, attack.name);
+}
+
+function attackEnglishName(attack: AttackPreset) {
+  const viewpointName = viewpointDisplayName(attack.method, "en");
+  return viewpointName ?? ATTACK_DISPLAY_NAMES[attack.method]?.en ?? attack.name;
+}
+
+function viewpointDisplayName(method: string, language: "zh" | "en") {
+  const parsed = parseViewpointMethod(method);
+  if (!parsed) {
+    return null;
+  }
+  const mode = parsed.lookatMode === "point" ? "point" : "ahead";
+  return language === "zh"
+    ? `3D 视角 Phase ${parsed.phaseIndex} (${mode})`
+    : `3D Viewpoint Phase ${parsed.phaseIndex} (${mode})`;
+}
+
+function formatStrengthSummary(attack: AttackPreset, language: "zh" | "en") {
+  const count = attack.strengths.filter((strength) => Number.isFinite(strength)).length;
+  if (attack.strengthParam === "scale") {
+    return language === "zh" ? `${count} 个倍率` : `${count} scale${count === 1 ? "" : "s"}`;
+  }
+  if (attack.strengthParam === "xy") {
+    return language === "zh" ? `${count} 个 XY 档位` : `${count} XY level${count === 1 ? "" : "s"}`;
+  }
+  if (attack.strengthParam === "strength" || attack.strengthParam === "step") {
+    return language === "zh" ? `${count} 个强度档位` : `${count} strength level${count === 1 ? "" : "s"}`;
+  }
+  return language === "zh" ? "固定参数" : "fixed parameters";
+}
+
+function attackSubtitle(attack: AttackPreset, categoryLabel: string, language: "zh" | "en") {
+  const strengthSummary = formatStrengthSummary(attack, language);
+  const englishName = englishSubtitleForTitle(language, attackDisplayName(attack, language), attackEnglishName(attack));
+  return [englishName, categoryLabel, strengthSummary].filter(Boolean).join(" · ");
+}
+
 function attackToResource(attack: AttackPreset, language: "zh" | "en"): BrowserResource {
   const available = attack.available !== false;
   const needsWeights = attack.weightsPackRequired === true;
   const weightsReady = !needsWeights || attack.weightsInstalled === true;
-  const categoryLabel = attack.categoryLabel ?? attack.category;
+  const category = normalizeAttackCategory(attack);
+  const categoryLabel = attackCategoryLabel(category, language);
   return {
     id: attack.id,
     type: "attacks",
-    name: localizedName(language, attack.id, attack.name),
-    subtitle: `${attack.method} · ${categoryLabel ?? "attack"} · ${attack.strengths.length} strength${
-      attack.strengths.length === 1 ? "" : "s"
-    }`,
-    category: attack.category ?? "attack",
+    name: attackDisplayName(attack, language),
+    subtitle: attackSubtitle(attack, categoryLabel, language),
+    category,
     categoryLabel,
     status: available ? "enabled" : "missing",
     statusTone: available && weightsReady ? "ok" : needsWeights && !weightsReady ? "warn" : available ? "ok" : "error",

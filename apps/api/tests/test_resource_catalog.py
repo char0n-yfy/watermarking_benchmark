@@ -96,6 +96,19 @@ class ResourceCatalogTest(unittest.TestCase):
             self.assertEqual([item.id for item in resources], ["local-root", "demo"])
             self.assertEqual(resources[0].sample_count, 1)
 
+    def test_dataset_scan_uses_catalog_id_for_known_display_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resources_root = Path(tmpdir)
+            child = resources_root / "datasets" / "MS COCO"
+            child.mkdir(parents=True)
+            Image.new("RGB", (16, 16), (80, 120, 160)).save(child / "sample.png")
+
+            resources = scan_dataset_resources(resources_root)
+
+            self.assertEqual([item.id for item in resources], ["ms-coco"])
+            self.assertEqual(resources[0].name, "MS COCO")
+            self.assertEqual(resources[0].path, child)
+
     def test_consumer_enhancement_attacks_are_grouped_for_frontend(self) -> None:
         resources = list_attack_resources()
         cew_resources = [item for item in resources if item["method"].startswith("cew_")]
