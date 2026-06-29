@@ -261,12 +261,27 @@ def _watermark_category(method: str) -> str:
     return "neural"
 
 
-def _attack_category(method: str) -> str:
-    if method.startswith("cew_"):
-        return "consumer-enhancement"
-    if "regen" in method or method in {"noise_to_image", "image_to_vedio", "3d_viewpoint_rerendering"}:
-        return "regeneration"
-    return "distortion"
+ATTACK_CATEGORY_LABELS = {
+    "adversarial_attacks": "Adversarial attacks",
+    "consumer_enhancement_workflow_attacks": "Consumer enhancement workflow attacks",
+    "distortion_attacks": "Distortion attacks",
+    "physical_channel_attacks": "Physical channel attacks",
+    "regeneration_attacks": "Regeneration attacks",
+}
+
+
+def _attack_category_from_class(cls: type[Any]) -> str:
+    prefix = "evaluator.attacks."
+    module = cls.__module__
+    if module.startswith(prefix):
+        folder = module[len(prefix) :].split(".", 1)[0]
+        if folder and folder not in {"base", "registry"}:
+            return folder
+    return "uncategorized_attacks"
+
+
+def _attack_category_label(category: str) -> str:
+    return ATTACK_CATEGORY_LABELS.get(category, category.replace("_", " ").title())
 
 
 def _has_explicit_init_param(cls: type[Any], parameter_name: str) -> bool:
@@ -309,12 +324,15 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
     if strength_param is None and _has_explicit_init_param(cls, "strength"):
         strength_param = "strength"
     strengths = ATTACK_STRENGTH_SWEEPS.get(method, [0.5] if strength_param else [0.0])
+    category = _attack_category_from_class(cls)
     return {
         "id": f"atk-{_slug(method)}",
         "name": _display_name(method, ATTACK_DISPLAY_NAMES),
         "method": method,
         "description": cls.description,
-        "category": _attack_category(method),
+        "category": category,
+        "categoryLabel": _attack_category_label(category),
+        "categoryPath": f"evaluator/attacks/{category}",
         "strengths": strengths,
         "strengthParam": strength_param,
         "requiresGpu": _attack_requires_gpu(method),

@@ -1472,7 +1472,7 @@ a.button {
 
 .resource-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -1516,7 +1516,7 @@ a.button {
 
 .resources-browser-grid {
   display: grid;
-  grid-template-columns: 260px minmax(420px, 1fr) 340px;
+  grid-template-columns: minmax(250px, 280px) minmax(520px, 1fr) minmax(320px, 360px);
   gap: 12px;
   align-items: start;
   min-width: 0;
@@ -1709,7 +1709,7 @@ a.button {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: calc(var(--resource-page-size, 8) * 66px + 88px);
+  min-height: calc(var(--resource-page-size, 6) * 66px + 88px);
 }
 
 .resource-page-list {
@@ -1717,7 +1717,7 @@ a.button {
   flex: 1;
   gap: 8px;
   align-content: start;
-  min-height: calc(var(--resource-page-size, 8) * 66px);
+  min-height: calc(var(--resource-page-size, 6) * 66px);
   overflow: hidden;
 }
 
@@ -2208,6 +2208,13 @@ a.button {
   grid-template-columns: 330px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+@media (max-width: 1500px) and (min-width: 1181px) {
+  .resources-browser-grid {
+    grid-template-columns: minmax(220px, 240px) minmax(340px, 1fr) minmax(270px, 300px);
+    gap: 10px;
+  }
 }
 
 .launcher-panel {

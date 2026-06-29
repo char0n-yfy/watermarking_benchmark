@@ -45,6 +45,10 @@ class ResourceCatalogTest(unittest.TestCase):
             self.assertEqual(item["method"], method)
             self.assertTrue(item["id"].startswith("atk-"))
             self.assertEqual(item["available"], True)
+            expected_category = ATTACK_REGISTRY[method].__module__.split("evaluator.attacks.", 1)[1].split(".", 1)[0]
+            self.assertEqual(item["category"], expected_category)
+            self.assertIn("categoryLabel", item)
+            self.assertEqual(item["categoryPath"], f"evaluator/attacks/{expected_category}")
 
     def test_consumer_enhancement_attacks_are_grouped_for_frontend(self) -> None:
         resources = list_attack_resources()
@@ -58,7 +62,7 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertIn("cew_c4", exposed_methods)
         self.assertNotIn("cew_e1_m", exposed_methods)
         self.assertNotIn("cew_s6", exposed_methods)
-        self.assertTrue(all(item["category"] == "consumer-enhancement" for item in cew_resources))
+        self.assertTrue(all(item["category"] == "consumer_enhancement_workflow_attacks" for item in cew_resources))
         self.assertFalse(get_attack_catalog_item("cew_e1")["requiresGpu"])
         self.assertTrue(get_attack_catalog_item("cew_d5")["requiresGpu"])
         self.assertTrue(get_attack_catalog_item("cew_s1")["requiresGpu"])
@@ -72,12 +76,12 @@ class ResourceCatalogTest(unittest.TestCase):
         noise_to_image = get_attack_catalog_item("noise_to_image")
         image_to_vedio = get_attack_catalog_item("image_to_vedio")
 
-        self.assertEqual(noise_to_image["category"], "regeneration")
+        self.assertEqual(noise_to_image["category"], "regeneration_attacks")
         self.assertEqual(noise_to_image["strengthParam"], "step")
         self.assertEqual(noise_to_image["strengths"], [0.25, 0.5, 0.75, 1.0])
         self.assertTrue(noise_to_image["requiresGpu"])
 
-        self.assertEqual(image_to_vedio["category"], "regeneration")
+        self.assertEqual(image_to_vedio["category"], "regeneration_attacks")
         self.assertEqual(image_to_vedio["strengthParam"], "xy")
         self.assertEqual(image_to_vedio["strengths"], [20.0, 40.0, 60.0])
         self.assertTrue(image_to_vedio["requiresGpu"])
@@ -85,7 +89,7 @@ class ResourceCatalogTest(unittest.TestCase):
     def test_sharp_viewpoint_rerendering_attack_is_grouped_for_frontend(self) -> None:
         attack = get_attack_catalog_item("3d_viewpoint_rerendering")
 
-        self.assertEqual(attack["category"], "regeneration")
+        self.assertEqual(attack["category"], "regeneration_attacks")
         self.assertEqual(attack["strengthParam"], "max_disparity")
         self.assertEqual(attack["strengths"], [0.01, 0.02, 0.04])
         self.assertTrue(attack["requiresGpu"])

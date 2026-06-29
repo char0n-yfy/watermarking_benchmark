@@ -4,10 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Boxes,
-  Cpu,
   Database,
   Gauge,
-  HardDrive,
   PackageCheck,
   Search,
   Shield,
@@ -20,13 +18,12 @@ import { fetchAlgorithms, fetchAttacks, fetchDatasetCatalog, fetchDatasetDownloa
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
-  artifacts,
   attacks as fallbackAttacks,
   datasets as fallbackDatasets
 } from "@/lib/mock-data";
-import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ModelArtifact, ResourceStatus } from "@/lib/types";
+import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ResourceStatus } from "@/lib/types";
 
-type ResourceType = "datasets" | "watermarks" | "attacks" | "weights";
+type ResourceType = "datasets" | "watermarks" | "attacks";
 type DeviceFilter = "all" | "cpu" | "gpu";
 
 interface BrowserResource {
@@ -35,6 +32,7 @@ interface BrowserResource {
   name: string;
   subtitle: string;
   category: string;
+  categoryLabel?: string;
   status: ResourceStatus | "indexed" | "missing";
   statusTone: "ok" | "warn" | "error" | "neutral";
   description?: string;
@@ -47,12 +45,42 @@ interface BrowserResource {
   requiresGpu?: boolean;
   recommended?: boolean;
   available?: boolean;
-  size?: string;
-  checksum?: string;
   catalog?: DatasetCatalogItem;
 }
 
-const PAGE_SIZE = 8;
+const DEFAULT_RESOURCE_PAGE_SIZE = 8;
+
+function getResponsiveResourcePageSize(width: number, height: number): number {
+  if (width >= 1680 && height >= 950) {
+    return 8;
+  }
+  if (width >= 1440 && height >= 820) {
+    return 6;
+  }
+  if (width >= 1200 && height >= 720) {
+    return 5;
+  }
+  if (width >= 900 && height >= 680) {
+    return 4;
+  }
+  return 3;
+}
+
+function useResponsiveResourcePageSize(): number {
+  const [pageSize, setPageSize] = useState(DEFAULT_RESOURCE_PAGE_SIZE);
+
+  useEffect(() => {
+    function updatePageSize() {
+      setPageSize(getResponsiveResourcePageSize(window.innerWidth, window.innerHeight));
+    }
+
+    updatePageSize();
+    window.addEventListener("resize", updatePageSize);
+    return () => window.removeEventListener("resize", updatePageSize);
+  }, []);
+
+  return pageSize;
+}
 
 export default function ResourcesPage() {
   const { language, t } = useLanguage();
@@ -69,6 +97,7 @@ export default function ResourcesPage() {
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [page, setPage] = useState(1);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const pageSize = useResponsiveResourcePageSize();
 
   useEffect(() => {
     let cancelled = false;
@@ -126,17 +155,24 @@ export default function ResourcesPage() {
     () => ({
       datasets: catalogItems.map((item) => catalogToResource(item, language)),
       watermarks: algorithms.map(algorithmToResource),
-      attacks: attacks.map((attack) => attackToResource(attack, language)),
-      weights: artifacts.map(weightToResource)
+      attacks: attacks.map((attack) => attackToResource(attack, language))
     }),
     [algorithms, attacks, catalogItems, language]
   );
 
   const activeResources = resourceGroups[activeType];
   const categories = useMemo(() => {
-    const values = Array.from(new Set(activeResources.map((resource) => resource.category))).sort();
-    return ["all", ...values];
-  }, [activeResources]);
+    const labels = new Map<string, string>();
+    for (const resource of activeResources) {
+      labels.set(resource.category, resource.categoryLabel ?? resource.category);
+    }
+    return [
+      { value: "all", label: t.resources.allResources },
+      ...Array.from(labels.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([value, label]) => ({ value, label }))
+    ];
+  }, [activeResources, t.resources.allResources]);
 
   const filteredResources = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -147,20 +183,17 @@ export default function ResourcesPage() {
         deviceFilter === "all" ||
         (deviceFilter === "gpu" && resource.requiresGpu) ||
         (deviceFilter === "cpu" && !resource.requiresGpu);
-      const recommendedMatch =
-        activeType === "datasets" || activeType === "weights" || !recommendedOnly || resource.recommended;
+      const recommendedMatch = activeType === "datasets" || !recommendedOnly || resource.recommended;
       const availableMatch = !availableOnly || resource.available !== false;
       return queryMatch && categoryMatch && deviceMatch && recommendedMatch && availableMatch;
     });
   }, [activeResources, activeType, availableOnly, categoryFilter, deviceFilter, query, recommendedOnly]);
 
-  const usesPagination = activeType === "watermarks" || activeType === "datasets";
-  const pageCount = usesPagination ? Math.max(1, Math.ceil(filteredResources.length / PAGE_SIZE)) : 1;
-  const visibleResources = usesPagination
-    ? filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-    : filteredResources;
+  const pageCount = Math.max(1, Math.ceil(filteredResources.length / pageSize));
+  const usesPagination = pageCount > 1;
+  const visibleResources = filteredResources.slice((page - 1) * pageSize, page * pageSize);
 
-  const visibleGroupedDatasetResources = useMemo(() => {
+  const groupedDatasetResources = useMemo(() => {
     if (activeType !== "datasets") {
       return null;
     }
@@ -172,8 +205,25 @@ export default function ResourcesPage() {
     }
     return Array.from(groups.entries());
   }, [activeType, visibleResources]);
+
+  const groupedAttackResources = useMemo(() => {
+    if (activeType !== "attacks") {
+      return null;
+    }
+    const groups = new Map<string, { label: string; resources: BrowserResource[] }>();
+    for (const resource of visibleResources) {
+      const current = groups.get(resource.category) ?? {
+        label: resource.categoryLabel ?? resource.category,
+        resources: []
+      };
+      current.resources.push(resource);
+      groups.set(resource.category, current);
+    }
+    return Array.from(groups.entries()).map(([category, group]) => ({ category, ...group }));
+  }, [activeType, visibleResources]);
+
   const selectedResource =
-    filteredResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null;
+    visibleResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null;
   const totalSamples = datasets.reduce((total, dataset) => total + dataset.sampleCount, 0);
 
   useEffect(() => {
@@ -196,24 +246,13 @@ export default function ResourcesPage() {
   }, [page, pageCount]);
 
   useEffect(() => {
-    if (!usesPagination) {
+    if (visibleResources.length === 0) {
       return;
     }
-    const firstVisible = visibleResources[0];
-    if (!firstVisible) {
-      return;
+    if (!visibleResources.some((resource) => resource.id === selectedResourceId)) {
+      setSelectedResourceId(visibleResources[0].id);
     }
-    const selectionVisible = visibleResources.some((resource) => resource.id === selectedResourceId);
-    if (!selectionVisible) {
-      setSelectedResourceId(firstVisible.id);
-    }
-  }, [page, selectedResourceId, usesPagination, visibleResources]);
-
-  useEffect(() => {
-    if (!selectedResource && filteredResources.length > 0) {
-      setSelectedResourceId(filteredResources[0].id);
-    }
-  }, [filteredResources, selectedResource]);
+  }, [selectedResourceId, visibleResources]);
 
   async function refreshDatasetCatalog() {
     const catalog = await fetchDatasetCatalog();
@@ -242,7 +281,6 @@ export default function ResourcesPage() {
         <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
         <SummaryCard icon={Shield} label={t.console.algorithms} value={algorithms.length.toString()} meta={countByGpu(algorithms)} />
         <SummaryCard icon={Gauge} label={t.console.attacks} value={attacks.length.toString()} meta={countByGpu(attacks)} />
-        <SummaryCard icon={HardDrive} label={t.resources.weightFolders} value={artifacts.length.toString()} meta="resources/weights" />
       </section>
 
       <section className="resources-browser-grid">
@@ -253,7 +291,7 @@ export default function ResourcesPage() {
           </div>
           <div className="panel-body resource-filter-stack">
             <div className="resource-type-list">
-              {(["datasets", "watermarks", "attacks", "weights"] as ResourceType[]).map((type) => (
+              {(["datasets", "watermarks", "attacks"] as ResourceType[]).map((type) => (
                 <button
                   className={activeType === type ? "resource-type-button active" : "resource-type-button"}
                   key={type}
@@ -288,14 +326,14 @@ export default function ResourcesPage() {
                 value={categoryFilter}
               >
                 {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category === "all" ? t.resources.allResources : category}
+                  <option key={category.value} value={category.value}>
+                    {category.label}
                   </option>
                 ))}
               </select>
             </div>
 
-            {activeType !== "datasets" && activeType !== "weights" ? (
+            {activeType !== "datasets" ? (
               <div className="segmented-control" aria-label={t.resources.device}>
                 {(["all", "cpu", "gpu"] as DeviceFilter[]).map((value) => (
                   <button
@@ -339,9 +377,8 @@ export default function ResourcesPage() {
             </span>
           </div>
           <div
-            className={
-              usesPagination ? "panel-body resource-list-panel-body" : "panel-body resource-browser-list"
-            }
+            className="panel-body resource-list-panel-body"
+            style={{ ["--resource-page-size" as string]: pageSize }}
           >
             <div className="resource-result-note">
               <SlidersHorizontal size={14} />
@@ -349,9 +386,9 @@ export default function ResourcesPage() {
                 {t.resources.showingResults}: {visibleResources.length} / {filteredResources.length}
               </span>
             </div>
-            {activeType === "datasets" && visibleGroupedDatasetResources ? (
-              <div className="resource-page-list" style={{ ["--resource-page-size" as string]: PAGE_SIZE }}>
-                {visibleGroupedDatasetResources.map(([category, resources]) => (
+            {activeType === "datasets" && groupedDatasetResources ? (
+              <div className="resource-page-list">
+                {groupedDatasetResources.map(([category, resources]) => (
                   <div className="dataset-category-group" key={category}>
                     <div className="dataset-category-heading">{category}</div>
                     {resources.map((resource) => (
@@ -377,8 +414,34 @@ export default function ResourcesPage() {
                   </div>
                 ))}
               </div>
-            ) : activeType === "watermarks" ? (
-              <div className="resource-page-list" style={{ ["--resource-page-size" as string]: PAGE_SIZE }}>
+            ) : activeType === "attacks" && groupedAttackResources ? (
+              <div className="resource-page-list">
+                {groupedAttackResources.map((group) => (
+                  <div className="dataset-category-group" key={group.category}>
+                    <div className="dataset-category-heading">{group.label}</div>
+                    {group.resources.map((resource) => (
+                      <button
+                        className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
+                        key={resource.id}
+                        onClick={() => setSelectedResourceId(resource.id)}
+                        type="button"
+                      >
+                        <span className="resource-row-main">
+                          <strong>{resource.name}</strong>
+                          <small>{resource.subtitle}</small>
+                        </span>
+                        <span className="resource-row-meta">
+                          {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+                          {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
+                          <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="resource-page-list">
                 {visibleResources.map((resource) => (
                   <button
                     className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
@@ -398,25 +461,6 @@ export default function ResourcesPage() {
                   </button>
                 ))}
               </div>
-            ) : (
-              filteredResources.map((resource) => (
-                <button
-                  className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
-                  key={resource.id}
-                  onClick={() => setSelectedResourceId(resource.id)}
-                  type="button"
-                >
-                  <span className="resource-row-main">
-                    <strong>{resource.name}</strong>
-                    <small>{resource.subtitle}</small>
-                  </span>
-                  <span className="resource-row-meta">
-                    {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                    {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
-                    <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
-                  </span>
-                </button>
-              ))
             )}
             {filteredResources.length === 0 ? (
               <div className="empty compact-empty">
@@ -476,15 +520,13 @@ export default function ResourcesPage() {
           ) : (
             <>
               <DetailMetric label="ID" value={resource.id} />
-              <DetailMetric label={t.resources.category} value={resource.category} />
+              <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
               <DetailMetric label="Method" value={resource.method ?? "n/a"} />
               <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
               {resource.sampleCount != null ? (
                 <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
               ) : null}
               {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
-              {resource.size ? <DetailMetric label="Size" value={resource.size} /> : null}
-              {resource.checksum ? <DetailMetric label="Checksum" value={resource.checksum} /> : null}
             </>
           )}
         </div>
@@ -525,9 +567,7 @@ export default function ResourcesPage() {
             <Archive size={16} />
             {t.resources.useInConfig}
           </a>
-        ) : (
-          <div className="risk warn">{t.resources.weightsConfigHint}</div>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -783,39 +823,26 @@ function algorithmToResource(algorithm: AlgorithmVersion): BrowserResource {
 
 function attackToResource(attack: AttackPreset, language: "zh" | "en"): BrowserResource {
   const available = attack.available !== false;
+  const categoryLabel = attack.categoryLabel ?? attack.category;
   return {
     id: attack.id,
     type: "attacks",
     name: localizedName(language, attack.id, attack.name),
-    subtitle: `${attack.method} · ${attack.category ?? "attack"} · ${attack.strengths.length} strength${
+    subtitle: `${attack.method} · ${categoryLabel ?? "attack"} · ${attack.strengths.length} strength${
       attack.strengths.length === 1 ? "" : "s"
     }`,
     category: attack.category ?? "attack",
+    categoryLabel,
     status: available ? "enabled" : "missing",
     statusTone: available ? "ok" : "error",
     available,
     method: attack.method,
+    path: attack.categoryPath,
     description: attack.description,
     params: attack.params,
     strengths: attack.strengths,
     requiresGpu: attack.requiresGpu,
     recommended: attack.recommended
-  };
-}
-
-function weightToResource(artifact: ModelArtifact): BrowserResource {
-  return {
-    id: artifact.id,
-    type: "weights",
-    name: artifact.name,
-    subtitle: artifact.size,
-    category: "artifact",
-    status: "indexed",
-    statusTone: "neutral",
-    available: true,
-    size: artifact.size,
-    checksum: artifact.checksum,
-    description: "Indexed model artifact. Weight folders are stored under resources/weights."
   };
 }
 
@@ -825,6 +852,7 @@ function searchableText(resource: BrowserResource): string {
     resource.name,
     resource.subtitle,
     resource.category,
+    resource.categoryLabel,
     resource.description,
     resource.method,
     resource.path
@@ -858,7 +886,7 @@ function resourceTypeLabel(type: ResourceType, t: ReturnType<typeof useLanguage>
   if (type === "attacks") {
     return t.console.attacks;
   }
-  return t.resources.weightFolders;
+  return t.console.attacks;
 }
 
 function resourceTypeIcon(type: ResourceType) {
@@ -871,7 +899,7 @@ function resourceTypeIcon(type: ResourceType) {
   if (type === "attacks") {
     return <Gauge size={16} />;
   }
-  return <HardDrive size={16} />;
+  return <Gauge size={16} />;
 }
 
 function badgeClass(tone: BrowserResource["statusTone"]) {
