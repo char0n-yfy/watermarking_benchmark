@@ -16,7 +16,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { ResourcePagination } from "@/components/ResourcePagination";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchAlgorithms, fetchAttacks, fetchDatasetCatalog, fetchDatasetDownloadJob, startDatasetDownload } from "@/lib/api";
+import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
@@ -24,7 +24,7 @@ import {
   attacks as fallbackAttacks,
   datasets as fallbackDatasets
 } from "@/lib/mock-data";
-import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ModelArtifact, ResourceStatus } from "@/lib/types";
+import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ModelArtifact, ResourceStatus, WeightDownloadJob } from "@/lib/types";
 
 type ResourceType = "datasets" | "watermarks" | "attacks" | "weights";
 type DeviceFilter = "all" | "cpu" | "gpu";
@@ -50,6 +50,8 @@ interface BrowserResource {
   size?: string;
   checksum?: string;
   catalog?: DatasetCatalogItem;
+  algorithm?: AlgorithmVersion;
+  attack?: AttackPreset;
 }
 
 const PAGE_SIZE = 8;
@@ -114,6 +116,19 @@ export default function ResourcesPage() {
         }
         setAlgorithms(apiAlgorithms.length > 0 ? apiAlgorithms : fallbackAlgorithms);
         setAttacks(apiAttacks.length > 0 ? apiAttacks : fallbackAttacks);
+        return Promise.all([fetchAlgorithms({ remote: true }), fetchAttacks({ remote: true })]);
+      })
+      .then((remote) => {
+        if (cancelled || !remote) {
+          return;
+        }
+        const [remoteAlgorithms, remoteAttacks] = remote;
+        if (remoteAlgorithms.length > 0) {
+          setAlgorithms(remoteAlgorithms);
+        }
+        if (remoteAttacks.length > 0) {
+          setAttacks(remoteAttacks);
+        }
       })
       .catch(() => undefined);
 
@@ -229,6 +244,20 @@ export default function ResourcesPage() {
     );
   }
 
+  async function refreshAlgorithms() {
+    const remoteAlgorithms = await fetchAlgorithms({ remote: true });
+    if (remoteAlgorithms.length > 0) {
+      setAlgorithms(remoteAlgorithms);
+    }
+  }
+
+  async function refreshAttacks() {
+    const remoteAttacks = await fetchAttacks({ remote: true });
+    if (remoteAttacks.length > 0) {
+      setAttacks(remoteAttacks);
+    }
+  }
+
   return (
     <AppShell active="resources">
       <div className="topbar">
@@ -242,7 +271,7 @@ export default function ResourcesPage() {
         <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
         <SummaryCard icon={Shield} label={t.console.algorithms} value={algorithms.length.toString()} meta={countByGpu(algorithms)} />
         <SummaryCard icon={Gauge} label={t.console.attacks} value={attacks.length.toString()} meta={countByGpu(attacks)} />
-        <SummaryCard icon={HardDrive} label={t.resources.weightFolders} value={artifacts.length.toString()} meta="resources/weights" />
+        <SummaryCard icon={HardDrive} label={t.resources.weightFolders} value={artifacts.length.toString()} meta="resources/weights/{attacks,watermarking}" />
       </section>
 
       <section className="resources-browser-grid">
@@ -442,7 +471,14 @@ export default function ResourcesPage() {
           </div>
           <div className="panel-body">
             {selectedResource ? (
-              <ResourceDetail onDatasetInstalled={refreshDatasetCatalog} resource={selectedResource} />
+              <ResourceDetail
+                language={language}
+                onAlgorithmInstalled={refreshAlgorithms}
+                onAttackInstalled={refreshAttacks}
+                onDatasetInstalled={refreshDatasetCatalog}
+                resource={selectedResource}
+                t={t}
+              />
             ) : (
               <div className="empty compact-empty">{t.common.noData}</div>
             )}
@@ -451,86 +487,114 @@ export default function ResourcesPage() {
       </section>
     </AppShell>
   );
+}
 
-  function ResourceDetail({
-    resource,
-    onDatasetInstalled
-  }: {
-    resource: BrowserResource;
-    onDatasetInstalled: () => void;
-  }) {
-    const configHref = buildConfigHref(resource);
-    return (
-      <div className="resource-detail-stack">
-        <div>
-          <div className="detail-title-row">
-            <h3>{resource.name}</h3>
-            <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
-          </div>
-          <p>{resource.description || resource.subtitle}</p>
+function ResourceDetail({
+  resource,
+  language,
+  t,
+  onDatasetInstalled,
+  onAlgorithmInstalled,
+  onAttackInstalled
+}: {
+  resource: BrowserResource;
+  language: "zh" | "en";
+  t: ReturnType<typeof useLanguage>["t"];
+  onDatasetInstalled: () => void;
+  onAlgorithmInstalled: () => void;
+  onAttackInstalled: () => void;
+}) {
+  const configHref = buildConfigHref(resource);
+  return (
+    <div className="resource-detail-stack">
+      <div>
+        <div className="detail-title-row">
+          <h3>{resource.name}</h3>
+          <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
         </div>
+        <p>{resource.description || resource.subtitle}</p>
+      </div>
 
-        <div className={resource.type === "datasets" ? "detail-metrics-grid dataset-only-category" : "detail-metrics-grid"}>
-          {resource.type === "datasets" ? (
-            <DetailMetric label={t.resources.category} value={resource.category} />
-          ) : (
-            <>
-              <DetailMetric label="ID" value={resource.id} />
-              <DetailMetric label={t.resources.category} value={resource.category} />
-              <DetailMetric label="Method" value={resource.method ?? "n/a"} />
-              <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
-              {resource.sampleCount != null ? (
-                <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
-              ) : null}
-              {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
-              {resource.size ? <DetailMetric label="Size" value={resource.size} /> : null}
-              {resource.checksum ? <DetailMetric label="Checksum" value={resource.checksum} /> : null}
-            </>
-          )}
-        </div>
-
-        {resource.strengths ? (
-          <div className="detail-section">
-            <strong>{t.resources.strengthGrid}</strong>
-            <div className="strength-chip-row">
-              {resource.strengths.map((strength) => (
-                <span className="badge" key={strength}>
-                  {strength}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {resource.params && Object.keys(resource.params).length > 0 ? (
-          <div className="detail-section">
-            <strong>Params</strong>
-            <pre className="detail-json">{JSON.stringify(resource.params, null, 2)}</pre>
-          </div>
-        ) : null}
-
-        {resource.path && resource.type !== "datasets" ? (
-          <div className="detail-section">
-            <strong>Path</strong>
-            <code>{resource.path}</code>
-          </div>
-        ) : null}
-
-        {resource.type === "datasets" && resource.catalog ? (
-          <DatasetDownloadPanel catalog={resource.catalog} language={language} onInstalled={onDatasetInstalled} t={t} />
-        ) : null}
-
-        {configHref ? (
-          <a className="button primary resource-config-link" href={configHref}>
-            <Archive size={16} />
-            {t.resources.useInConfig}
-          </a>
+      <div className={resource.type === "datasets" ? "detail-metrics-grid dataset-only-category" : "detail-metrics-grid"}>
+        {resource.type === "datasets" ? (
+          <DetailMetric label={t.resources.category} value={resource.category} />
         ) : (
-          <div className="risk warn">{t.resources.weightsConfigHint}</div>
+          <>
+            <DetailMetric label="ID" value={resource.id} />
+            <DetailMetric label={t.resources.category} value={resource.category} />
+            <DetailMetric label="Method" value={resource.method ?? "n/a"} />
+            <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
+            {resource.sampleCount != null ? (
+              <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
+            ) : null}
+            {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
+            {resource.size ? <DetailMetric label="Size" value={resource.size} /> : null}
+            {resource.checksum ? <DetailMetric label="Checksum" value={resource.checksum} /> : null}
+          </>
         )}
       </div>
-    );
-  }
+
+      {resource.strengths ? (
+        <div className="detail-section">
+          <strong>{t.resources.strengthGrid}</strong>
+          <div className="strength-chip-row">
+            {resource.strengths.map((strength) => (
+              <span className="badge" key={strength}>
+                {strength}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {resource.params && Object.keys(resource.params).length > 0 ? (
+        <div className="detail-section">
+          <strong>Params</strong>
+          <pre className="detail-json">{JSON.stringify(resource.params, null, 2)}</pre>
+        </div>
+      ) : null}
+
+      {resource.path && resource.type !== "datasets" ? (
+        <div className="detail-section">
+          <strong>Path</strong>
+          <code>{resource.path}</code>
+        </div>
+      ) : null}
+
+      {resource.type === "datasets" && resource.catalog ? (
+        <DatasetDownloadPanel catalog={resource.catalog} language={language} onInstalled={onDatasetInstalled} t={t} />
+      ) : null}
+
+      {resource.type === "watermarks" && resource.algorithm?.weightsPackRequired ? (
+        <WeightDownloadPanel
+          algorithm={resource.algorithm}
+          key={`watermark-${resource.id}`}
+          onInstalled={onAlgorithmInstalled}
+          t={t}
+          variant="watermark"
+        />
+      ) : null}
+
+      {resource.type === "attacks" && resource.attack?.weightsPackRequired ? (
+        <WeightDownloadPanel
+          attack={resource.attack}
+          key={`attack-${resource.id}`}
+          onInstalled={onAttackInstalled}
+          t={t}
+          variant="attack"
+        />
+      ) : null}
+
+      {configHref ? (
+        <a className="button primary resource-config-link" href={configHref}>
+          <Archive size={16} />
+          {t.resources.useInConfig}
+        </a>
+      ) : (
+        <div className="risk warn">{t.resources.weightsConfigHint}</div>
+      )}
+    </div>
+  );
 }
 
 function SummaryCard({
@@ -592,6 +656,143 @@ function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): Bro
     description,
     catalog: item
   };
+}
+
+function WeightDownloadPanel({
+  algorithm,
+  attack,
+  onInstalled,
+  t,
+  variant
+}: {
+  algorithm?: AlgorithmVersion;
+  attack?: AttackPreset;
+  onInstalled: () => void;
+  t: ReturnType<typeof useLanguage>["t"];
+  variant: "watermark" | "attack";
+}) {
+  const resource = variant === "watermark" ? algorithm : attack;
+  const identifier = resource?.id ?? "";
+  const weightsDir = resource?.weightsDir;
+  const [job, setJob] = useState<WeightDownloadJob | null>(null);
+  const [busy, setBusy] = useState(false);
+  const installedJobRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+      return;
+    }
+    const fetchJob = variant === "watermark" ? fetchWeightDownloadJob : fetchAttackWeightDownloadJob;
+    let cancelled = false;
+    const poll = () => {
+      fetchJob(job.id)
+        .then((next) => {
+          if (!cancelled) {
+            setJob(next);
+          }
+        })
+        .catch(() => undefined);
+    };
+    poll();
+    const timer = window.setInterval(poll, 500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [job, variant]);
+
+  useEffect(() => {
+    if (job?.status !== "succeeded" || installedJobRef.current === job.id) {
+      return;
+    }
+    installedJobRef.current = job.id;
+    void onInstalled();
+  }, [job, onInstalled]);
+
+  useEffect(() => {
+    if (resource?.weightsInstalled === true) {
+      setJob(null);
+    }
+  }, [resource?.weightsInstalled, resource?.id]);
+
+  if (!resource) {
+    return null;
+  }
+
+  const installed = resource.weightsInstalled === true || job?.status === "succeeded";
+  const jobInFlight = job?.status === "queued" || job?.status === "running";
+  const canStart = resource.weightsDownloadReady === true && !installed && !jobInFlight;
+  const progressPercent =
+    job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
+  const panelTitle = variant === "watermark" ? t.resources.weightDownloadPanel : t.resources.attackWeightDownloadPanel;
+  const panelHint = variant === "watermark" ? t.resources.weightDownloadHint : t.resources.attackWeightDownloadHint;
+  const alreadyInstalled =
+    variant === "watermark" ? t.resources.weightsAlreadyInstalled : t.resources.attackWeightsAlreadyInstalled;
+  const unavailable = variant === "watermark" ? t.resources.weightsUnavailable : t.resources.attackWeightsUnavailable;
+  const readyLabel = variant === "watermark" ? t.resources.weightDownloadReady : t.resources.attackWeightDownloadReady;
+  const weightsRoot = variant === "watermark" ? "weights/watermarking" : "weights/attacks";
+
+  async function handleStart() {
+    setBusy(true);
+    try {
+      const startDownload = variant === "watermark" ? startWeightDownload : startAttackWeightDownload;
+      const fetchJob = variant === "watermark" ? fetchWeightDownloadJob : fetchAttackWeightDownloadJob;
+      const created = await startDownload(identifier);
+      setJob(created);
+      if (created.status === "queued" || created.status === "running") {
+        const latest = await fetchJob(created.id);
+        setJob(latest);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="detail-section dataset-download-panel">
+      <strong>{panelTitle}</strong>
+      <p className="dataset-download-hint">{panelHint}</p>
+      {weightsDir ? (
+        <div className="dataset-pool-summary">
+          <span>{weightsRoot}/{weightsDir}</span>
+        </div>
+      ) : null}
+      {installed ? <div className="risk ok">{alreadyInstalled}</div> : null}
+      {!canStart && !installed && !jobInFlight ? <div className="risk warn">{unavailable}</div> : null}
+      {!installed ? (
+        <button className="button primary" disabled={!canStart || busy || jobInFlight} onClick={handleStart} type="button">
+          {t.resources.startDownload}
+        </button>
+      ) : null}
+      {job ? (
+        <div className="dataset-download-progress">
+          <div className="dataset-download-progress-head">
+            <span>{t.resources.downloadProgress}</span>
+            <strong>{progressPercent}%</strong>
+          </div>
+          <div className="progress-track">
+            <div className="progress-bar" style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }} />
+          </div>
+          <small>
+            {job.completedItems}/{job.totalItems} · {job.status}
+            {job.message ? ` · ${job.message}` : ""}
+          </small>
+          {job.status === "failed" && job.error ? <div className="risk error">{t.resources.downloadFailed}: {job.error}</div> : null}
+          {job.status === "succeeded" ? (
+            <div className="dataset-download-success">
+              <div className="badge ok">{readyLabel}</div>
+              {job.outputDir ? (
+                <div className="dataset-download-path">
+                  <span>{t.resources.downloadInstalledTo}</span>
+                  <code>{job.outputDir}</code>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function DatasetDownloadPanel({
@@ -763,6 +964,8 @@ function datasetToResource(dataset: DatasetVersion, language: "zh" | "en"): Brow
 
 function algorithmToResource(algorithm: AlgorithmVersion): BrowserResource {
   const available = algorithm.available !== false && algorithm.status === "enabled";
+  const needsWeights = algorithm.weightsPackRequired === true;
+  const weightsReady = !needsWeights || algorithm.weightsInstalled === true;
   return {
     id: algorithm.id,
     type: "watermarks",
@@ -770,19 +973,22 @@ function algorithmToResource(algorithm: AlgorithmVersion): BrowserResource {
     subtitle: `${algorithm.method ?? algorithm.id} · ${algorithm.category ?? "watermark"}`,
     category: algorithm.category ?? "watermark",
     status: algorithm.status,
-    statusTone: available ? "ok" : "warn",
+    statusTone: available && weightsReady ? "ok" : needsWeights && !weightsReady ? "warn" : available ? "ok" : "warn",
     available,
     method: algorithm.method,
     version: algorithm.version,
     description: algorithm.description,
     params: algorithm.params,
     requiresGpu: algorithm.requiresGpu,
-    recommended: algorithm.recommended
+    recommended: algorithm.recommended,
+    algorithm
   };
 }
 
 function attackToResource(attack: AttackPreset, language: "zh" | "en"): BrowserResource {
   const available = attack.available !== false;
+  const needsWeights = attack.weightsPackRequired === true;
+  const weightsReady = !needsWeights || attack.weightsInstalled === true;
   return {
     id: attack.id,
     type: "attacks",
@@ -792,14 +998,15 @@ function attackToResource(attack: AttackPreset, language: "zh" | "en"): BrowserR
     }`,
     category: attack.category ?? "attack",
     status: available ? "enabled" : "missing",
-    statusTone: available ? "ok" : "error",
+    statusTone: available && weightsReady ? "ok" : needsWeights && !weightsReady ? "warn" : available ? "ok" : "error",
     available,
     method: attack.method,
     description: attack.description,
     params: attack.params,
     strengths: attack.strengths,
     requiresGpu: attack.requiresGpu,
-    recommended: attack.recommended
+    recommended: attack.recommended,
+    attack
   };
 }
 
@@ -815,7 +1022,7 @@ function weightToResource(artifact: ModelArtifact): BrowserResource {
     available: true,
     size: artifact.size,
     checksum: artifact.checksum,
-    description: "Indexed model artifact. Weight folders are stored under resources/weights."
+    description: "Indexed model artifact. Watermark weights live under resources/weights/watermarking/; attack weights under resources/weights/attacks/."
   };
 }
 

@@ -15,7 +15,8 @@ import type {
   RunScoreResponse,
   RuntimeInfo,
   SavedExperimentConfig,
-  SystemMetrics
+  SystemMetrics,
+  WeightDownloadJob
 } from "./types";
 
 const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
@@ -99,12 +100,36 @@ export function datasetDownloadArchiveUrl(jobId: string): string {
   return `${apiBaseUrl}/resources/datasets/downloads/${encodeURIComponent(jobId)}/archive`;
 }
 
-export function fetchAlgorithms(): Promise<AlgorithmVersion[]> {
-  return requestJson<AlgorithmVersion[]>("/resources/watermarks");
+export function fetchAlgorithms(options?: { remote?: boolean }): Promise<AlgorithmVersion[]> {
+  const query = options?.remote ? "?remote=1" : "";
+  return requestJson<AlgorithmVersion[]>(`/resources/watermarks${query}`);
 }
 
-export function fetchAttacks(): Promise<AttackPreset[]> {
-  return requestJson<AttackPreset[]>("/resources/attacks");
+export function startWeightDownload(identifier: string): Promise<WeightDownloadJob> {
+  return requestJson<WeightDownloadJob>(`/resources/watermarks/${encodeURIComponent(identifier)}/downloads`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function fetchWeightDownloadJob(jobId: string): Promise<WeightDownloadJob> {
+  return requestJson<WeightDownloadJob>(`/resources/watermarks/downloads/${encodeURIComponent(jobId)}`);
+}
+
+export function fetchAttacks(options?: { remote?: boolean }): Promise<AttackPreset[]> {
+  const query = options?.remote ? "?remote=1" : "";
+  return requestJson<AttackPreset[]>(`/resources/attacks${query}`);
+}
+
+export function startAttackWeightDownload(identifier: string): Promise<WeightDownloadJob> {
+  return requestJson<WeightDownloadJob>(`/resources/attacks/${encodeURIComponent(identifier)}/downloads`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function fetchAttackWeightDownloadJob(jobId: string): Promise<WeightDownloadJob> {
+  return requestJson<WeightDownloadJob>(`/resources/attacks/downloads/${encodeURIComponent(jobId)}`);
 }
 
 export function fetchSavedConfigs(): Promise<SavedExperimentConfig[]> {

@@ -9,6 +9,10 @@ from typing import Any
 from evaluator.attacks import ATTACK_REGISTRY
 from evaluator.watermarking import WATERMARK_REGISTRY
 
+from app.services.attack_weights import enrich_attack_resource
+from app.services.object_storage import ObjectStorageClient
+from app.services.watermark_weights import enrich_watermark_resource
+
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
@@ -343,12 +347,34 @@ def _build_attack_catalog() -> dict[str, dict[str, Any]]:
     return catalog
 
 
-def list_watermark_resources() -> list[dict[str, Any]]:
-    return list(_build_watermark_catalog().values())
+def list_watermark_resources(
+    resources_root: Path | None = None,
+    *,
+    oss: ObjectStorageClient | None = None,
+    probe_remote: bool = False,
+) -> list[dict[str, Any]]:
+    items = list(_build_watermark_catalog().values())
+    if resources_root is None:
+        return items
+    return [
+        enrich_watermark_resource(item, resources_root, oss=oss, probe_remote=probe_remote)
+        for item in items
+    ]
 
 
-def list_attack_resources() -> list[dict[str, Any]]:
-    return list(_build_attack_catalog().values())
+def list_attack_resources(
+    resources_root: Path | None = None,
+    *,
+    oss: ObjectStorageClient | None = None,
+    probe_remote: bool = False,
+) -> list[dict[str, Any]]:
+    items = list(_build_attack_catalog().values())
+    if resources_root is None:
+        return items
+    return [
+        enrich_attack_resource(item, resources_root, oss=oss, probe_remote=probe_remote)
+        for item in items
+    ]
 
 
 def get_watermark_catalog_item(algorithm_id: str) -> dict[str, Any]:

@@ -111,6 +111,12 @@ class ObjectStorageClient:
         cleaned.extend(part.strip("/") for part in parts if part)
         return "/".join(cleaned)
 
+    def watermark_weights_key(self, weights_dir: str) -> str:
+        return self.object_key("weights", "watermarking", weights_dir, "weights.zip")
+
+    def attack_weights_key(self, weights_dir: str) -> str:
+        return self.object_key("weights", "attacks", weights_dir, "weights.zip")
+
     def dataset_compact_key(self, dataset_id: str) -> str:
         return self.object_key("datasets", dataset_id, "compact-1000.zip")
 

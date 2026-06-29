@@ -8,6 +8,15 @@ from pathlib import Path
 from .env_loader import PROJECT_ROOT, load_project_env
 
 
+def _resolve_repo_path(raw: str | None, default: Path) -> Path:
+    path = Path(raw or str(default)).expanduser()
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    else:
+        path = path.resolve()
+    return path
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: str
@@ -26,20 +35,26 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     load_project_env(override=True)
-    data_root = Path(os.getenv("WM_BENCH_DATA_ROOT", str(PROJECT_ROOT))).expanduser()
-    runs_root = Path(os.getenv("WM_BENCH_RUNS_ROOT", str(PROJECT_ROOT / "runs" / "local"))).expanduser()
-    database_path = Path(
-        os.getenv("WM_BENCH_DB_PATH", str(runs_root / "wmbench.sqlite"))
-    ).expanduser()
+    resolved_runs_root = _resolve_repo_path(
+        os.getenv("WM_BENCH_RUNS_ROOT"),
+        PROJECT_ROOT / "runs" / "local",
+    )
     return Settings(
         environment=os.getenv("APP_ENV", "development"),
         project_root=PROJECT_ROOT,
-        resources_root=Path(
-            os.getenv("WM_BENCH_RESOURCES_ROOT", str(PROJECT_ROOT / "resources"))
-        ).expanduser(),
-        data_root=data_root,
-        runs_root=runs_root,
-        database_path=database_path,
+        resources_root=_resolve_repo_path(
+            os.getenv("WM_BENCH_RESOURCES_ROOT"),
+            PROJECT_ROOT / "resources",
+        ),
+        data_root=_resolve_repo_path(
+            os.getenv("WM_BENCH_DATA_ROOT"),
+            PROJECT_ROOT,
+        ),
+        runs_root=resolved_runs_root,
+        database_path=_resolve_repo_path(
+            os.getenv("WM_BENCH_DB_PATH"),
+            resolved_runs_root / "wmbench.sqlite",
+        ),
         api_host=os.getenv("API_HOST", "127.0.0.1"),
         api_port=int(os.getenv("API_PORT", "8000")),
         device=os.getenv("WM_BENCH_DEVICE", "cpu"),

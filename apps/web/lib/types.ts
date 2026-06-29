@@ -70,6 +70,23 @@ export interface DatasetDownloadJob {
   bytesDownloaded?: number;
 }
 
+export type WeightDownloadStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface WeightDownloadJob {
+  id: string;
+  method: string;
+  weightsDir: string;
+  status: WeightDownloadStatus;
+  progress: number;
+  totalItems: number;
+  completedItems: number;
+  message?: string | null;
+  error?: string | null;
+  outputDir?: string | null;
+  archivePath?: string | null;
+  bytesDownloaded?: number;
+}
+
 export interface AlgorithmVersion {
   id: string;
   name: string;
@@ -82,6 +99,12 @@ export interface AlgorithmVersion {
   recommended?: boolean;
   available?: boolean;
   params?: Record<string, unknown>;
+  weightsDir?: string | null;
+  weightsPath?: string | null;
+  weightsInstalled?: boolean;
+  weightsDownloadReady?: boolean;
+  remoteWeightsAvailable?: boolean;
+  weightsPackRequired?: boolean;
 }
 
 export interface AttackPreset {
@@ -96,6 +119,12 @@ export interface AttackPreset {
   recommended?: boolean;
   available?: boolean;
   params?: Record<string, unknown>;
+  weightsDir?: string | null;
+  weightsPath?: string | null;
+  weightsInstalled?: boolean;
+  weightsDownloadReady?: boolean;
+  remoteWeightsAvailable?: boolean;
+  weightsPackRequired?: boolean;
 }
 
 export interface ModelArtifact {

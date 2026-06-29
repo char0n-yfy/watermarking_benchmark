@@ -17,11 +17,15 @@ from .services.dataset_catalog import build_catalog_item, get_catalog_entry, lis
 from .services.dataset_download import DatasetDownloadService
 from .services.experiment_service import ExperimentService
 from .services.object_storage import get_object_storage_client
+from .services.attack_weight_download import AttackWeightDownloadService
 from .services.resources import (
+    get_attack_catalog_item,
+    get_watermark_catalog_item,
     list_attack_resources,
     list_watermark_resources,
     scan_dataset_resources,
 )
+from .services.weight_download import WeightDownloadService
 from .services.system_metrics import collect_system_metrics
 
 
@@ -34,6 +38,8 @@ def create_app() -> FastAPI:
     )
     oss_client = get_object_storage_client()
     download_service = DatasetDownloadService(settings.resources_root, oss=oss_client)
+    weight_download_service = WeightDownloadService(settings.resources_root, oss=oss_client)
+    attack_weight_download_service = AttackWeightDownloadService(settings.resources_root, oss=oss_client)
 
     app = FastAPI(
         title="Watermark Benchmark API",
@@ -161,12 +167,60 @@ def create_app() -> FastAPI:
         return [job.to_json() for job in download_service.list_jobs(dataset_id)]
 
     @app.get("/resources/watermarks")
-    def watermarks() -> list[dict[str, object]]:
-        return list_watermark_resources()
+    def watermarks(remote: bool = False) -> list[dict[str, object]]:
+        return list_watermark_resources(
+            settings.resources_root,
+            oss=oss_client,
+            probe_remote=remote,
+        )
+
+    @app.post("/resources/watermarks/{identifier}/downloads")
+    def start_weight_download(identifier: str) -> dict[str, object]:
+        try:
+            item = get_watermark_catalog_item(identifier)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        method = str(item["method"])
+        try:
+            job = weight_download_service.start_download(method)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return job.to_json()
+
+    @app.get("/resources/watermarks/downloads/{job_id}")
+    def get_weight_download(job_id: str) -> dict[str, object]:
+        try:
+            return weight_download_service.get_job(job_id).to_json()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/resources/attacks")
-    def attacks() -> list[dict[str, object]]:
-        return list_attack_resources()
+    def attacks(remote: bool = False) -> list[dict[str, object]]:
+        return list_attack_resources(
+            settings.resources_root,
+            oss=oss_client,
+            probe_remote=remote,
+        )
+
+    @app.post("/resources/attacks/{identifier}/downloads")
+    def start_attack_weight_download(identifier: str) -> dict[str, object]:
+        try:
+            item = get_attack_catalog_item(identifier)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        method = str(item["method"])
+        try:
+            job = attack_weight_download_service.start_download(method)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return job.to_json()
+
+    @app.get("/resources/attacks/downloads/{job_id}")
+    def get_attack_weight_download(job_id: str) -> dict[str, object]:
+        try:
+            return attack_weight_download_service.get_job(job_id).to_json()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/experiment-configs")
     def create_config(payload: ExperimentConfigCreatePayload) -> dict[str, object]:
