@@ -86,7 +86,7 @@ def attack_category(method: str, preset_id: str | None = None) -> str:
         return "regeneration-rinsing"
     if "regen" in token or "vae" in token or "diffusion" in token:
         return "regeneration-single"
-    if method.startswith("cp_") or "combo" in token or "distcom" in token:
+    if "combo" in token or "distcom" in token:
         return "distortion-combination"
     return "distortion-single"
 

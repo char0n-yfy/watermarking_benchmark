@@ -38,7 +38,7 @@ class ResourceCatalogTest(unittest.TestCase):
         exposed_methods = {item["method"] for item in resources}
 
         self.assertEqual(set(ATTACK_REGISTRY), exposed_methods)
-        self.assertGreaterEqual(len(resources), 40)
+        self.assertGreaterEqual(len(resources), len(ATTACK_REGISTRY))
 
         for method in ATTACK_REGISTRY:
             item = get_attack_catalog_item(method)
@@ -80,12 +80,12 @@ class ResourceCatalogTest(unittest.TestCase):
 
     def test_strength_is_only_injected_for_compatible_attacks(self) -> None:
         jpeg = get_attack_catalog_item("atk-jpeg")
-        platform_pipeline = get_attack_catalog_item("atk-cp-platform-pipeline")
+        cew_composite = get_attack_catalog_item("cew_c1")
         cew_edit = get_attack_catalog_item("cew_e1")
         cew_sr = get_attack_catalog_item("cew_s1")
 
         self.assertEqual(_attack_params(jpeg, 0.5), {"strength": 0.5})
-        self.assertEqual(_attack_params(platform_pipeline, 0.5), {})
+        self.assertEqual(_attack_params(cew_composite, 0.5), {})
         self.assertEqual(_attack_params(cew_edit, 0.75), {"strength": 0.75})
         self.assertEqual(_attack_params(cew_sr, 4.0), {"scale": 4})
 
