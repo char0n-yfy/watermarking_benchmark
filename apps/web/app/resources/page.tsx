@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Boxes,
-  ChevronLeft,
-  ChevronRight,
   Cpu,
   Database,
   Gauge,
@@ -16,6 +14,7 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { ResourcePagination } from "@/components/ResourcePagination";
 import { useLanguage } from "@/components/LanguageProvider";
 import { fetchAlgorithms, fetchAttacks, fetchDatasetCatalog, fetchDatasetDownloadJob, datasetDownloadArchiveUrl, startDatasetDownload } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
@@ -53,7 +52,7 @@ interface BrowserResource {
   catalog?: DatasetCatalogItem;
 }
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 8;
 
 export default function ResourcesPage() {
   const { language, t } = useLanguage();
@@ -128,24 +127,24 @@ export default function ResourcesPage() {
     });
   }, [activeResources, activeType, availableOnly, categoryFilter, deviceFilter, query, recommendedOnly]);
 
-  const groupedDatasetResources = useMemo(() => {
+  const usesPagination = activeType === "watermarks" || activeType === "datasets";
+  const pageCount = usesPagination ? Math.max(1, Math.ceil(filteredResources.length / PAGE_SIZE)) : 1;
+  const visibleResources = usesPagination
+    ? filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+    : filteredResources;
+
+  const visibleGroupedDatasetResources = useMemo(() => {
     if (activeType !== "datasets") {
       return null;
     }
     const groups = new Map<string, BrowserResource[]>();
-    for (const resource of filteredResources) {
+    for (const resource of visibleResources) {
       const bucket = groups.get(resource.category) ?? [];
       bucket.push(resource);
       groups.set(resource.category, bucket);
     }
     return Array.from(groups.entries());
-  }, [activeType, filteredResources]);
-
-  const pageCount = Math.max(1, Math.ceil(filteredResources.length / PAGE_SIZE));
-  const visibleResources =
-    activeType === "datasets"
-      ? filteredResources
-      : filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  }, [activeType, visibleResources]);
   const selectedResource =
     filteredResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null;
   const totalSamples = datasets.reduce((total, dataset) => total + dataset.sampleCount, 0);
@@ -168,6 +167,20 @@ export default function ResourcesPage() {
       setPage(pageCount);
     }
   }, [page, pageCount]);
+
+  useEffect(() => {
+    if (!usesPagination) {
+      return;
+    }
+    const firstVisible = visibleResources[0];
+    if (!firstVisible) {
+      return;
+    }
+    const selectionVisible = visibleResources.some((resource) => resource.id === selectedResourceId);
+    if (!selectionVisible) {
+      setSelectedResourceId(firstVisible.id);
+    }
+  }, [page, selectedResourceId, usesPagination, visibleResources]);
 
   useEffect(() => {
     if (!selectedResource && filteredResources.length > 0) {
@@ -284,15 +297,20 @@ export default function ResourcesPage() {
               {filteredResources.length}/{activeResources.length}
             </span>
           </div>
-          <div className="panel-body resource-browser-list">
+          <div
+            className={
+              usesPagination ? "panel-body resource-list-panel-body" : "panel-body resource-browser-list"
+            }
+          >
             <div className="resource-result-note">
               <SlidersHorizontal size={14} />
               <span>
                 {t.resources.showingResults}: {visibleResources.length} / {filteredResources.length}
               </span>
             </div>
-            {activeType === "datasets" && groupedDatasetResources
-              ? groupedDatasetResources.map(([category, resources]) => (
+            {activeType === "datasets" && visibleGroupedDatasetResources ? (
+              <div className="resource-page-list" style={{ ["--resource-page-size" as string]: PAGE_SIZE }}>
+                {visibleGroupedDatasetResources.map(([category, resources]) => (
                   <div className="dataset-category-group" key={category}>
                     <div className="dataset-category-heading">{category}</div>
                     {resources.map((resource) => (
@@ -316,8 +334,11 @@ export default function ResourcesPage() {
                       </button>
                     ))}
                   </div>
-                ))
-              : visibleResources.map((resource) => (
+                ))}
+              </div>
+            ) : activeType === "watermarks" ? (
+              <div className="resource-page-list" style={{ ["--resource-page-size" as string]: PAGE_SIZE }}>
+                {visibleResources.map((resource) => (
                   <button
                     className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
                     key={resource.id}
@@ -335,31 +356,36 @@ export default function ResourcesPage() {
                     </span>
                   </button>
                 ))}
+              </div>
+            ) : (
+              filteredResources.map((resource) => (
+                <button
+                  className={selectedResource?.id === resource.id ? "resource-row active" : "resource-row"}
+                  key={resource.id}
+                  onClick={() => setSelectedResourceId(resource.id)}
+                  type="button"
+                >
+                  <span className="resource-row-main">
+                    <strong>{resource.name}</strong>
+                    <small>{resource.subtitle}</small>
+                  </span>
+                  <span className="resource-row-meta">
+                    {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
+                    {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
+                    <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
+                  </span>
+                </button>
+              ))
+            )}
             {filteredResources.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
-            {activeType !== "datasets" ? (
-            <div className="pagination-row">
-              <button
-                className="icon-button"
-                disabled={page <= 1}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-                title={t.resources.previousPage}
-                type="button"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span>
-                {page} / {pageCount}
-              </span>
-              <button
-                className="icon-button"
-                disabled={page >= pageCount}
-                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-                title={t.resources.nextPage}
-                type="button"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
+            {usesPagination ? (
+              <ResourcePagination
+                onPageChange={setPage}
+                page={page}
+                pageCount={pageCount}
+                previousLabel={t.resources.previousPage}
+                nextLabel={t.resources.nextPage}
+              />
             ) : null}
           </div>
         </div>
