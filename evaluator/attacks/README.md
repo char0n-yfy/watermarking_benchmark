@@ -77,9 +77,9 @@ evaluator/attacks/
 ├── registry.py             # 攻击注册表
 ├── runner.py               # 目录级批量执行
 ├── distortion_attacks/     # 基础数字失真攻击
-├── content_preserve_workflow_attacks/ # 内容保持型数字工作流攻击
+├── consumer_enhancement_workflow_attacks/ # 消费级增强工作流攻击
 ├── physical_channel_attacks/ # 物理信道模拟攻击
-├── regeneration_attacks/   # 再生成攻击预留
+├── regeneration_attacks/   # 再生成攻击
 └── adversarial_attacks/    # 对抗攻击预留
 ```
 
@@ -107,56 +107,6 @@ from evaluator.attacks import list_attacks
 
 print(list_attacks())
 ```
-
-## Content-Preserving Workflow Attacks
-
-`content_preserve_workflow_attacks/` 实现真实用户/平台工作流攻击，例如：
-
-- `cp_denoise`
-- `cp_denoise_deep`
-- `cp_deblock`
-- `cp_deblock_deep`
-- `cp_deartifact`
-- `cp_deartifact_deep`
-- `cp_despeckle`
-- `cp_edge_preserve_smooth`
-- `cp_super_resolution`
-- `cp_super_resolution_deep`
-- `cp_thumbnail_restore`
-- `cp_thumbnail_restore_deep`
-- `cp_resample_restore`
-- `cp_sr_denoise`
-- `cp_auto_enhance`
-- `cp_clahe`
-- `cp_hdr_like`
-- `cp_sharpen`
-- `cp_color_balance`
-- `cp_filter_lut`
-- `cp_warm_cold_tone`
-- `cp_fade_matte`
-- `cp_vivid_boost`
-- `cp_mono_style`
-- `cp_platform_pipeline`
-- `cp_social_export`
-- `cp_iterative_export`
-- `cp_color_space_pipeline`
-- `cp_metadata_strip_export`
-- `cp_preview_pipeline`
-- `cp_retouch_pipeline_core`
-- `cp_restore_pipeline_deep`
-- `cp_app_edit_pipeline`
-- `cp_platform_retouch`
-- `cp_clean_export_pipeline`
-
-这些攻击通常不是单个低级扰动，而是修复、增强、导出、再处理流程。
-
-Deep 类攻击默认查找权重：
-
-```text
-resources/weights/attacks/content_preserve_workflow_attacks/
-```
-
-Deep 攻击已接入本地 PyTorch 推理 backend：Restormer、SwinIR JPEG/CAR 和 Real-ESRGAN RRDBNet x4。运行结果 metadata 会记录实际 `backend`、`weight_path`、`weight_exists` 和 `fallback_used`。传入 `allow_fallback=False` 可以强制验证真实 Deep 推理路径。
 
 ## Physical Channel Attacks
 
@@ -211,23 +161,3 @@ class MyAttack(BaseAttack):
 - 输出：再生成后的图片路径。
 - 模型路径、prompt、step、strength、guidance 等都放在 `params` 或 `context.extra`。
 - 如果需要额外产物，例如 prompt、latent、attention map，写到 `context.workspace_dir` 下，并在返回 metadata 中记录路径。
-
-不要让检测/提取阶段依赖攻击内部对象。检测/提取阶段只能读取攻击后图片和 sidecar metadata。
-
-## 错误处理
-
-攻击失败时不要让整个服务进程崩溃。`BaseAttack.attack()` 会捕获异常并返回：
-
-```json
-{
-  "ok": false,
-  "error": "ValueError: ...",
-  "output_path": "..."
-}
-```
-
-后端可以按任务策略选择：
-
-- 跳过该样本。
-- 标记该攻击失败。
-- 中止整个任务。

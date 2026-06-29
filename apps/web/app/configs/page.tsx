@@ -52,7 +52,7 @@ function matchesResource(
 
 function categoryLabel(language: string, category: string) {
   const zh: Record<string, string> = {
-    "content-preserving": "内容保持",
+    "consumer-enhancement": "消费级增强",
     distortion: "经典失真",
     geometric: "几何变换",
     identity: "无攻击",
@@ -60,7 +60,7 @@ function categoryLabel(language: string, category: string) {
     removal: "移除攻击"
   };
   const en: Record<string, string> = {
-    "content-preserving": "Content-preserving",
+    "consumer-enhancement": "Consumer enhancement",
     distortion: "Distortion",
     geometric: "Geometric",
     identity: "Identity",
