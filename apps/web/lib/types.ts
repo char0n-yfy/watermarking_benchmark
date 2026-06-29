@@ -114,6 +114,8 @@ export interface AttackPreset {
   strengths: number[];
   description?: string;
   category?: string;
+  categoryLabel?: string;
+  categoryPath?: string;
   strengthParam?: string | null;
   requiresGpu?: boolean;
   recommended?: boolean;

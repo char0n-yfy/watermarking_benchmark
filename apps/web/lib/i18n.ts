@@ -119,7 +119,7 @@ export const translations = {
     },
     resources: {
       title: "资源",
-      subtitle: "数据集、水印算法、权重和攻击预设",
+      subtitle: "数据集、水印算法和攻击预设",
       catalog: "资源目录",
       name: "名称",
       type: "类型",
@@ -139,7 +139,6 @@ export const translations = {
       catalogLoading: "正在加载数据集目录…",
       resourceDetails: "资源详情",
       strengthGrid: "强度网格",
-      weightFolders: "水印算法权重目录",
       previousPage: "上一页",
       nextPage: "下一页",
       weightsConfigHint: "水印算法权重 artifact 不能单独加入实验配置，请通过对应水印算法使用。",
@@ -392,7 +391,7 @@ export const translations = {
     },
     resources: {
       title: "Resources",
-      subtitle: "Datasets, algorithms, weights, and attack presets",
+      subtitle: "Datasets, algorithms, and attack presets",
       catalog: "Catalog",
       name: "Name",
       type: "Type",
@@ -412,7 +411,6 @@ export const translations = {
       catalogLoading: "Loading dataset catalog…",
       resourceDetails: "Resource details",
       strengthGrid: "Strength grid",
-      weightFolders: "Watermark algorithm weights",
       previousPage: "Previous page",
       nextPage: "Next page",
       weightsConfigHint: "Weight artifacts cannot be added to a config directly. Use the corresponding watermark algorithm.",

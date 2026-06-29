@@ -21,18 +21,27 @@ export function BenchmarkRadar({
     return <div className="empty compact-empty">{emptyText}</div>;
   }
 
-  const size = 280;
+  const size = 340;
   const center = size / 2;
-  const radius = 96;
+  const radius = 98;
+  const labelRadius = radius + 40;
+  const sideLabelInset = 78;
   const rings = [0.25, 0.5, 0.75, 1];
   const colors = ["#2563eb", "#0f766e", "#a16207", "#b42318", "#7c3aed"];
   const axisPoints = categories.map((category, index) => {
     const angle = (Math.PI * 2 * index) / categories.length - Math.PI / 2;
+    const rawLabelX = center + Math.cos(angle) * labelRadius;
+    const rawLabelY = center + Math.sin(angle) * labelRadius;
     return {
       category,
       angle,
-      labelX: center + Math.cos(angle) * (radius + 34),
-      labelY: center + Math.sin(angle) * (radius + 34),
+      labelX:
+        rawLabelX < center - 8
+          ? Math.max(sideLabelInset, rawLabelX)
+          : rawLabelX > center + 8
+            ? Math.min(size - sideLabelInset, rawLabelX)
+            : rawLabelX,
+      labelY: Math.max(18, Math.min(size - 12, rawLabelY)),
       axisX: center + Math.cos(angle) * radius,
       axisY: center + Math.sin(angle) * radius
     };
@@ -128,8 +137,11 @@ export function BenchmarkRadar({
 
 function shortLabel(label: string): string {
   return label
-    .replace("Distortion ", "Dist. ")
-    .replace("Regeneration ", "Regen. ")
-    .replace("Adv Embedding ", "Adv. Emb. ")
-    .replace("Adv Surrogate Detector", "Adv. Surrogate");
+    .replace("Distortion Combination", "Dist. Combo")
+    .replace("Distortion Single", "Dist. Single")
+    .replace("Regeneration Single", "Regen. Single")
+    .replace("Regeneration Rinsing", "Regen. Rinsing")
+    .replace("Adv Embedding Grey-box", "Emb. Grey-box")
+    .replace("Adv Embedding Black-box", "Emb. Black-box")
+    .replace("Adv Surrogate Detector", "Surrogate");
 }
