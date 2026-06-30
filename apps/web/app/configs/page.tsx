@@ -147,6 +147,12 @@ const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
     short: "DWT-DCT-SVD",
     zh: "Invisible Watermark DWT-DCT-SVD"
   },
+  "traditional-spread-dct": {
+    en: "Traditional Spread-DCT",
+    rank: 12,
+    short: "Spread-DCT",
+    zh: "传统扩频 DCT 水印"
+  },
   hidden: { en: "HiDDeN", rank: 30, zh: "HiDDeN" },
   stegastamp: { en: "StegaStamp", rank: 31, zh: "StegaStamp" },
   "ssl-watermarking": { en: "SSL Watermarking", rank: 32, zh: "SSL Watermarking" },
@@ -160,12 +166,11 @@ const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
     short: "RivaGAN",
     zh: "Invisible Watermark RivaGAN"
   },
-  trustmark: { en: "TrustMark", rank: 38, zh: "TrustMark" },
-  "trustmark-c": { en: "TrustMark-C", rank: 39, zh: "TrustMark-C" },
-  "trustmark-q": { en: "TrustMark-Q", rank: 40, zh: "TrustMark-Q" },
-  rawatermark: { en: "RAWatermark", rank: 41, zh: "RAWatermark" },
-  "maskwm-d32": { en: "MaskWM-D32", rank: 42, zh: "MaskWM-D32" },
-  wam: { en: "WAM", rank: 43, zh: "WAM" },
+  "trustmark-c": { en: "TrustMark-C", rank: 38, zh: "TrustMark-C" },
+  "trustmark-q": { en: "TrustMark-Q", rank: 39, zh: "TrustMark-Q" },
+  rawatermark: { en: "RAWatermark", rank: 40, zh: "RAWatermark" },
+  "maskwm-d32": { en: "MaskWM-D32", rank: 41, zh: "MaskWM-D32" },
+  wam: { en: "WAM", rank: 42, zh: "WAM" },
   videoseal: { en: "VideoSeal", rank: 60, zh: "VideoSeal" },
   pixelseal: { en: "PixelSeal", rank: 61, zh: "PixelSeal" },
   chunkyseal: { en: "ChunkySeal", rank: 62, zh: "ChunkySeal" },

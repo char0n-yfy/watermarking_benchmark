@@ -45,7 +45,6 @@ class _TraditionalWatermark(BaseWatermark):
         return metadata
 
 
-@register_watermark
 class TraditionalDctWatermark(_TraditionalWatermark):
     name = "traditional-dct"
     description = "Internal block-DCT QIM image watermark; no neural weights."
@@ -152,7 +151,6 @@ class TraditionalSpreadDctWatermark(_TraditionalWatermark):
         return self._metadata(expected, decoded)
 
 
-@register_watermark
 class TraditionalLsbWatermark(_TraditionalWatermark):
     name = "traditional-lsb"
     description = "Internal blue-channel LSB image watermark; no neural weights."
@@ -180,7 +178,6 @@ class TraditionalLsbWatermark(_TraditionalWatermark):
         return self._metadata(expected, decoded)
 
 
-@register_watermark
 class TraditionalHaarWatermark(_TraditionalWatermark):
     name = "traditional-haar"
     description = "Internal Haar/LL-band QIM image watermark; no neural weights."

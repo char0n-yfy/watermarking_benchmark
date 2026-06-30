@@ -129,7 +129,7 @@ WATERMARK_DISPLAY_NAMES = {
     "rawatermark": "RAWatermark",
     "ssl-watermarking": "SSL Watermarking",
     "stegastamp": "StegaStamp",
-    "trustmark": "TrustMark",
+    "traditional-spread-dct": "Traditional Spread-DCT",
     "trustmark-c": "TrustMark-C",
     "trustmark-q": "TrustMark-Q",
     "videoseal": "VideoSeal",
@@ -172,6 +172,7 @@ ATTACK_DISPLAY_NAMES = {
 WATERMARK_CPU_METHODS = {
     "invisible-watermark-dwtdct",
     "invisible-watermark-dwtdctsvd",
+    "traditional-spread-dct",
 }
 
 WATERMARK_PARAM_OVERRIDES: dict[str, dict[str, Any]] = {}

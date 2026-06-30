@@ -34,7 +34,6 @@ WATERMARK_WEIGHT_DIRS: dict[str, str] = {
     "rawatermark": "rawatermark",
     "ssl-watermarking": "ssl_watermarking",
     "stegastamp": "stegastamp",
-    "trustmark": "trustmark",
     "trustmark-c": "trustmark",
     "trustmark-q": "trustmark",
     "videoseal": "videoseal",

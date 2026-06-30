@@ -99,13 +99,6 @@ class _TrustMarkBase(BaseWatermark):
 
 
 @register_watermark
-class TrustMarkWatermark(_TrustMarkBase):
-    name = "trustmark"
-    description = "TrustMark packaged wrapper; defaults to compact C model."
-    default_model_type = "C"
-
-
-@register_watermark
 class TrustMarkCWatermark(_TrustMarkBase):
     name = "trustmark-c"
     description = "TrustMark-C compact packaged wrapper."

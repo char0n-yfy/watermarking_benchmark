@@ -24,6 +24,16 @@ export const algorithms: AlgorithmVersion[] = [
     method: "invisible-watermark-dwtdctsvd"
   },
   {
+    id: "alg-traditional-spread-dct",
+    name: "Traditional Spread-DCT",
+    version: "local",
+    status: "enabled",
+    requiresGpu: false,
+    method: "traditional-spread-dct",
+    category: "traditional_watermark",
+    description: "Internal two-coefficient spread-spectrum DCT baseline; no neural weights."
+  },
+  {
     id: "alg-hidden",
     name: "HiDDeN",
     version: "packaged",

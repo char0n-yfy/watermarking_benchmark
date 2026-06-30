@@ -14,7 +14,8 @@ from .pixelseal import PixelSealWatermark
 from .rawatermark import RAWatermark
 from .ssl_watermarking import SSLWatermark
 from .stegastamp import StegaStampWatermark
-from .trustmark import TrustMarkCWatermark, TrustMarkQWatermark, TrustMarkWatermark
+from .traditional import TraditionalSpreadDctWatermark
+from .trustmark import TrustMarkCWatermark, TrustMarkQWatermark
 from .videoseal import VideoSealWatermark
 from .vine import VineWatermark
 from .wam import WAMWatermark
@@ -34,9 +35,9 @@ __all__ = [
     "RAWatermark",
     "SSLWatermark",
     "StegaStampWatermark",
+    "TraditionalSpreadDctWatermark",
     "TrustMarkCWatermark",
     "TrustMarkQWatermark",
-    "TrustMarkWatermark",
     "VideoSealWatermark",
     "VineWatermark",
     "WAMWatermark",
