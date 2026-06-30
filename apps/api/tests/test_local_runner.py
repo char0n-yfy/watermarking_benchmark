@@ -51,6 +51,10 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertNotIn("aggregates", summary)
             self.assertNotIn("bit_accuracy", extract_manifest[0]["metadata"])
             self.assertNotIn("match", extract_manifest[0]["metadata"])
+            self.assertNotIn("inputPath", extract_manifest[0])
+            self.assertNotIn("payloadBits", extract_manifest[0])
+            self.assertNotIn("detectionScore", extract_manifest[0])
+            self.assertNotIn("negativeManifestPath", summary["cells"][0])
             run_root = runs_root / "run_smoke"
             self.assertTrue((run_root / "run_summary.json").exists())
             self.assertTrue((run_root / "run_plan.json").exists())
@@ -59,6 +63,28 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertTrue((run_root / "image_detection.jsonl").exists())
             self.assertTrue((run_root / "runtime_profile.jsonl").exists())
             self.assertTrue((run_root / "stage_events.jsonl").exists())
+            run_status = json.loads((run_root / "run_status.json").read_text())
+            cell_summary = json.loads((run_root / "cell_summary_latest.json").read_text())
+            self.assertEqual(run_status["progress"], 100)
+            self.assertEqual(run_status["completedProgress"], 100)
+            self.assertEqual(run_status["progressKind"], "completedCells")
+            self.assertEqual(cell_summary["progress"], 100)
+            self.assertEqual(cell_summary["completedProgress"], 100)
+            self.assertEqual(cell_summary["succeededProgress"], 100)
+            self.assertEqual(cell_summary["progressKind"], "completedCells")
+            self.assertEqual(summary["completedProgress"], 100)
+            self.assertEqual(summary["succeededProgress"], 100)
+            self.assertEqual(summary["progressKind"], "completedCells")
+            sample_record = json.loads((run_root / "sample_manifest.jsonl").read_text().splitlines()[0])
+            quality_record = json.loads((run_root / "image_quality.jsonl").read_text().splitlines()[0])
+            runtime_record = json.loads((run_root / "runtime_profile.jsonl").read_text().splitlines()[0])
+            self.assertNotIn("stagedPath", sample_record)
+            for field in ("width", "height", "referencePath", "targetPath"):
+                self.assertNotIn(field, quality_record)
+            for field in ("perceptualBackend", "perceptualDevice", "perceptualErrors"):
+                self.assertNotIn(field, quality_record["metrics"])
+            for field in ("msPerImage", "msPerMP", "throughputImagesPerSecond", "throughputMPPerSecond", "macs", "flops"):
+                self.assertNotIn(field, runtime_record)
             self.assertFalse((Path(summary["cells"][0]["outputDir"]) / "attacked").exists())
 
             resumed = run_local_experiment(

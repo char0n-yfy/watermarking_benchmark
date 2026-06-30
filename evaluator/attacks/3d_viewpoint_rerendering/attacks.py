@@ -29,7 +29,7 @@ DEFAULT_SHARP_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572
 DEFAULT_SHARP_MOTIONS = ("swipe", "shake", "rotate", "rotate_forward")
 DEFAULT_SHARP_PHASES = tuple(index / 8 for index in range(8))
 DEFAULT_SHARP_LOOKAT_MODES = ("point", "ahead")
-DEFAULT_MAX_DISPARITY_LEVELS = (0.01, 0.02, 0.04)
+DEFAULT_MAX_DISPARITY_LEVELS = (0.01, 0.02, 0.1)
 
 
 def _hash_prefix_from_filename(filename: str) -> str | None:

@@ -159,6 +159,8 @@ def row_to_run(row: sqlite3.Row) -> JsonDict:
         "status": row["status"],
         "cells": row["cells"],
         "progress": row["progress"],
+        "completedProgress": row["progress"],
+        "progressKind": "completedCells",
         "artifactRoot": row["artifact_root"],
         "logPath": row["log_path"],
         "workerId": row["worker_id"],

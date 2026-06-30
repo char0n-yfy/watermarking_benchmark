@@ -107,6 +107,8 @@ class ExperimentServiceTest(unittest.TestCase):
             events = service.get_run_events(run["id"])
 
             self.assertEqual(finished["status"], "succeeded")
+            self.assertEqual(finished["completedProgress"], 100)
+            self.assertEqual(finished["progressKind"], "completedCells")
             self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
             self.assertEqual(len(results["cells"]), 1)
             self.assertEqual(results["cells"][0]["status"], "succeeded")
@@ -178,12 +180,13 @@ class ExperimentServiceTest(unittest.TestCase):
 
             self.assertEqual(cancelled["status"], "cancelled")
             self.assertTrue(cancelled["cancelRequested"])
-            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
 
             resumed = service.resume_run(run["id"])
 
             self.assertEqual(resumed["status"], "queued")
             self.assertFalse(resumed["cancelRequested"])
+            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
 
 
 if __name__ == "__main__":

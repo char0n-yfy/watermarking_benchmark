@@ -141,6 +141,8 @@ def _write_run_status(
             "completedCells": completed_cells,
             "expectedCells": expected_cells,
             "progress": _progress(completed_cells, expected_cells),
+            "completedProgress": _progress(completed_cells, expected_cells),
+            "progressKind": "completedCells",
             "error": error,
             "updatedAt": _utc_timestamp(),
         },
@@ -233,7 +235,9 @@ def _write_latest_cell_artifacts(paths: dict[str, Path], *, run_id: str, expecte
             "succeededCells": succeeded_cells,
             "failedCells": failed_cells,
             "expectedCells": expected_cells,
-            "progress": _progress(succeeded_cells, expected_cells),
+            "progress": _progress(attempted_cells, expected_cells),
+            "completedProgress": _progress(attempted_cells, expected_cells),
+            "progressKind": "completedCells",
             "attemptedProgress": _progress(attempted_cells, expected_cells),
             "succeededProgress": _progress(succeeded_cells, expected_cells),
             "statusCounts": status_counts,
@@ -324,7 +328,6 @@ def _record_runtime_profile(
     metadata: JsonDict | None = None,
 ) -> None:
     total_mp = _total_megapixels(image_paths)
-    seconds = elapsed_ms / 1000.0
     _append_jsonl(
         paths["runtimeProfile"],
         {
@@ -337,13 +340,7 @@ def _record_runtime_profile(
             "imageCount": len(image_paths),
             "totalMegapixels": total_mp,
             "elapsedMs": elapsed_ms,
-            "msPerImage": None if not image_paths else elapsed_ms / len(image_paths),
-            "msPerMP": None if total_mp <= 0 else elapsed_ms / total_mp,
-            "throughputImagesPerSecond": None if seconds <= 0 else len(image_paths) / seconds,
-            "throughputMPPerSecond": None if seconds <= 0 else total_mp / seconds,
             "peakMemoryMB": _gpu_peak_memory_mb(device) or _process_peak_memory_mb(),
-            "macs": None,
-            "flops": None,
             "error": error,
             "metadata": metadata or {},
             "timestamp": _utc_timestamp(),
@@ -397,7 +394,6 @@ def _record_quality_pairs(
 ) -> None:
     for reference_path, target_path in _pair_images(reference_dir, target_dir):
         metrics = compute_image_quality_pair(reference_path, target_path)
-        width, height = _image_size(reference_path)
         _append_jsonl(
             paths["imageQuality"],
             {
@@ -411,10 +407,6 @@ def _record_quality_pairs(
                 "attackStrength": attack_strength,
                 "seed": seed,
                 "sampleId": _image_sample_id(reference_path, reference_dir),
-                "width": width,
-                "height": height,
-                "referencePath": str(reference_path),
-                "targetPath": str(target_path),
                 "metrics": metrics,
                 "timestamp": _utc_timestamp(),
             },
@@ -430,13 +422,6 @@ def _bit_string(value: Any) -> str | None:
         except (TypeError, ValueError):
             return None
     return None
-
-
-def _float_or_none(value: Any) -> float | None:
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _detection_record(
@@ -457,9 +442,9 @@ def _detection_record(
     decoded_bits_metadata = metadata.pop("decoded_bits", None)
     decoded_bits = _bit_string(getattr(result, "bits", None)) or _bit_string(decoded_bits_metadata)
     expected_bits = _bit_string(metadata.pop("expected_bits", None))
-    detection_score = _float_or_none(metadata.pop("detection_score", None))
+    metadata.pop("detection_score", None)
     expected_message = metadata.pop("expected_message", None)
-    payload_bits = metadata.pop("payload_bits", None)
+    metadata.pop("payload_bits", None)
     for derived_key in ("bit_accuracy", "bit_error_rate", "match", "matched"):
         metadata.pop(derived_key, None)
 
@@ -475,14 +460,11 @@ def _detection_record(
         "seed": seed,
         "label": label,
         "sampleId": _image_sample_id(input_path, input_root),
-        "inputPath": str(input_path),
         "status": "succeeded" if getattr(result, "ok", False) else "failed",
         "decodedMessage": getattr(result, "message", None),
         "expectedMessage": expected_message,
         "decodedBits": decoded_bits,
         "expectedBits": expected_bits,
-        "payloadBits": payload_bits,
-        "detectionScore": detection_score,
         "elapsedMs": getattr(result, "elapsed_ms", None),
         "error": getattr(result, "error", None),
         "metadata": metadata,
@@ -836,7 +818,6 @@ def run_local_experiment(
                         "datasetId": dataset_id,
                         "sampleId": sample_id,
                         "sourcePath": str(dataset.path / sample_path.relative_to(cell_input_dir)),
-                        "stagedPath": str(sample_path),
                         "width": width,
                         "height": height,
                         "timestamp": _utc_timestamp(),
@@ -1004,7 +985,6 @@ def run_local_experiment(
                                     "sampleCount": len(copied_samples),
                                     "attackParams": variant["attackParams"],
                                     "manifestPath": str(failed_detection_manifest),
-                                    "negativeManifestPath": str(failed_detection_manifest),
                                     "outputDir": str(failed_cell_root),
                                     "error": embed_error,
                                     "elapsedMs": embed_elapsed_ms,
@@ -1300,7 +1280,6 @@ def run_local_experiment(
                                 "sampleCount": len(copied_samples),
                                 "attackParams": attack_params,
                                 "manifestPath": str(cell_detection_manifest_path),
-                                "negativeManifestPath": str(cell_detection_manifest_path),
                                 "outputDir": str(cell_root),
                                 "error": error,
                                 "elapsedMs": elapsed_ms,
@@ -1350,6 +1329,9 @@ def run_local_experiment(
         "failedCells": failed,
         "skippedCells": skipped_cells,
         "progress": _progress(len(cells), expected_cells),
+        "completedProgress": _progress(len(cells), expected_cells),
+        "succeededProgress": _progress(len(cells) - failed, expected_cells),
+        "progressKind": "completedCells",
         "elapsedMs": (time.perf_counter() - started) * 1000,
         "cells": cells,
     }

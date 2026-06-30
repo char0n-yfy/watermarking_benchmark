@@ -148,7 +148,9 @@ evaluator/attacks/regeneration_attacks/backends/ctrlregen/
 
 默认参数：
 
-- `step=1.0`，前端强度参数名也是 `step`。
+- `step=1.0`，前端强度参数名也是 `step`。`step` 会线性映射到
+  `noise_step=100..1000`，即 `step=0` 对应 `noise_step=100`，
+  `step=1` 对应 full-strength `noise_step=1000`。
 - `num_inference_steps=50`
 - `guidance_scale=2.0`
 - `controlnet_conditioning_scale=1.0`

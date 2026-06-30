@@ -3,8 +3,9 @@
 This package implements the CEW-Bench v4 attack family described by the
 benchmark spec:
 
-- `cew_e1` ... `cew_e4`: 4 darktable-style edit attacks. Select
-  `light`, `medium`, or `strong` with the `strength` parameter.
+- `cew_e1` ... `cew_e4`: 4 darktable-style edit attacks. The `strength`
+  parameter is a smooth 0..1 interpolation where 0 is light, 0.5 is medium,
+  and 1 is strong.
 - `cew_d1` ... `cew_d5`: 5 deep-enhancement entries for auto-light,
   white balance, adaptive color, low-light detail enhancement, and AI denoise.
 - `cew_s1` ... `cew_s3`: 3 super-resolution entries for Real-ESRGAN,

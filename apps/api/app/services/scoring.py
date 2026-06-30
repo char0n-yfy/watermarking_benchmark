@@ -473,13 +473,9 @@ def _load_perceptual_pair(reference_path: Path, target_path: Path, device: Any) 
 def _compute_perceptual_metrics(reference_path: Path, target_path: Path) -> JsonDict:
     backend = _perceptual_backend()
     models = backend.get("models") or {}
-    errors = dict(backend.get("errors") or {})
     result: JsonDict = {
         "lpips": None,
         "dists": None,
-        "perceptualBackend": "+".join(sorted(models)) if models else "not_configured",
-        "perceptualDevice": backend.get("device", "cpu"),
-        "perceptualErrors": errors,
     }
     if not models:
         return result
@@ -495,8 +491,8 @@ def _compute_perceptual_metrics(reference_path: Path, target_path: Path) -> Json
             dists_model = models.get("dists")
             if dists_model is not None:
                 result["dists"] = float(dists_model(ref_tensor, target_tensor).reshape(-1).mean().item())
-    except Exception as exc:
-        result["perceptualErrors"] = {**errors, "compute": f"{type(exc).__name__}: {exc}"}
+    except Exception:
+        pass
     return result
 
 

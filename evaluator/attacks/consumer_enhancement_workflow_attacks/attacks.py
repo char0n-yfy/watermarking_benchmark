@@ -183,37 +183,57 @@ _EDIT_STRENGTH_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
 }
 
 
-def _normalize_edit_strength(value: Any) -> str:
+_EDIT_STRENGTH_ALIASES = {
+    "l": 0.0,
+    "low": 0.0,
+    "light": 0.0,
+    "m": 0.5,
+    "med": 0.5,
+    "medium": 0.5,
+    "default": 0.5,
+    "s": 1.0,
+    "high": 1.0,
+    "strong": 1.0,
+}
+
+
+def _clamp_edit_strength(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _normalize_edit_strength(value: Any) -> float:
     if value is None:
-        return "medium"
+        return 0.5
     if isinstance(value, (int, float)):
-        numeric = float(value)
-        if numeric <= 0.34:
-            return "light"
-        if numeric <= 0.67:
-            return "medium"
-        return "strong"
+        return _clamp_edit_strength(float(value))
     normalized = str(value).strip().lower().replace("-", "_")
-    aliases = {
-        "l": "light",
-        "low": "light",
-        "light": "light",
-        "m": "medium",
-        "med": "medium",
-        "medium": "medium",
-        "default": "medium",
-        "s": "strong",
-        "high": "strong",
-        "strong": "strong",
-    }
-    if normalized not in aliases:
-        raise ValueError(f"Unsupported CEW edit strength: {value!r}. Use light, medium, or strong.")
-    return aliases[normalized]
+    if normalized not in _EDIT_STRENGTH_ALIASES:
+        raise ValueError(f"Unsupported CEW edit strength: {value!r}. Use a 0..1 value, light, medium, or strong.")
+    return _EDIT_STRENGTH_ALIASES[normalized]
 
 
-def _edit_params(operation: str, config: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    strength = _normalize_edit_strength(config.get("strength", "medium"))
-    params = dict(_EDIT_STRENGTH_PRESETS[operation][strength])
+def _piecewise_edit_value(strength: float, light: float, medium: float, strong: float) -> float:
+    value = _clamp_edit_strength(strength)
+    if value <= 0.5:
+        return light + (medium - light) * (value / 0.5)
+    return medium + (strong - medium) * ((value - 0.5) / 0.5)
+
+
+def _continuous_edit_params(operation: str, strength: float) -> dict[str, Any]:
+    presets = _EDIT_STRENGTH_PRESETS[operation]
+    params = dict(presets["medium"])
+    for key in params:
+        light = presets["light"].get(key)
+        medium = presets["medium"].get(key)
+        strong = presets["strong"].get(key)
+        if isinstance(light, (int, float)) and isinstance(medium, (int, float)) and isinstance(strong, (int, float)):
+            params[key] = _piecewise_edit_value(strength, float(light), float(medium), float(strong))
+    return params
+
+
+def _edit_params(operation: str, config: Mapping[str, Any]) -> tuple[float, dict[str, Any]]:
+    strength = _normalize_edit_strength(config.get("strength", 0.5))
+    params = _continuous_edit_params(operation, strength)
     for key in list(params):
         if key in config:
             params[key] = config[key]
@@ -533,10 +553,10 @@ ATTACK_CLASS_BY_NAME: dict[str, type[CEWAttack]] = {}
 
 
 _EDIT_PRESETS: list[tuple[str, str, str, dict[str, Any]]] = [
-    ("cew_e1", "CEW-E1 Auto-Tone. Select light/medium/strong with the strength parameter.", "edit_auto_tone", {"strength": "medium"}),
-    ("cew_e2", "CEW-E2 Warm-Vivid. Select light/medium/strong with the strength parameter.", "edit_warm_vivid", {"strength": "medium"}),
-    ("cew_e3", "CEW-E3 Film-Faded. Select light/medium/strong with the strength parameter.", "edit_film_faded", {"strength": "medium"}),
-    ("cew_e4", "CEW-E4 Local-Clarity HDR. Select light/medium/strong with the strength parameter.", "edit_local_clarity", {"strength": "medium"}),
+    ("cew_e1", "CEW-E1 Auto-Tone. Smooth 0..1 strength interpolates light/medium/strong edit presets.", "edit_auto_tone", {"strength": 0.5}),
+    ("cew_e2", "CEW-E2 Warm-Vivid. Smooth 0..1 strength interpolates light/medium/strong edit presets.", "edit_warm_vivid", {"strength": 0.5}),
+    ("cew_e3", "CEW-E3 Film-Faded. Smooth 0..1 strength interpolates light/medium/strong edit presets.", "edit_film_faded", {"strength": 0.5}),
+    ("cew_e4", "CEW-E4 Local-Clarity HDR. Smooth 0..1 strength interpolates light/medium/strong edit presets.", "edit_local_clarity", {"strength": 0.5}),
 ]
 
 _DEEP_PRESETS: list[tuple[str, str, str, dict[str, Any]]] = [

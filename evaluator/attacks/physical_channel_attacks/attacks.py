@@ -221,9 +221,9 @@ PRINT_PRESETS: dict[str, dict[str, Any]] = {
     "medium": dict(yaw=12, pitch=7,  roll=4,  distance=0.84, dfocus=1.30, illum=0.130, glare=0.060,
                    halftone_cell=6, paper=0.020, cmyk=1.05, noise=0.030, jpeg=78,
                    gamma=1.060, brightness=1.03, contrast=1.080, sat=0.86),
-    "strong": dict(yaw=21, pitch=12, roll=7,  distance=0.72, dfocus=1.65, illum=0.180, glare=0.080,
-                   halftone_cell=7, paper=0.028, cmyk=1.20, noise=0.040, jpeg=72,
-                   gamma=1.085, brightness=1.04, contrast=1.110, sat=0.82),
+    "strong": dict(yaw=16, pitch=9,  roll=5,  distance=0.78, dfocus=1.25, illum=0.140, glare=0.050,
+                   halftone_cell=6, paper=0.020, cmyk=1.02, noise=0.030, jpeg=78,
+                   gamma=1.065, brightness=1.030, contrast=1.085, sat=0.86),
 }
 
 # combined：每档 = (print 跳强度, screen 跳强度)，降档避免双跳叠加损毁

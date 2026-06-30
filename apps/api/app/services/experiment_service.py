@@ -436,21 +436,18 @@ class ExperimentService:
         return self.get_run(run_id)
 
     def list_runs(self, *, scope: str | None = None) -> list[dict[str, Any]]:
-        active_statuses = ["queued", "running", "failed", "cancelled", "partially_failed"]
+        active_statuses = ["queued", "running"]
         with self.database.connect() as connection:
             if scope == "active":
                 rows = connection.execute(
                     """
                     SELECT * FROM experiment_runs
-                    WHERE status IN (?, ?, ?, ?, ?)
+                    WHERE status IN (?, ?)
                     ORDER BY
                       CASE status
                         WHEN 'running' THEN 0
                         WHEN 'queued' THEN 1
-                        WHEN 'partially_failed' THEN 2
-                        WHEN 'failed' THEN 3
-                        WHEN 'cancelled' THEN 4
-                        ELSE 5
+                        ELSE 2
                       END,
                       updated_at DESC
                     """,

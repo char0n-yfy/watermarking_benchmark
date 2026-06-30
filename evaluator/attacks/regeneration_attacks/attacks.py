@@ -31,6 +31,9 @@ DEFAULT_CTRLREGEN_ADAPTER_REPO_ID = "yepengliu/ctrlregen"
 DEFAULT_CTRLREGEN_IMAGE_ENCODER_REPO_ID = "facebook/dinov2-giant"
 DEFAULT_CTRLREGEN_VAE_REPO_ID = "stabilityai/sd-vae-ft-mse"
 DEFAULT_REGEN_NOISE_STEP_RANGE = (20, 100)
+DEFAULT_SINGLE_REGEN_NOISE_STEP_RANGE = (20, 300)
+DEFAULT_FOUR_TIMES_REGEN_NOISE_STEP_RANGE = (20, 50)
+DEFAULT_CTRLREGEN_NOISE_STEP_RANGE = (100, 1000)
 
 DIFFUSION_REQUIRED_FILES = (
     "model_index.json",
@@ -645,13 +648,14 @@ class RegenVAEAttack(BaseAttack):
 class _BaseRegenDiffusionAttack(BaseAttack):
     description = "Regenerate an image through Stable Diffusion latent noising and denoising."
     passes = 1
+    noise_step_range = DEFAULT_REGEN_NOISE_STEP_RANGE
 
     def __init__(
         self,
         noise_step: int | None = None,
         strength: float | None = None,
-        noise_step_min: int = DEFAULT_REGEN_NOISE_STEP_RANGE[0],
-        noise_step_max: int = DEFAULT_REGEN_NOISE_STEP_RANGE[1],
+        noise_step_min: int | None = None,
+        noise_step_max: int | None = None,
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         image_size: int = 512,
@@ -667,8 +671,9 @@ class _BaseRegenDiffusionAttack(BaseAttack):
         dtype: str = "auto",
         save_intermediates: bool = False,
     ) -> None:
-        noise_step_min = int(noise_step_min)
-        noise_step_max = int(noise_step_max)
+        default_noise_step_min, default_noise_step_max = self.noise_step_range
+        noise_step_min = default_noise_step_min if noise_step_min is None else int(noise_step_min)
+        noise_step_max = default_noise_step_max if noise_step_max is None else int(noise_step_max)
         if noise_step_min < 0:
             raise ValueError("noise_step_min must be non-negative")
         if noise_step_max < noise_step_min:
@@ -677,8 +682,8 @@ class _BaseRegenDiffusionAttack(BaseAttack):
             strength = _clamp_unit_strength(float(strength))
             noise_step = _noise_step_from_strength(strength, noise_step_min, noise_step_max)
         elif noise_step is None:
-            noise_step = 60
-            strength = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
+            strength = 0.5
+            noise_step = _noise_step_from_strength(strength, noise_step_min, noise_step_max)
         else:
             noise_step = int(noise_step)
             strength = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
@@ -842,6 +847,7 @@ class RegenDiffusionAttack(_BaseRegenDiffusionAttack):
     name = "regen_diffusion"
     description = "Single-pass Stable Diffusion 2.1-base regeneration attack."
     passes = 1
+    noise_step_range = DEFAULT_SINGLE_REGEN_NOISE_STEP_RANGE
 
 
 @register_attack
@@ -856,6 +862,7 @@ class FourTimesRegenDiffusionAttack(_BaseRegenDiffusionAttack):
     name = "4x_regen"
     description = "Four repeated Stable Diffusion 2.1-base regeneration passes."
     passes = 4
+    noise_step_range = DEFAULT_FOUR_TIMES_REGEN_NOISE_STEP_RANGE
 
 
 @register_attack
@@ -876,6 +883,9 @@ class NoiseToImageAttack(BaseAttack):
         image_size: int = 512,
         square_mode: str = "fit",
         step: float = 1.0,
+        noise_step: int | None = None,
+        noise_step_min: int = DEFAULT_CTRLREGEN_NOISE_STEP_RANGE[0],
+        noise_step_max: int = DEFAULT_CTRLREGEN_NOISE_STEP_RANGE[1],
         seed: int | None = 1,
         num_inference_steps: int = 50,
         guidance_scale: float = 2.0,
@@ -894,6 +904,17 @@ class NoiseToImageAttack(BaseAttack):
         if num_inference_steps <= 0:
             raise ValueError("num_inference_steps must be positive")
         step = max(0.0, min(1.0, float(step)))
+        noise_step_min = int(noise_step_min)
+        noise_step_max = int(noise_step_max)
+        if noise_step_min < 0:
+            raise ValueError("noise_step_min must be non-negative")
+        if noise_step_max < noise_step_min:
+            raise ValueError("noise_step_max must be >= noise_step_min")
+        if noise_step is None:
+            noise_step = _noise_step_from_strength(step, noise_step_min, noise_step_max)
+        else:
+            noise_step = int(noise_step)
+            step = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
         super().__init__(
             source_root=str(source_root) if source_root is not None else str(DEFAULT_NOISE_TO_IMAGE_SOURCE_ROOT),
             weight_root=str(weight_root) if weight_root is not None else str(DEFAULT_WEIGHT_ROOT),
@@ -906,6 +927,9 @@ class NoiseToImageAttack(BaseAttack):
             image_size=image_size,
             square_mode=square_mode,
             step=step,
+            noise_step=noise_step,
+            noise_step_min=noise_step_min,
+            noise_step_max=noise_step_max,
             seed=seed,
             num_inference_steps=num_inference_steps,
             guidance_scale=float(guidance_scale),
@@ -928,6 +952,9 @@ class NoiseToImageAttack(BaseAttack):
         self.image_size = image_size
         self.square_mode = square_mode
         self.step = step
+        self.noise_step = int(noise_step)
+        self.noise_step_min = noise_step_min
+        self.noise_step_max = noise_step_max
         self.seed = seed
         self.num_inference_steps = num_inference_steps
         self.guidance_scale = float(guidance_scale)
@@ -1167,7 +1194,7 @@ class NoiseToImageAttack(BaseAttack):
         self._resolved_paths["dtype"] = str(torch_dtype).replace("torch.", "")
 
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
-        if self.step <= 0.0:
+        if self.noise_step <= 0:
             image = Image.open(input_path).convert("RGB")
             input_size = image.size
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1175,8 +1202,11 @@ class NoiseToImageAttack(BaseAttack):
             return {
                 "backend": "ctrlregen",
                 "skipped_backend": True,
-                "reason": "step_zero_noop",
+                "reason": "noise_step_zero_noop",
                 "step": self.step,
+                "noise_step": self.noise_step,
+                "noise_step_min": self.noise_step_min,
+                "noise_step_max": self.noise_step_max,
                 "seed": self._seed_for_context(context),
                 "num_inference_steps": self.num_inference_steps,
                 "guidance_scale": self.guidance_scale,
@@ -1193,6 +1223,8 @@ class NoiseToImageAttack(BaseAttack):
         assert self._pipe is not None
         assert self._canny_impl is not None
         assert self._color_match is not None
+        num_train_timesteps = int(getattr(self._pipe.scheduler.config, "num_train_timesteps", self.noise_step_max))
+        pipeline_strength = max(0.0, min(1.0, float(self.noise_step) / max(float(num_train_timesteps), 1.0)))
 
         image = Image.open(input_path)
         input_size = image.size
@@ -1209,7 +1241,7 @@ class NoiseToImageAttack(BaseAttack):
                 image=[watermarked],
                 control_image=[control_img],
                 ip_adapter_image=[watermarked],
-                strength=self.step,
+                strength=pipeline_strength,
                 generator=generator,
                 num_inference_steps=self.num_inference_steps,
                 controlnet_conditioning_scale=self.controlnet_conditioning_scale,
@@ -1244,6 +1276,11 @@ class NoiseToImageAttack(BaseAttack):
             "vae_downloaded": self._resolved_paths.get("vae_downloaded"),
             "dtype": self._resolved_paths.get("dtype"),
             "step": self.step,
+            "noise_step": self.noise_step,
+            "noise_step_min": self.noise_step_min,
+            "noise_step_max": self.noise_step_max,
+            "pipeline_strength": pipeline_strength,
+            "num_train_timesteps": num_train_timesteps,
             "seed": self._seed_for_context(context),
             "num_inference_steps": self.num_inference_steps,
             "guidance_scale": self.guidance_scale,

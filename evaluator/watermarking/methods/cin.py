@@ -20,6 +20,21 @@ from evaluator.watermarking.utils import (
 )
 
 
+CIN_KORNIA_COMPAT_STATE_KEYS = (
+    "noise_model.Rotation._param_generator.degrees",
+)
+
+
+def _patch_cin_state_for_current_kornia(model: Any, state: Mapping[str, Any]) -> dict[str, Any]:
+    model_state = model.state_dict()
+    patched = dict(state)
+    for key in CIN_KORNIA_COMPAT_STATE_KEYS:
+        for candidate in (key, f"module.{key}"):
+            if candidate not in patched and candidate in model_state:
+                patched[candidate] = model_state[candidate].detach().clone()
+    return patched
+
+
 @register_watermark
 class CINWatermark(BaseWatermark):
     name = "cin"
@@ -82,11 +97,11 @@ class CINWatermark(BaseWatermark):
             state = torch.load(self.checkpoint_path, map_location="cpu")["cinNet"]
             if device.type == "cuda":
                 model = torch.nn.DataParallel(model, device_ids=opt["train"]["device_ids"])
-                model.load_state_dict(state, strict=True)
+                model.load_state_dict(_patch_cin_state_for_current_kornia(model, state), strict=True)
                 model = model.module
             else:
                 stripped = {key.removeprefix("module."): value for key, value in state.items()}
-                model.load_state_dict(stripped, strict=True)
+                model.load_state_dict(_patch_cin_state_for_current_kornia(model, stripped), strict=True)
             model = model.to(device).eval()
 
         self._torch = torch

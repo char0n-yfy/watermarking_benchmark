@@ -184,6 +184,8 @@ export interface DemoRunRecord {
   status: RunStatus;
   cells: number;
   progress: number;
+  completedProgress?: number;
+  progressKind?: "completedCells";
   updatedAt: string;
   artifactRoot?: string;
   logPath?: string | null;

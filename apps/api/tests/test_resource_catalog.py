@@ -128,7 +128,7 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertTrue(get_attack_catalog_item("cew_s1")["requiresGpu"])
         self.assertTrue(get_attack_catalog_item("cew_c1")["requiresGpu"])
         self.assertEqual(get_attack_catalog_item("cew_e1")["strengthParam"], "strength")
-        self.assertEqual(get_attack_catalog_item("cew_e1")["strengths"], [0.25, 0.5, 0.75])
+        self.assertEqual(get_attack_catalog_item("cew_e1")["strengths"], [0.0, 0.5, 1.0])
         self.assertEqual(get_attack_catalog_item("cew_s1")["strengthParam"], "scale")
         self.assertEqual(get_attack_catalog_item("cew_s1")["strengths"], [2.0, 4.0])
 
@@ -138,7 +138,7 @@ class ResourceCatalogTest(unittest.TestCase):
 
         self.assertEqual(noise_to_image["category"], "regeneration_attacks")
         self.assertEqual(noise_to_image["strengthParam"], "step")
-        self.assertEqual(noise_to_image["strengths"], [0.25, 0.5, 0.75, 1.0])
+        self.assertEqual(noise_to_image["strengths"], [0.0, 0.5, 1.0])
         self.assertTrue(noise_to_image["requiresGpu"])
 
         self.assertEqual(image_to_vedio["category"], "regeneration_attacks")
