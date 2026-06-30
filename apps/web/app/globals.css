@@ -3346,6 +3346,246 @@ a.button {
   font-size: 12px;
 }
 
+.run-monitor-overview {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.35fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.run-overview-card,
+.run-attack-status-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 14px;
+}
+
+.run-overview-card.primary {
+  border-color: color-mix(in srgb, var(--teal) 34%, var(--line));
+  background: linear-gradient(180deg, #f5fbf8 0%, #fbfcfa 82%);
+}
+
+.run-overview-title,
+.run-attack-status-head,
+.run-progress-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-overview-title span,
+.run-progress-section-head span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.run-overview-title strong {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.run-progress-large {
+  height: 10px;
+}
+
+.run-count-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.run-count-grid > div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.run-count-grid span,
+.run-current-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.run-count-grid strong {
+  font-size: 18px;
+}
+
+.run-overview-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.run-current-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.run-current-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.run-current-field strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-current-field code {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-stage-line {
+  display: grid;
+  grid-template-columns: auto max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-stage-line svg {
+  color: var(--teal);
+}
+
+.run-stage-line code {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 6px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-attack-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.run-attack-status-card.success {
+  border-color: color-mix(in srgb, var(--teal) 28%, var(--line));
+}
+
+.run-attack-status-card.failed {
+  border-color: color-mix(in srgb, #c94a4a 28%, var(--line));
+}
+
+.run-attack-status-head strong {
+  font-size: 15px;
+}
+
+.run-attack-status-head span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.run-attack-status-card.failed .run-attack-status-head span {
+  background: #fff1ee;
+  color: #a13d31;
+}
+
+.run-attack-list {
+  display: grid;
+  gap: 7px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.run-attack-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+}
+
+.run-attack-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.run-attack-row > div:last-child {
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.run-attack-row strong,
+.run-attack-row code,
+.run-attack-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-attack-row strong {
+  font-size: 13px;
+}
+
+.run-attack-row code,
+.run-attack-row small {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.run-attack-row span {
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.run-attack-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  padding: 12px;
+  font-size: 12px;
+}
+
 .run-progress-stack {
   display: grid;
   gap: 10px;
@@ -3490,6 +3730,8 @@ a.button {
   .run-control-grid,
   .run-detail-grid,
   .run-monitor-grid,
+  .run-monitor-overview,
+  .run-attack-status-grid,
   .run-mode-grid,
   .console-bottom-grid,
   .results-grid,
@@ -3504,6 +3746,19 @@ a.button {
 
   .debug-filter-bar {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .run-current-grid,
+  .run-count-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .run-stage-line {
+    grid-template-columns: auto 1fr;
+  }
+
+  .run-stage-line code {
+    grid-column: 1 / -1;
   }
 
   .resource-filter-panel,

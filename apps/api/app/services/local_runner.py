@@ -812,6 +812,11 @@ def run_local_experiment(
                                     "cell",
                                     "skipped",
                                     cellKey=cell_key,
+                                    datasetId=dataset_id,
+                                    algorithmId=algorithm_id,
+                                    attackPresetId=attack_id,
+                                    attackStrength=float(strength),
+                                    attackParams=attack_params,
                                     reason="resume_completed",
                                 )
                                 continue
@@ -947,6 +952,19 @@ def run_local_experiment(
                                     "scoring": None,
                                 }
                             )
+                            _stage_event(
+                                paths,
+                                request.run_id,
+                                "cell",
+                                "failed",
+                                cellKey=variant["cellKey"],
+                                datasetId=dataset_id,
+                                algorithmId=algorithm_id,
+                                attackPresetId=variant["attackId"],
+                                attackStrength=variant["strength"],
+                                attackParams=variant["attackParams"],
+                                error=embed_error,
+                            )
                         shutil.rmtree(watermarked_dir, ignore_errors=True)
                         continue
 
@@ -986,6 +1004,7 @@ def run_local_experiment(
                                 algorithmId=algorithm_id,
                                 attackPresetId=attack_id,
                                 attackStrength=strength,
+                                attackParams=attack_params,
                             )
 
                             try:
@@ -1256,6 +1275,11 @@ def run_local_experiment(
                                 "cell",
                                 status,
                                 cellKey=cell_key,
+                                datasetId=dataset_id,
+                                algorithmId=algorithm_id,
+                                attackPresetId=attack_id,
+                                attackStrength=strength,
+                                attackParams=attack_params,
                                 elapsedMs=elapsed_ms,
                                 error=error,
                             )

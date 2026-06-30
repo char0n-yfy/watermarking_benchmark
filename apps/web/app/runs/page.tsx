@@ -16,6 +16,9 @@ import { useLanguage } from "@/components/LanguageProvider";
 import {
   cancelRun,
   createRun,
+  fetchAlgorithms,
+  fetchAttacks,
+  fetchDatasetCatalog,
   fetchRun,
   fetchRunEvents,
   fetchRunLogs,
@@ -46,6 +49,29 @@ type ExecutionSummary = {
   artifactRoot?: string;
   updatedAt?: string;
   note: string;
+};
+
+type AttackOutcome = {
+  attackId: string;
+  succeeded: number;
+  failed: number;
+  latestParam: string;
+};
+
+type CurrentExecution = {
+  datasetId: string;
+  algorithmId: string;
+  attackId: string;
+  attackParam: string;
+  cellKey: string;
+};
+
+type MonitorStats = {
+  completedCells: number;
+  succeededCells: number;
+  failedCells: number;
+  attackOutcomes: AttackOutcome[];
+  current: CurrentExecution;
 };
 
 const activeStatuses = new Set(["queued", "running"]);
@@ -116,6 +142,75 @@ function eventMeta(event: RunStageEvent | null) {
   return items.filter(Boolean).join("  ") || event.error || "n/a";
 }
 
+function latestMapped<T>(events: RunStageEvent[], mapValue: (event: RunStageEvent) => T | null | undefined) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const value = mapValue(events[index]);
+    if (value !== null && value !== undefined && value !== "") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function formatNumber(value: number) {
+  return Number.isInteger(value) ? value.toString() : Number(value.toFixed(4)).toString();
+}
+
+function formatParamValue(value: unknown): string {
+  if (typeof value === "number") {
+    return formatNumber(value);
+  }
+  if (typeof value === "string" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => formatParamValue(item)).join(", ")}]`;
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function paramsLabel(params: unknown) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return null;
+  }
+  const entries = Object.entries(params as Record<string, unknown>).filter(([, value]) => value !== null && value !== undefined);
+  if (!entries.length) {
+    return null;
+  }
+  return entries.map(([key, value]) => `${key}=${formatParamValue(value)}`).join(", ");
+}
+
+function strengthFromEvent(event: RunStageEvent) {
+  if (typeof event.attackStrength === "number") {
+    return formatNumber(event.attackStrength);
+  }
+  const parts = typeof event.cellKey === "string" ? event.cellKey.split("__") : [];
+  return parts.length >= 4 && parts[3] ? parts[3] : null;
+}
+
+function attackParamLabel(event: RunStageEvent) {
+  const params = paramsLabel(event.attackParams);
+  if (params) {
+    return params;
+  }
+  const strength = strengthFromEvent(event);
+  return strength ? `strength=${strength}` : null;
+}
+
+function humanizeId(id: string) {
+  return id.replace(/^(atk|alg|ds)-/, "").replace(/[_-]+/g, " ");
+}
+
+function displayName(id: string, names: Record<string, string>) {
+  if (!id || id === "n/a") {
+    return "n/a";
+  }
+  return names[id] ?? humanizeId(id);
+}
+
 function uniqueEventCount(events: RunStageEvent[], predicate: (event: RunStageEvent) => boolean, keyOf: (event: RunStageEvent) => string | null) {
   const keys = new Set<string>();
   events.forEach((event) => {
@@ -148,6 +243,74 @@ function attackIdFromEvent(event: RunStageEvent, attackIds: string[]) {
   }
   const cellKey = typeof event.cellKey === "string" ? event.cellKey : "";
   return attackIds.find((attackId) => cellKey.includes(`__${attackId}__`)) ?? null;
+}
+
+function buildMonitorStats(
+  run: DemoRunRecord | null,
+  config: SavedExperimentConfig | undefined,
+  events: RunEvents | null
+): MonitorStats {
+  const eventList = events?.events ?? [];
+  const attackIds = config?.selection.attackPresetIds ?? [];
+  const finalEvents = new Map<string, RunStageEvent>();
+
+  eventList.forEach((event) => {
+    if (event.stage !== "cell" || !finalCellStatuses.has(String(event.status)) || typeof event.cellKey !== "string") {
+      return;
+    }
+    finalEvents.set(event.cellKey, event);
+  });
+
+  let succeededCells = 0;
+  let failedCells = 0;
+  const outcomes = new Map<string, AttackOutcome>();
+
+  finalEvents.forEach((event) => {
+    const attackId = attackIdFromEvent(event, attackIds) ?? "n/a";
+    const current =
+      outcomes.get(attackId) ??
+      ({
+        attackId,
+        succeeded: 0,
+        failed: 0,
+        latestParam: attackParamLabel(event) ?? "n/a"
+      } satisfies AttackOutcome);
+
+    if (event.status === "succeeded" || event.status === "skipped") {
+      succeededCells += 1;
+      current.succeeded += 1;
+    } else {
+      failedCells += 1;
+      current.failed += 1;
+    }
+    current.latestParam = attackParamLabel(event) ?? current.latestParam;
+    outcomes.set(attackId, current);
+  });
+
+  const currentAttackId = latestMapped(eventList, (event) => attackIdFromEvent(event, attackIds)) ?? attackIds[0] ?? "n/a";
+
+  return {
+    completedCells: finalEvents.size,
+    succeededCells,
+    failedCells,
+    attackOutcomes: [...outcomes.values()].sort((left, right) => left.attackId.localeCompare(right.attackId)),
+    current: {
+      datasetId:
+        latestMapped(eventList, (event) => (typeof event.datasetId === "string" ? event.datasetId : null)) ??
+        config?.selection.datasetIds[0] ??
+        "n/a",
+      algorithmId:
+        latestMapped(eventList, (event) => (typeof event.algorithmId === "string" ? event.algorithmId : null)) ??
+        config?.selection.algorithmIds[0] ??
+        "n/a",
+      attackId: currentAttackId,
+      attackParam:
+        latestMapped(eventList, (event) => (attackIdFromEvent(event, attackIds) ? attackParamLabel(event) : null)) ?? "n/a",
+      cellKey:
+        latestMapped(eventList, (event) => (typeof event.cellKey === "string" ? event.cellKey : null)) ??
+        (run?.id ? `${run.id}:pending` : "n/a")
+    }
+  };
 }
 
 function buildProgressSteps(
@@ -285,6 +448,7 @@ export default function RunsPage() {
   const [lastSummary, setLastSummary] = useState<ExecutionSummary | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resourceNames, setResourceNames] = useState<Record<string, string>>({});
 
   const selectedConfig = useMemo(
     () => configs.find((config) => config.id === selectedConfigId),
@@ -323,6 +487,15 @@ export default function RunsPage() {
       t.runs.watermarkProgress
     ]
   );
+  const monitorStats = useMemo(() => buildMonitorStats(monitorRun, monitoredConfig, events), [events, monitorRun, monitoredConfig]);
+  const successfulAttackOutcomes = useMemo(
+    () => monitorStats.attackOutcomes.filter((outcome) => outcome.succeeded > 0),
+    [monitorStats.attackOutcomes]
+  );
+  const failedAttackOutcomes = useMemo(
+    () => monitorStats.attackOutcomes.filter((outcome) => outcome.failed > 0),
+    [monitorStats.attackOutcomes]
+  );
 
   const refreshBase = async () => {
     const [loadedConfigs, loadedRuns] = await Promise.all([fetchSavedConfigs(), fetchRuns({ scope: "active" })]);
@@ -341,6 +514,35 @@ export default function RunsPage() {
       return loadedRuns[0]?.id ?? "";
     });
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadResourceNames = async () => {
+      const [datasetCatalog, algorithms, attacks] = await Promise.all([
+        fetchDatasetCatalog().catch(() => null),
+        fetchAlgorithms().catch(() => []),
+        fetchAttacks().catch(() => [])
+      ]);
+      if (cancelled) {
+        return;
+      }
+      const nextResourceNames: Record<string, string> = {};
+      datasetCatalog?.items.forEach((dataset) => {
+        nextResourceNames[dataset.id] = language === "zh" ? dataset.nameZh || dataset.name : dataset.name || dataset.nameZh;
+      });
+      algorithms.forEach((algorithm) => {
+        nextResourceNames[algorithm.id] = algorithm.name;
+      });
+      attacks.forEach((attack) => {
+        nextResourceNames[attack.id] = attack.name;
+      });
+      setResourceNames(nextResourceNames);
+    };
+    loadResourceNames().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
 
   useEffect(() => {
     if (monitorRunId || startDialogOpen || lastSummary) {
@@ -545,31 +747,88 @@ export default function RunsPage() {
               ) : null}
             </div>
 
+            <div className="run-monitor-overview">
+              <section className="run-overview-card primary">
+                <div className="run-overview-title">
+                  <span>{t.runs.experimentProgress}</span>
+                  <strong>{monitorRun.progress}%</strong>
+                </div>
+                <div className="progress-track run-progress-large">
+                  <div className="progress-bar" style={{ width: progressWidth(monitorRun.progress) }} />
+                </div>
+                <div className="run-count-grid">
+                  <Metric label={t.runs.completedCells} value={`${monitorStats.completedCells}/${monitorRun.cells}`} />
+                  <Metric label={t.runs.successfulCells} value={monitorStats.succeededCells.toString()} />
+                  <Metric label={t.runs.failedCells} value={monitorStats.failedCells.toString()} />
+                </div>
+                <p>{t.runs.cellExplanation}</p>
+              </section>
+
+              <section className="run-overview-card">
+                <div className="run-overview-title">
+                  <span>{t.runs.currentExecution}</span>
+                  <strong>{eventTitle(currentEvent)}</strong>
+                </div>
+                <div className="run-current-grid">
+                  <CurrentField
+                    label={t.runs.currentDataset}
+                    raw={monitorStats.current.datasetId}
+                    value={displayName(monitorStats.current.datasetId, resourceNames)}
+                  />
+                  <CurrentField
+                    label={t.runs.currentWatermark}
+                    raw={monitorStats.current.algorithmId}
+                    value={displayName(monitorStats.current.algorithmId, resourceNames)}
+                  />
+                  <CurrentField
+                    label={t.runs.currentAttack}
+                    raw={monitorStats.current.attackId}
+                    value={displayName(monitorStats.current.attackId, resourceNames)}
+                  />
+                  <CurrentField label={t.runs.currentAttackParam} raw={monitorStats.current.cellKey} value={monitorStats.current.attackParam} />
+                </div>
+                <div className="run-stage-line">
+                  <Clock3 size={15} />
+                  <span>{currentEvent?.timestamp ? localizedDate(language, currentEvent.timestamp) : t.runs.waitingForStage}</span>
+                  <code>{eventMeta(currentEvent)}</code>
+                </div>
+              </section>
+            </div>
+
+            <div className="run-attack-status-grid">
+              <AttackOutcomeList
+                emptyText={t.runs.noSuccessfulAttacks}
+                kind="success"
+                names={resourceNames}
+                outcomes={successfulAttackOutcomes}
+                title={t.runs.successfulAttacks}
+              />
+              <AttackOutcomeList
+                emptyText={t.runs.noFailedAttacks}
+                kind="failed"
+                names={resourceNames}
+                outcomes={failedAttackOutcomes}
+                title={t.runs.failedAttacks}
+              />
+            </div>
+
             <div className="run-progress-stack">
+              <div className="run-progress-section-head">
+                <strong>{t.runs.stageProgress}</strong>
+                <span>{t.runs.attackStatusHint}</span>
+              </div>
               {progressSteps.map((step) => (
                 <ProgressMeter key={step.key} step={step} />
               ))}
             </div>
 
-            <div className="run-monitor-grid">
-              <div className="run-stage-card">
-                <div className="run-artifacts-head">
-                  <Clock3 size={15} />
-                  <span>{t.runs.currentStage}</span>
-                </div>
-                <strong>{eventTitle(currentEvent)}</strong>
-                {currentEvent?.timestamp ? <small>{localizedDate(language, currentEvent.timestamp)}</small> : null}
-                <code>{eventMeta(currentEvent)}</code>
-              </div>
-
-              <div className="run-meta-grid run-monitor-meta-grid">
-                <Metric label={t.common.config} value={monitorRun.configName} />
-                <Metric label={t.runs.cells} value={monitorRun.cells.toString()} />
-                <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
-                <Metric label={t.runs.updated} value={formatOptionalDate(monitorRun.updatedAt)} />
-                <Metric label={t.runs.started} value={formatOptionalDate(monitorRun.startedAt)} />
-                <Metric label={t.runs.finished} value={formatOptionalDate(monitorRun.finishedAt)} />
-              </div>
+            <div className="run-meta-grid run-monitor-meta-grid">
+              <Metric label={t.common.config} value={monitorRun.configName} />
+              <Metric label={t.runs.matrixCells} value={monitorRun.cells.toString()} />
+              <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
+              <Metric label={t.runs.updated} value={formatOptionalDate(monitorRun.updatedAt)} />
+              <Metric label={t.runs.started} value={formatOptionalDate(monitorRun.startedAt)} />
+              <Metric label={t.runs.finished} value={formatOptionalDate(monitorRun.finishedAt)} />
             </div>
 
             {notice ? <div className="risk ok">{notice}</div> : null}
@@ -752,7 +1011,7 @@ export default function RunsPage() {
               </div>
               <div className="run-meta-grid">
                 <Metric label={t.common.progress} value={`${lastSummary.progress}%`} />
-                <Metric label={t.runs.cells} value={lastSummary.cells.toString()} />
+                <Metric label={t.runs.matrixCells} value={lastSummary.cells.toString()} />
                 <Metric label={t.runs.updated} value={formatOptionalDate(lastSummary.updatedAt)} />
                 <Metric label={t.runs.artifactRoot} value={lastSummary.artifactRoot ?? "n/a"} />
               </div>
@@ -801,6 +1060,57 @@ function Metric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function CurrentField({ label, raw, value }: { label: string; raw: string; value: string }) {
+  return (
+    <div className="run-current-field">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {raw && raw !== "n/a" && raw !== value ? <code>{raw}</code> : null}
+    </div>
+  );
+}
+
+function AttackOutcomeList({
+  emptyText,
+  kind,
+  names,
+  outcomes,
+  title
+}: {
+  emptyText: string;
+  kind: "success" | "failed";
+  names: Record<string, string>;
+  outcomes: AttackOutcome[];
+  title: string;
+}) {
+  return (
+    <section className={`run-attack-status-card ${kind}`}>
+      <div className="run-attack-status-head">
+        <strong>{title}</strong>
+        <span>{outcomes.length}</span>
+      </div>
+      {outcomes.length ? (
+        <div className="run-attack-list">
+          {outcomes.map((outcome) => (
+            <div className="run-attack-row" key={`${kind}-${outcome.attackId}`}>
+              <div>
+                <strong>{displayName(outcome.attackId, names)}</strong>
+                <code>{outcome.attackId}</code>
+              </div>
+              <div>
+                <span>{kind === "success" ? outcome.succeeded : outcome.failed}</span>
+                <small>{outcome.latestParam}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="run-attack-empty">{emptyText}</div>
+      )}
+    </section>
   );
 }
 

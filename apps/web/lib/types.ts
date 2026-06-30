@@ -335,6 +335,8 @@ export interface RunStageEvent {
   algorithmId?: string;
   attackPresetId?: string;
   attackStrength?: number;
+  attackParams?: Record<string, unknown>;
+  seed?: number;
   elapsedMs?: number;
   error?: string | null;
   [key: string]: unknown;
