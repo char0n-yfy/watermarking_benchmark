@@ -376,23 +376,38 @@ def create_app() -> FastAPI:
 
     web_out = Path(settings.project_root) / "apps" / "web" / "out"
 
+    def exported_page_response(page_name: str) -> FileResponse:
+        page = web_out / f"{page_name}.html"
+        fallback = web_out / page_name / "index.html"
+        if page.exists():
+            return FileResponse(page)
+        if fallback.exists():
+            return FileResponse(fallback)
+        raise HTTPException(status_code=404, detail=f"Web page not found: {page_name}")
+
     @app.get("/leaderboard")
     def get_leaderboard(
         protocol_id: Optional[str] = Query(default=None),
     ) -> object:
         if protocol_id is None and web_out.exists():
-            page = web_out / "leaderboard.html"
-            fallback = web_out / "leaderboard" / "index.html"
-            if page.exists():
-                return FileResponse(page)
-            if fallback.exists():
-                return FileResponse(fallback)
+            return exported_page_response("leaderboard")
         try:
             return service.list_leaderboard(protocol_id or "waves-official-detection-v1")
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    def make_exported_page_handler(name: str):
+        def handler() -> FileResponse:
+            return exported_page_response(name)
+
+        return handler
+
     if web_out.exists():
+        for page_name in ("configs", "resources", "runs", "results", "schema"):
+            page_handler = make_exported_page_handler(page_name)
+            app.add_api_route(f"/{page_name}", page_handler, methods=["GET", "HEAD"], include_in_schema=False)
+            app.add_api_route(f"/{page_name}/", page_handler, methods=["GET", "HEAD"], include_in_schema=False)
+
         app.mount("/", StaticFiles(directory=web_out, html=True), name="web")
 
     return app

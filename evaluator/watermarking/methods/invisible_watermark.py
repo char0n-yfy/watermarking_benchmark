@@ -8,11 +8,20 @@ from typing import Any, Iterator, Mapping
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
+    bit_accuracy,
+    bits_to_string,
     packaged_algorithm_dir,
     packaged_weights_dir,
     prepend_sys_path,
     require_path,
 )
+
+
+def _bytes_to_bits(payload: bytes, nbits: int) -> list[int]:
+    bits: list[int] = []
+    for byte in payload:
+        bits.extend((byte >> shift) & 1 for shift in range(7, -1, -1))
+    return bits[:nbits]
 
 
 class _InvisibleWatermarkBase(BaseWatermark):
@@ -138,6 +147,10 @@ class _InvisibleWatermarkBase(BaseWatermark):
         import cv2
         import numpy as np
 
+        expected_payload = self._message_bytes(context) if context.message else None
+        decode_bits = len(expected_payload) * 8 if expected_payload is not None else self.payload_bits
+        decode_bytes = max(1, (decode_bits + 7) // 8)
+
         with self._runtime_env(), prepend_sys_path(self.repo_dir, self._purge_modules()):
             from imwatermark import WatermarkDecoder
 
@@ -149,21 +162,36 @@ class _InvisibleWatermarkBase(BaseWatermark):
             bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
             if bgr is None:
                 raise ValueError(f"Cannot read image: {input_path}")
-            decode_bits = len(self._message_bytes(context)) * 8 if context.message else self.payload_bits
             decoder = WatermarkDecoder("bytes", decode_bits)
-            decoded = decoder.decode(bgr, self.algorithm).decode("utf-8", errors="ignore").rstrip("\0")
+            decoded_payload = decoder.decode(bgr, self.algorithm)
+            if not isinstance(decoded_payload, bytes):
+                decoded_payload = bytes(decoded_payload)
+            decoded_payload = decoded_payload[:decode_bytes].ljust(decode_bytes, b"\0")
 
-        expected = self._message_bytes(context).decode("utf-8", errors="ignore").rstrip("\0") if context.message else None
-        return {
+        decoded = decoded_payload.decode("utf-8", errors="ignore").rstrip("\0")
+        decoded_bits = _bytes_to_bits(decoded_payload, decode_bits)
+        metadata: dict[str, Any] = {
             "message": decoded,
-            "expected_message": expected,
-            "match": None if expected is None else decoded == expected,
+            "bits": bits_to_string(decoded_bits),
+            "decoded_bits": bits_to_string(decoded_bits),
             "payload_bits": decode_bits,
             "algorithm": self.algorithm,
             "weights_dir": None if self.weights_dir is None else str(self.weights_dir),
             "encoder_path": None if self.encoder_path is None else str(self.encoder_path),
             "decoder_path": None if self.decoder_path is None else str(self.decoder_path),
         }
+        if expected_payload is not None:
+            expected_payload = expected_payload[:decode_bytes].ljust(decode_bytes, b"\0")
+            expected = expected_payload.decode("utf-8", errors="ignore").rstrip("\0")
+            expected_bits = _bytes_to_bits(expected_payload, decode_bits)
+            metadata["expected_message"] = expected
+            metadata["expected_bits"] = bits_to_string(expected_bits)
+            metadata["match"] = decoded == expected
+            metadata["bit_accuracy"] = bit_accuracy(expected_bits, decoded_bits)
+        else:
+            metadata["expected_message"] = None
+            metadata["match"] = None
+        return metadata
 
 
 @register_watermark

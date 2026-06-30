@@ -49,7 +49,7 @@ autodl_load_env() {
   export APP_ENV="${APP_ENV:-autodl}"
   export WM_BENCH_DATA_ROOT="${WM_BENCH_DATA_ROOT:-/root/autodl-fs/wm-bench}"
   export WM_BENCH_RESOURCES_ROOT="${WM_BENCH_RESOURCES_ROOT:-${AUTODL_REPO_ROOT}/resources}"
-  export WM_BENCH_RUNS_ROOT="${WM_BENCH_RUNS_ROOT:-/root/autodl-tmp/wm-bench/runs}"
+  export WM_BENCH_RUNS_ROOT="${WM_BENCH_RUNS_ROOT:-${AUTODL_REPO_ROOT}/runs}"
   export WM_BENCH_DB_PATH="${WM_BENCH_DB_PATH:-${WM_BENCH_DATA_ROOT}/state/wmbench.sqlite}"
   export WM_BENCH_DEVICE="${WM_BENCH_DEVICE:-cuda:0}"
   export WM_BENCH_WORKER_POLL_SECONDS="${WM_BENCH_WORKER_POLL_SECONDS:-2}"

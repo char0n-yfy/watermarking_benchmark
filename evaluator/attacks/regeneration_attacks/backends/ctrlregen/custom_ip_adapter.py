@@ -1,6 +1,7 @@
 from transformers import AutoModel, AutoImageProcessor
 from diffusers.loaders import IPAdapterMixin
 
+import inspect
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -18,6 +19,8 @@ from diffusers.utils import (
 )
 
 logger = logging.get_logger(__name__)
+_GET_MODEL_FILE_ACCEPTS_RESUME_DOWNLOAD = "resume_download" in inspect.signature(_get_model_file).parameters
+
 
 class CustomIPAdapterMixin():
     @validate_hf_hub_args
@@ -84,18 +87,22 @@ class CustomIPAdapterMixin():
             pretrained_model_name_or_path_or_dict, weight_name, subfolder
         ):
             if not isinstance(pretrained_model_name_or_path_or_dict, dict):
+                model_file_kwargs = {
+                    "weights_name": weight_name,
+                    "cache_dir": cache_dir,
+                    "force_download": force_download,
+                    "proxies": proxies,
+                    "local_files_only": local_files_only,
+                    "token": token,
+                    "revision": revision,
+                    "subfolder": subfolder,
+                    "user_agent": user_agent,
+                }
+                if _GET_MODEL_FILE_ACCEPTS_RESUME_DOWNLOAD:
+                    model_file_kwargs["resume_download"] = resume_download
                 model_file = _get_model_file(
                     pretrained_model_name_or_path_or_dict,
-                    weights_name=weight_name,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    resume_download=resume_download,
-                    proxies=proxies,
-                    local_files_only=local_files_only,
-                    token=token,
-                    revision=revision,
-                    subfolder=subfolder,
-                    user_agent=user_agent,
+                    **model_file_kwargs,
                 )
                 if weight_name.endswith(".safetensors"):
                     state_dict = {"image_proj": {}, "ip_adapter": {}}

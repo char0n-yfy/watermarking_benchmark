@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -16,6 +18,8 @@ FPR_TARGET = 0.001
 PRACTICAL_NQD_THRESHOLD = 0.8
 OFFICIAL_MIN_SAMPLES = 5000
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+PERCEPTUAL_RESIZE_SHORT_SIDE = 256
+
 
 
 @dataclass(frozen=True)
@@ -299,6 +303,8 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
         "ssim": [],
         "msSsim": [],
         "nmi": [],
+        "lpips": [],
+        "dists": [],
         "psnr_degradation": [],
         "ssim_degradation": [],
         "ms_ssim_degradation": [],
@@ -314,6 +320,10 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
         metric_values["ssim"].append(ssim)
         metric_values["msSsim"].append(ms_ssim)
         metric_values["nmi"].append(nmi)
+        if metrics.get("lpips") is not None:
+            metric_values["lpips"].append(float(metrics["lpips"]))
+        if metrics.get("dists") is not None:
+            metric_values["dists"].append(float(metrics["dists"]))
         metric_values["psnr_degradation"].append(max(0.0, 60.0 - min(psnr, 60.0)) / 60.0)
         metric_values["ssim_degradation"].append(max(0.0, 1.0 - ssim))
         metric_values["ms_ssim_degradation"].append(max(0.0, 1.0 - ms_ssim))
@@ -339,8 +349,8 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
             "nmi": _mean(metric_values["nmi"]),
             "fid": None,
             "clipFid": None,
-            "lpips": None,
-            "dists": None,
+            "lpips": _mean(metric_values["lpips"]),
+            "dists": _mean(metric_values["dists"]),
             "aestheticDelta": None,
             "artifactDelta": None,
         },
@@ -357,22 +367,142 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
 
 def compute_image_quality_pair(reference_path: Path, target_path: Path) -> JsonDict:
     ref, target = _load_pair(reference_path, target_path)
+    perceptual = _compute_perceptual_metrics(reference_path, target_path)
     return {
         "psnr": _psnr(ref, target),
         "ssim": _ssim(ref, target),
         "msSsim": _ms_ssim(ref, target),
         "nmi": _nmi(ref, target),
+        **perceptual,
+    }
+
+
+def _torch_home_checkpoints() -> list[Path]:
+    roots: list[Path] = []
+    torch_home = os.getenv("TORCH_HOME")
+    if torch_home:
+        roots.append(Path(torch_home).expanduser() / "hub" / "checkpoints")
+    roots.append(Path.home() / ".cache" / "torch" / "hub" / "checkpoints")
+    return roots
+
+
+def _has_torchvision_checkpoint(filename: str, min_size_bytes: int) -> bool:
+    for root in _torch_home_checkpoints():
+        candidate = root / filename
+        try:
+            if candidate.is_file() and candidate.stat().st_size >= min_size_bytes:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+@lru_cache(maxsize=1)
+def _perceptual_backend() -> JsonDict:
+    if os.getenv("WM_BENCH_DISABLE_PERCEPTUAL_METRICS", "0") == "1":
+        return {"device": "cpu", "models": {}, "errors": {"disabled": "WM_BENCH_DISABLE_PERCEPTUAL_METRICS=1"}}
+
+    try:
+        import torch
+    except Exception as exc:
+        return {"device": "cpu", "models": {}, "errors": {"torch": f"{type(exc).__name__}: {exc}"}}
+
+    requested_device = os.getenv("WM_BENCH_PERCEPTUAL_DEVICE", "cpu")
+    if requested_device.startswith("cuda") and not torch.cuda.is_available():
+        requested_device = "cpu"
+    device = torch.device(requested_device)
+    models: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+
+    if _has_torchvision_checkpoint("alexnet-owt-7be5be79.pth", 200_000_000):
+        try:
+            import warnings
+
+            import lpips
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*pretrained.*deprecated.*")
+                warnings.filterwarnings("ignore", message=".*Arguments other than a weight enum.*")
+                models["lpips"] = lpips.LPIPS(net="alex", verbose=False).to(device).eval()
+        except Exception as exc:
+            errors["lpips"] = f"{type(exc).__name__}: {exc}"
+    else:
+        errors["lpips"] = "missing torchvision AlexNet weights: alexnet-owt-7be5be79.pth"
+
+    if _has_torchvision_checkpoint("vgg16-397923af.pth", 500_000_000):
+        try:
+            import warnings
+
+            from evaluator.watermarking.algorithms.videoseal.videoseal.losses.dists import DISTS
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*pretrained.*deprecated.*")
+                warnings.filterwarnings("ignore", message=".*Arguments other than a weight enum.*")
+                models["dists"] = DISTS().to(device).eval()
+        except Exception as exc:
+            errors["dists"] = f"{type(exc).__name__}: {exc}"
+    else:
+        errors["dists"] = "missing torchvision VGG16 weights: vgg16-397923af.pth"
+
+    return {"device": str(device), "models": models, "errors": errors}
+
+
+def _resize_for_perceptual(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    short_side = min(width, height)
+    if short_side <= 0 or short_side <= PERCEPTUAL_RESIZE_SHORT_SIDE:
+        return image
+    scale = PERCEPTUAL_RESIZE_SHORT_SIDE / short_side
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    return image.resize(size, Image.Resampling.BICUBIC)
+
+
+def _load_perceptual_pair(reference_path: Path, target_path: Path, device: Any) -> tuple[Any, Any]:
+    import torch
+    from torchvision.transforms import functional as TF
+
+    reference = Image.open(reference_path).convert("RGB")
+    target = Image.open(target_path).convert("RGB").resize(reference.size, Image.Resampling.BICUBIC)
+    reference = _resize_for_perceptual(reference)
+    target = target.resize(reference.size, Image.Resampling.BICUBIC)
+    ref_tensor = TF.to_tensor(reference).unsqueeze(0).to(device)
+    target_tensor = TF.to_tensor(target).unsqueeze(0).to(device)
+    return ref_tensor, target_tensor
+
+
+def _compute_perceptual_metrics(reference_path: Path, target_path: Path) -> JsonDict:
+    backend = _perceptual_backend()
+    models = backend.get("models") or {}
+    errors = dict(backend.get("errors") or {})
+    result: JsonDict = {
         "lpips": None,
         "dists": None,
-        "perceptualBackend": "not_configured",
+        "perceptualBackend": "+".join(sorted(models)) if models else "not_configured",
+        "perceptualDevice": backend.get("device", "cpu"),
+        "perceptualErrors": errors,
     }
+    if not models:
+        return result
+
+    try:
+        import torch
+
+        ref_tensor, target_tensor = _load_perceptual_pair(reference_path, target_path, backend.get("device", "cpu"))
+        with torch.no_grad():
+            lpips_model = models.get("lpips")
+            if lpips_model is not None:
+                result["lpips"] = float(lpips_model(ref_tensor, target_tensor, normalize=True).reshape(-1).mean().item())
+            dists_model = models.get("dists")
+            if dists_model is not None:
+                result["dists"] = float(dists_model(ref_tensor, target_tensor).reshape(-1).mean().item())
+    except Exception as exc:
+        result["perceptualErrors"] = {**errors, "compute": f"{type(exc).__name__}: {exc}"}
+    return result
 
 
 def _detection_score(result: Any) -> float | None:
     metadata = getattr(result, "metadata", {}) or {}
     value = metadata.get("detection_score")
-    if value is None:
-        value = metadata.get("bit_accuracy")
     if value is None:
         return None
     try:

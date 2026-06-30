@@ -35,12 +35,12 @@ class ScoringTest(unittest.TestCase):
             attack_strength=0.5,
             sample_count=3,
             positive_extract_results=[
-                SimpleNamespace(metadata={"bit_accuracy": 0.95}),
-                SimpleNamespace(metadata={"bit_accuracy": 0.85}),
+                SimpleNamespace(metadata={"detection_score": 0.95}),
+                SimpleNamespace(metadata={"detection_score": 0.85}),
             ],
             negative_extract_results=[
-                SimpleNamespace(metadata={"bit_accuracy": 0.25}),
-                SimpleNamespace(metadata={"bit_accuracy": 0.4}),
+                SimpleNamespace(metadata={"detection_score": 0.25}),
+                SimpleNamespace(metadata={"detection_score": 0.4}),
             ],
             quality_summary={"normalizedQualityDegradation": 0.2},
             clean_quality_summary={"normalizedQualityDegradation": 0.05},

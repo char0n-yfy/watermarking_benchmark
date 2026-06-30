@@ -1167,6 +1167,25 @@ class NoiseToImageAttack(BaseAttack):
         self._resolved_paths["dtype"] = str(torch_dtype).replace("torch.", "")
 
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
+        if self.step <= 0.0:
+            image = Image.open(input_path).convert("RGB")
+            input_size = image.size
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            image.save(output_path)
+            return {
+                "backend": "ctrlregen",
+                "skipped_backend": True,
+                "reason": "step_zero_noop",
+                "step": self.step,
+                "seed": self._seed_for_context(context),
+                "num_inference_steps": self.num_inference_steps,
+                "guidance_scale": self.guidance_scale,
+                "controlnet_conditioning_scale": self.controlnet_conditioning_scale,
+                "image_size": self.image_size,
+                "input_size": list(input_size),
+                "output_size": list(image.size),
+            }
+
         import torch
 
         device = context.device or "cpu"

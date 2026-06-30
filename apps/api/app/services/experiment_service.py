@@ -332,7 +332,7 @@ class ExperimentService:
                         cell["attackStrength"],
                         cell["seed"],
                         cell["sampleCount"],
-                        cell["bitAccuracy"],
+                        cell.get("bitAccuracy"),
                         cell.get("bitErrorRate"),
                         cell.get("elapsedMs"),
                         cell["manifestPath"],

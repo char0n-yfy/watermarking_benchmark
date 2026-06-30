@@ -14,6 +14,9 @@ from .base import AttackContext, AttackResult
 from .registry import build_attack
 
 
+INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
+
+
 @dataclass(frozen=True)
 class AttackJob:
     run_id: str
@@ -31,7 +34,11 @@ def iter_image_paths(input_dir: Path, image_exts: Iterable[str]) -> list[Path]:
     return sorted(
         path
         for path in input_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in normalized_exts
+        if (
+            path.is_file()
+            and path.suffix.lower() in normalized_exts
+            and INTERMEDIATE_ARTIFACT_DIR not in path.relative_to(input_dir).parts
+        )
     )
 
 

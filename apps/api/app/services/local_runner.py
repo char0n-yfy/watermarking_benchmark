@@ -28,12 +28,7 @@ from app.services.resources import (
     iter_image_paths,
     scan_dataset_resources,
 )
-from app.services.scoring import (
-    aggregate_benchmark_score,
-    compute_image_quality_pair,
-    compute_quality_summary,
-    score_cell,
-)
+from app.services.scoring import compute_image_quality_pair
 
 
 JsonDict = dict[str, Any]
@@ -53,6 +48,7 @@ class LocalRunRequest:
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
 
 
 def _write_json(path: Path, payload: JsonDict) -> None:
@@ -65,6 +61,14 @@ def _append_jsonl(path: Path, payload: JsonDict) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
         handle.write("\n")
+
+
+def _write_jsonl(path: Path, records: list[JsonDict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True, default=str))
+            handle.write("\n")
 
 
 def _read_jsonl(path: Path) -> list[JsonDict]:
@@ -96,8 +100,11 @@ def _artifact_paths(run_root: Path) -> dict[str, Path]:
         "runStatus": run_root / "run_status.json",
         "sampleManifest": run_root / "sample_manifest.jsonl",
         "cellManifest": run_root / "cell_manifest.jsonl",
+        "cellManifestLatest": run_root / "cell_manifest_latest.jsonl",
+        "cellSummaryLatest": run_root / "cell_summary_latest.json",
         "imageQuality": run_root / "image_quality.jsonl",
         "imageDetection": run_root / "image_detection.jsonl",
+        "imageDetectionLatest": run_root / "image_detection_latest.jsonl",
         "runtimeProfile": run_root / "runtime_profile.jsonl",
         "stageEvents": run_root / "stage_events.jsonl",
         "runSummary": run_root / "run_summary.json",
@@ -149,6 +156,92 @@ def _completed_cell_rows(cell_manifest_path: Path) -> dict[str, JsonDict]:
     return completed
 
 
+def _cell_attempt_counts(cell_manifest_path: Path) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in _read_jsonl(cell_manifest_path):
+        cell_key = record.get("cellKey")
+        if isinstance(cell_key, str):
+            counts[cell_key] = counts.get(cell_key, 0) + 1
+    return counts
+
+
+def _latest_cell_rows(cell_manifest_path: Path) -> list[JsonDict]:
+    latest: dict[str, JsonDict] = {}
+    attempt_counts: dict[str, int] = {}
+    for record in _read_jsonl(cell_manifest_path):
+        cell_key = record.get("cellKey")
+        if isinstance(cell_key, str):
+            attempt_counts[cell_key] = attempt_counts.get(cell_key, 0) + 1
+            enriched = dict(record)
+            enriched.setdefault("attemptIndex", attempt_counts[cell_key])
+            enriched.setdefault("supersedesPreviousAttempt", attempt_counts[cell_key] > 1)
+            latest[cell_key] = enriched
+    return list(latest.values())
+
+
+def _json_record_has_intermediate_artifact(record: JsonDict) -> bool:
+    for key in ("inputPath", "sampleId", "referencePath", "targetPath"):
+        value = record.get(key)
+        if isinstance(value, str) and INTERMEDIATE_ARTIFACT_DIR in Path(value).parts:
+            return True
+    return False
+
+
+def _read_json_array(path: Path) -> list[JsonDict]:
+    if not path.exists():
+        return []
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _latest_image_detection_rows(latest_cells: list[JsonDict]) -> list[JsonDict]:
+    rows: list[JsonDict] = []
+    for cell in latest_cells:
+        manifest_path = cell.get("manifestPath")
+        if not isinstance(manifest_path, str):
+            continue
+        for record in _read_json_array(Path(manifest_path)):
+            if not _json_record_has_intermediate_artifact(record):
+                rows.append(record)
+    return rows
+
+
+def _write_latest_cell_artifacts(paths: dict[str, Path], *, run_id: str, expected_cells: int) -> None:
+    latest_cells = _latest_cell_rows(paths["cellManifest"])
+    status_counts: dict[str, int] = {}
+    for cell in latest_cells:
+        status = str(cell.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    attempted_cells = len(latest_cells)
+    succeeded_cells = status_counts.get("succeeded", 0)
+    failed_cells = status_counts.get("failed", 0)
+
+    _write_jsonl(paths["cellManifestLatest"], latest_cells)
+    _write_jsonl(paths["imageDetectionLatest"], _latest_image_detection_rows(latest_cells))
+    _write_json(
+        paths["cellSummaryLatest"],
+        {
+            "runId": run_id,
+            "cellCount": attempted_cells,
+            "attemptedCells": attempted_cells,
+            "succeededCells": succeeded_cells,
+            "failedCells": failed_cells,
+            "expectedCells": expected_cells,
+            "progress": _progress(succeeded_cells, expected_cells),
+            "attemptedProgress": _progress(attempted_cells, expected_cells),
+            "succeededProgress": _progress(succeeded_cells, expected_cells),
+            "statusCounts": status_counts,
+            "updatedAt": _utc_timestamp(),
+        },
+    )
+
+
 def _image_sample_id(path: Path, root: Path) -> str:
     try:
         return path.relative_to(root).with_suffix("").as_posix()
@@ -162,6 +255,10 @@ def _image_size(path: Path) -> tuple[int | None, int | None]:
             return image.size
     except Exception:
         return None, None
+
+
+def _is_intermediate_artifact(path: Path) -> bool:
+    return INTERMEDIATE_ARTIFACT_DIR in path.parts
 
 
 def _total_megapixels(paths: list[Path]) -> float:
@@ -258,11 +355,15 @@ def _pair_images(reference_dir: Path, target_dir: Path) -> list[tuple[Path, Path
     references = {
         path.relative_to(reference_dir).with_suffix("").as_posix(): path
         for path in reference_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTS and not _is_intermediate_artifact(path)
     }
     pairs: list[tuple[Path, Path]] = []
     for target in sorted(target_dir.rglob("*")):
-        if not target.is_file() or target.suffix.lower() not in IMAGE_EXTS:
+        if (
+            not target.is_file()
+            or target.suffix.lower() not in IMAGE_EXTS
+            or _is_intermediate_artifact(target)
+        ):
             continue
         key = target.relative_to(target_dir).with_suffix("").as_posix()
         reference = references.get(key)
@@ -275,7 +376,7 @@ def _list_image_files(directory: Path) -> list[Path]:
     return [
         path
         for path in sorted(directory.rglob("*"))
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTS and not _is_intermediate_artifact(path)
     ]
 
 
@@ -320,6 +421,24 @@ def _record_quality_pairs(
         )
 
 
+def _bit_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        try:
+            return "".join(str(int(bit)) for bit in value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _detection_record(
     *,
     run_id: str,
@@ -334,23 +453,16 @@ def _detection_record(
     input_root: Path,
     result: Any,
 ) -> JsonDict:
-    metadata = getattr(result, "metadata", {}) or {}
-    bit_accuracy = metadata.get("bit_accuracy")
-    try:
-        parsed_bit_accuracy = None if bit_accuracy is None else float(bit_accuracy)
-    except (TypeError, ValueError):
-        parsed_bit_accuracy = None
-    detection_score = metadata.get("detection_score")
-    if detection_score is None:
-        detection_score = parsed_bit_accuracy
-    try:
-        parsed_detection_score = None if detection_score is None else float(detection_score)
-    except (TypeError, ValueError):
-        parsed_detection_score = None
-    bits = getattr(result, "bits", None)
-    matched = metadata.get("matched")
-    if matched is None:
-        matched = metadata.get("match")
+    metadata = dict(getattr(result, "metadata", {}) or {})
+    decoded_bits_metadata = metadata.pop("decoded_bits", None)
+    decoded_bits = _bit_string(getattr(result, "bits", None)) or _bit_string(decoded_bits_metadata)
+    expected_bits = _bit_string(metadata.pop("expected_bits", None))
+    detection_score = _float_or_none(metadata.pop("detection_score", None))
+    expected_message = metadata.pop("expected_message", None)
+    payload_bits = metadata.pop("payload_bits", None)
+    for derived_key in ("bit_accuracy", "bit_error_rate", "match", "matched"):
+        metadata.pop(derived_key, None)
+
     input_path = Path(getattr(result, "input_path", ""))
     return {
         "runId": run_id,
@@ -365,11 +477,12 @@ def _detection_record(
         "sampleId": _image_sample_id(input_path, input_root),
         "inputPath": str(input_path),
         "status": "succeeded" if getattr(result, "ok", False) else "failed",
-        "detectionScore": parsed_detection_score,
-        "bitAccuracy": parsed_bit_accuracy,
-        "bitErrorRate": _bit_error_rate(parsed_bit_accuracy),
-        "bitLength": len(bits) if isinstance(bits, list) else None,
-        "matched": matched,
+        "decodedMessage": getattr(result, "message", None),
+        "expectedMessage": expected_message,
+        "decodedBits": decoded_bits,
+        "expectedBits": expected_bits,
+        "payloadBits": payload_bits,
+        "detectionScore": detection_score,
         "elapsedMs": getattr(result, "elapsed_ms", None),
         "error": getattr(result, "error", None),
         "metadata": metadata,
@@ -595,67 +708,6 @@ def _attack_params(attack: JsonDict, strength: float) -> JsonDict:
     return params
 
 
-def _average_bit_accuracy(extract_results: list[Any]) -> float | None:
-    values: list[float] = []
-    for result in extract_results:
-        value = result.metadata.get("bit_accuracy")
-        if value is not None:
-            values.append(float(value))
-    if not values:
-        return None
-    return sum(values) / len(values)
-
-
-def _bit_error_rate(bit_accuracy: float | None) -> float | None:
-    if bit_accuracy is None:
-        return None
-    return max(0.0, min(1.0, 1.0 - bit_accuracy))
-
-
-def _mean(values: list[float]) -> float | None:
-    if not values:
-        return None
-    return sum(values) / len(values)
-
-
-def _aggregate_cells(cells: list[JsonDict]) -> list[JsonDict]:
-    groups: dict[tuple[str, str, float], list[JsonDict]] = {}
-    for cell in cells:
-        key = (
-            str(cell["algorithmId"]),
-            str(cell["attackPresetId"]),
-            float(cell["attackStrength"]),
-        )
-        groups.setdefault(key, []).append(cell)
-
-    summaries: list[JsonDict] = []
-    for (algorithm_id, attack_preset_id, attack_strength), group_cells in sorted(groups.items()):
-        bit_accuracies = [
-            float(cell["bitAccuracy"])
-            for cell in group_cells
-            if cell.get("bitAccuracy") is not None
-        ]
-        bit_error_rates = [
-            float(cell["bitErrorRate"])
-            for cell in group_cells
-            if cell.get("bitErrorRate") is not None
-        ]
-        succeeded = sum(1 for cell in group_cells if cell["status"] == "succeeded")
-        summaries.append(
-            {
-                "algorithmId": algorithm_id,
-                "attackPresetId": attack_preset_id,
-                "attackStrength": attack_strength,
-                "cellCount": len(group_cells),
-                "succeededCells": succeeded,
-                "failedCells": len(group_cells) - succeeded,
-                "meanBitAccuracy": _mean(bit_accuracies),
-                "meanBitErrorRate": _mean(bit_error_rates),
-            }
-        )
-    return summaries
-
-
 def _progress(completed_cells: int, total_cells: int) -> int:
     if total_cells <= 0:
         return 0
@@ -674,6 +726,7 @@ def run_local_experiment(
     run_root.mkdir(parents=True, exist_ok=True)
     paths = _artifact_paths(run_root)
     existing_completed = _completed_cell_rows(paths["cellManifest"]) if request.resume else {}
+    attempt_counts = _cell_attempt_counts(paths["cellManifest"]) if request.resume else {}
     cells: list[JsonDict] = list(existing_completed.values())
     started = time.perf_counter()
     estimate = estimate_selection(selection, request.resources_root)
@@ -720,6 +773,7 @@ def run_local_experiment(
         completed_cells=len(cells),
         expected_cells=expected_cells,
     )
+    _write_latest_cell_artifacts(paths, run_id=request.run_id, expected_cells=expected_cells)
     _stage_event(
         paths,
         request.run_id,
@@ -736,8 +790,17 @@ def run_local_experiment(
     }
 
     def emit_cell(cell: JsonDict) -> None:
-        cells.append(cell)
-        _append_jsonl(paths["cellManifest"], cell)
+        record = dict(cell)
+        cell_key = record.get("cellKey")
+        if isinstance(cell_key, str):
+            attempt_counts[cell_key] = attempt_counts.get(cell_key, 0) + 1
+            record["attemptIndex"] = attempt_counts[cell_key]
+            record["supersedesPreviousAttempt"] = attempt_counts[cell_key] > 1
+        record["completedAt"] = _utc_timestamp()
+
+        cells.append(record)
+        _append_jsonl(paths["cellManifest"], record)
+        _write_latest_cell_artifacts(paths, run_id=request.run_id, expected_cells=expected_cells)
         _write_run_status(
             paths,
             run_id=request.run_id,
@@ -746,7 +809,7 @@ def run_local_experiment(
             expected_cells=expected_cells,
         )
         if on_cell is not None:
-            on_cell(cell)
+            on_cell(record)
 
     for dataset_id in selection["datasetIds"]:
         if should_cancel is not None and should_cancel():
@@ -843,7 +906,6 @@ def run_local_experiment(
                         / safe_segment(algorithm_id)
                         / safe_segment(str(seed))
                     )
-                    clean_quality_summary: JsonDict = {"sampleCount": 0}
                     embed_results: list[Any] = []
                     embed_error = None
                     embed_elapsed_ms = 0.0
@@ -891,7 +953,6 @@ def run_local_experiment(
                         )
                         if embed_error:
                             raise RuntimeError(embed_error)
-                        clean_quality_summary = compute_quality_summary(cell_input_dir, watermarked_dir)
                         _record_quality_pairs(
                             paths,
                             run_id=request.run_id,
@@ -941,15 +1002,12 @@ def run_local_experiment(
                                     "attackStrength": variant["strength"],
                                     "seed": int(seed),
                                     "sampleCount": len(copied_samples),
-                                    "bitAccuracy": None,
-                                    "bitErrorRate": None,
                                     "attackParams": variant["attackParams"],
                                     "manifestPath": str(failed_detection_manifest),
                                     "negativeManifestPath": str(failed_detection_manifest),
                                     "outputDir": str(failed_cell_root),
                                     "error": embed_error,
                                     "elapsedMs": embed_elapsed_ms,
-                                    "scoring": None,
                                 }
                             )
                             _stage_event(
@@ -988,9 +1046,6 @@ def run_local_experiment(
                             detection_records: list[JsonDict] = []
                             status = "succeeded"
                             error = None
-                            bit_accuracy = None
-                            bit_error_rate = None
-                            scoring = None
                             cell_started = time.perf_counter()
                             elapsed_ms = 0.0
 
@@ -1219,22 +1274,7 @@ def run_local_experiment(
                                         record,
                                     )
 
-                                bit_accuracy = _average_bit_accuracy(extract_results)
-                                bit_error_rate = _bit_error_rate(bit_accuracy)
                                 elapsed_ms = (time.perf_counter() - cell_started) * 1000
-                                quality_summary = compute_quality_summary(cell_input_dir, attacked_dir)
-                                scoring = score_cell(
-                                    algorithm_id=algorithm_id,
-                                    attack_preset_id=attack_id,
-                                    attack_method=attack["method"],
-                                    attack_strength=strength,
-                                    sample_count=len(copied_samples),
-                                    positive_extract_results=extract_results,
-                                    negative_extract_results=negative_extract_results,
-                                    quality_summary=quality_summary,
-                                    clean_quality_summary=clean_quality_summary,
-                                    elapsed_ms=elapsed_ms,
-                                )
                             except Exception as exc:
                                 status = "failed"
                                 error = f"{type(exc).__name__}: {exc}"
@@ -1258,15 +1298,12 @@ def run_local_experiment(
                                 "attackStrength": strength,
                                 "seed": int(seed),
                                 "sampleCount": len(copied_samples),
-                                "bitAccuracy": bit_accuracy,
-                                "bitErrorRate": bit_error_rate,
                                 "attackParams": attack_params,
                                 "manifestPath": str(cell_detection_manifest_path),
                                 "negativeManifestPath": str(cell_detection_manifest_path),
                                 "outputDir": str(cell_root),
                                 "error": error,
                                 "elapsedMs": elapsed_ms,
-                                "scoring": scoring,
                             }
                             emit_cell(cell)
                             _stage_event(
@@ -1314,11 +1351,10 @@ def run_local_experiment(
         "skippedCells": skipped_cells,
         "progress": _progress(len(cells), expected_cells),
         "elapsedMs": (time.perf_counter() - started) * 1000,
-        "aggregates": _aggregate_cells(cells),
-        "score": aggregate_benchmark_score(cells),
         "cells": cells,
     }
 
+    _write_latest_cell_artifacts(paths, run_id=request.run_id, expected_cells=expected_cells)
     _write_json(paths["runSummary"], summary)
     _write_run_status(
         paths,

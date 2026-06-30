@@ -9,6 +9,9 @@ from .base import WatermarkContext, WatermarkEmbedResult, WatermarkExtractResult
 from .registry import build_watermark
 
 
+INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
+
+
 @dataclass(frozen=True)
 class WatermarkEmbedJob:
     run_id: str
@@ -40,7 +43,11 @@ def iter_image_paths(input_dir: Path, image_exts: Iterable[str]) -> list[Path]:
     return sorted(
         path
         for path in input_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in normalized_exts
+        if (
+            path.is_file()
+            and path.suffix.lower() in normalized_exts
+            and INTERMEDIATE_ARTIFACT_DIR not in path.relative_to(input_dir).parts
+        )
     )
 
 

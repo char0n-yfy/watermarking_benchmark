@@ -53,7 +53,7 @@ def get_settings() -> Settings:
     load_project_env(override=False)
     resolved_runs_root = _resolve_repo_path(
         os.getenv("WM_BENCH_RUNS_ROOT"),
-        PROJECT_ROOT / "runs" / "local",
+        PROJECT_ROOT / "runs",
     )
     return Settings(
         environment=os.getenv("APP_ENV", "development"),
