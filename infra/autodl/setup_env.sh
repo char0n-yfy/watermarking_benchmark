@@ -13,6 +13,12 @@ autodl_require_python_env
 
 autodl_prepare_dirs
 
+if [[ "${WM_BENCH_PREPARE_PERCEPTUAL_WEIGHTS:-1}" != "0" ]]; then
+  "${AUTODL_PYTHON}" infra/autodl/prepare_perceptual_weights.py
+else
+  echo "Perceptual metric weight preparation skipped: WM_BENCH_PREPARE_PERCEPTUAL_WEIGHTS=0"
+fi
+
 autodl_ensure_node
 autodl_ensure_pnpm
 autodl_pnpm install
