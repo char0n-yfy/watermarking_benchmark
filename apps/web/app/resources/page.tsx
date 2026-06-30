@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Boxes,
   Database,
@@ -273,12 +273,15 @@ function getResponsiveResourcePageSize(width: number, height: number): number {
   return 3;
 }
 
-function useResponsiveResourcePageSize(): number {
+function useResponsiveResourcePageSize() {
   const [pageSize, setPageSize] = useState(DEFAULT_RESOURCE_PAGE_SIZE);
+  const [responsivePageSize, setResponsivePageSize] = useState(DEFAULT_RESOURCE_PAGE_SIZE);
 
   useEffect(() => {
     function updatePageSize() {
-      setPageSize(getResponsiveResourcePageSize(window.innerWidth, window.innerHeight));
+      const nextPageSize = getResponsiveResourcePageSize(window.innerWidth, window.innerHeight);
+      setResponsivePageSize(nextPageSize);
+      setPageSize(nextPageSize);
     }
 
     updatePageSize();
@@ -286,7 +289,7 @@ function useResponsiveResourcePageSize(): number {
     return () => window.removeEventListener("resize", updatePageSize);
   }, []);
 
-  return pageSize;
+  return [pageSize, setPageSize, responsivePageSize] as const;
 }
 
 function compareText(left: string, right: string) {
@@ -358,7 +361,8 @@ export default function ResourcesPage() {
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [page, setPage] = useState(1);
   const [catalogLoading, setCatalogLoading] = useState(true);
-  const pageSize = useResponsiveResourcePageSize();
+  const [pageSize, setPageSize, responsivePageSize] = useResponsiveResourcePageSize();
+  const pageListRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -467,6 +471,7 @@ export default function ResourcesPage() {
   const pageCount = Math.max(1, Math.ceil(filteredResources.length / pageSize));
   const usesPagination = pageCount > 1;
   const visibleResources = filteredResources.slice((page - 1) * pageSize, page * pageSize);
+  const visibleResourceKey = visibleResources.map((resource) => resource.id).join("|");
 
   const groupedResources = useMemo(() => {
     const groups = new Map<string, { label: string; resources: BrowserResource[] }>();
@@ -532,10 +537,24 @@ export default function ResourcesPage() {
   }, [availableOnly, categoryFilter, deviceFilter, query, recommendedOnly]);
 
   useEffect(() => {
+    setPageSize(responsivePageSize);
+  }, [activeType, availableOnly, categoryFilter, deviceFilter, query, recommendedOnly, responsivePageSize, setPageSize]);
+
+  useEffect(() => {
     if (page > pageCount) {
       setPage(pageCount);
     }
   }, [page, pageCount]);
+
+  useLayoutEffect(() => {
+    const pageList = pageListRef.current;
+    if (!pageList || pageSize <= 1 || visibleResources.length <= 1) {
+      return;
+    }
+    if (pageList.scrollHeight > pageList.clientHeight + 1) {
+      setPageSize(pageSize - 1);
+    }
+  }, [pageSize, setPageSize, visibleResourceKey, visibleResources.length]);
 
   useEffect(() => {
     if (visibleResources.length === 0) {
@@ -717,7 +736,7 @@ export default function ResourcesPage() {
               </span>
             </div>
             {groupedResources.length > 0 ? (
-              <div className="resource-page-list">
+              <div className="resource-page-list" ref={pageListRef}>
                 {groupedResources.map((group) => (
                   <div className="dataset-category-group" key={group.category}>
                     <div className="dataset-category-heading">
