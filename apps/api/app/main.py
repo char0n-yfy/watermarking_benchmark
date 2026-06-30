@@ -252,7 +252,11 @@ def create_app() -> FastAPI:
     @app.post("/runs")
     def create_run(payload: RunCreatePayload) -> dict[str, object]:
         try:
-            return service.create_run(payload.resolved_config_id(), execute=payload.execute)
+            return service.create_run(
+                payload.resolved_config_id(),
+                execute=payload.execute,
+                name=payload.resolved_name(),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -265,9 +269,18 @@ def create_app() -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.post("/runs/{run_id}/resume")
+    def resume_run(run_id: str) -> dict[str, object]:
+        try:
+            return service.resume_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/runs")
-    def list_runs() -> list[dict[str, object]]:
-        return service.list_runs()
+    def list_runs(scope: Optional[str] = Query(default=None)) -> list[dict[str, object]]:
+        if scope not in {None, "active"}:
+            raise HTTPException(status_code=400, detail="Unsupported runs scope")
+        return service.list_runs(scope=scope)
 
     @app.get("/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, object]:
@@ -295,6 +308,13 @@ def create_app() -> FastAPI:
     def get_run_logs(run_id: str) -> dict[str, object]:
         try:
             return service.get_run_logs(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/events")
+    def get_run_events(run_id: str) -> dict[str, object]:
+        try:
+            return service.get_run_events(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

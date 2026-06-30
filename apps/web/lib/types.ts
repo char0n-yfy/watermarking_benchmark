@@ -165,6 +165,7 @@ export interface SavedExperimentConfig {
 
 export interface DemoRunRecord {
   id: string;
+  taskName?: string;
   configId: string;
   configName: string;
   status: RunStatus;
@@ -322,6 +323,28 @@ export interface RunLogs {
   logPath: string;
   exists: boolean;
   lines: string[];
+}
+
+export interface RunStageEvent {
+  runId?: string;
+  stage?: string;
+  status?: string;
+  timestamp?: string;
+  cellKey?: string;
+  datasetId?: string;
+  algorithmId?: string;
+  attackPresetId?: string;
+  attackStrength?: number;
+  elapsedMs?: number;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface RunEvents {
+  runId: string;
+  eventPath: string;
+  exists: boolean;
+  events: RunStageEvent[];
 }
 
 export interface WorkerHeartbeat {

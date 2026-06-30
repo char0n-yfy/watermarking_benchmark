@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   id TEXT PRIMARY KEY,
   config_id TEXT NOT NULL,
   config_name TEXT NOT NULL,
+  run_name TEXT,
   status TEXT NOT NULL,
   cells INTEGER NOT NULL,
   progress INTEGER NOT NULL,
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS worker_heartbeats (
 
 MIGRATION_COLUMNS = {
     "experiment_runs": {
+        "run_name": "TEXT",
         "log_path": "TEXT",
         "worker_id": "TEXT",
         "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
@@ -151,6 +153,7 @@ def row_to_config(row: sqlite3.Row) -> JsonDict:
 def row_to_run(row: sqlite3.Row) -> JsonDict:
     return {
         "id": row["id"],
+        "taskName": row["run_name"] or row["config_name"],
         "configId": row["config_id"],
         "configName": row["config_name"],
         "status": row["status"],

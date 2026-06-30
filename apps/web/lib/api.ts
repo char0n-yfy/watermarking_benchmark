@@ -10,6 +10,7 @@ import type {
   DemoRunRecord,
   ExperimentSelection,
   LeaderboardResponse,
+  RunEvents,
   RunLogs,
   RunResults,
   RunScoreResponse,
@@ -160,14 +161,19 @@ export function deleteSavedConfig(configId: string): Promise<{ id: string; statu
   });
 }
 
-export function fetchRuns(): Promise<DemoRunRecord[]> {
-  return requestJson<DemoRunRecord[]>("/runs");
+export function fetchRuns(options?: { scope?: "active" }): Promise<DemoRunRecord[]> {
+  const query = options?.scope ? `?scope=${encodeURIComponent(options.scope)}` : "";
+  return requestJson<DemoRunRecord[]>(`/runs${query}`);
 }
 
-export function createRun(configId: string): Promise<DemoRunRecord> {
+export function fetchRun(runId: string): Promise<DemoRunRecord> {
+  return requestJson<DemoRunRecord>(`/runs/${encodeURIComponent(runId)}`);
+}
+
+export function createRun(configId: string, name?: string): Promise<DemoRunRecord> {
   return requestJson<DemoRunRecord>("/runs", {
     method: "POST",
-    body: JSON.stringify({ configId })
+    body: JSON.stringify({ configId, name })
   });
 }
 
@@ -193,8 +199,18 @@ export function cancelRun(runId: string): Promise<DemoRunRecord> {
   });
 }
 
+export function resumeRun(runId: string): Promise<DemoRunRecord> {
+  return requestJson<DemoRunRecord>(`/runs/${runId}/resume`, {
+    method: "POST"
+  });
+}
+
 export function fetchRunLogs(runId: string): Promise<RunLogs> {
   return requestJson<RunLogs>(`/runs/${runId}/logs`);
+}
+
+export function fetchRunEvents(runId: string): Promise<RunEvents> {
+  return requestJson<RunEvents>(`/runs/${runId}/events`);
 }
 
 export function fetchRuntime(): Promise<RuntimeInfo> {

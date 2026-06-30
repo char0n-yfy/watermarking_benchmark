@@ -197,24 +197,26 @@ class ExperimentService:
             )
         return {"id": config_id, "status": "deleted"}
 
-    def create_run(self, config_id: str, *, execute: bool = False) -> dict[str, Any]:
+    def create_run(self, config_id: str, *, execute: bool = False, name: str | None = None) -> dict[str, Any]:
         config = self.get_config(config_id)
         now = utc_now()
+        run_name = (name or "").strip() or config["name"]
         run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
         artifact_root = self.runs_root / safe_segment(run_id)
         with self.database.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO experiment_runs (
-                  id, config_id, config_name, status, cells, progress,
+                  id, config_id, config_name, run_name, status, cells, progress,
                   artifact_root, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     config["id"],
                     config["name"],
+                    run_name,
                     "queued",
                     config["cellCount"],
                     0,
@@ -275,6 +277,10 @@ class ExperimentService:
         config = self.get_config(run["configId"])
         now = utc_now()
         log_path_value = str(log_path) if log_path is not None else run.get("logPath")
+        existing_completed = sum(
+            1 for cell in self.list_run_cells(run_id) if cell.get("status") == "succeeded"
+        )
+        initial_progress = int(round((existing_completed / max(1, run["cells"])) * 100))
         with self.database.connect() as connection:
             connection.execute(
                 """
@@ -284,10 +290,10 @@ class ExperimentService:
                     started_at = COALESCE(started_at, ?), updated_at = ?
                 WHERE id = ?
                 """,
-                ("running", 0, worker_id, log_path_value, now, now, run_id),
+                ("running", initial_progress, worker_id, log_path_value, now, now, run_id),
             )
 
-        completed = 0
+        completed = existing_completed
 
         def should_cancel() -> bool:
             try:
@@ -353,6 +359,7 @@ class ExperimentService:
                     resources_root=self.resources_root,
                     runs_root=self.runs_root,
                     device=device,
+                    resume=True,
                 ),
                 on_cell=record_cell,
                 should_cancel=should_cancel,
@@ -374,6 +381,29 @@ class ExperimentService:
                 WHERE id = ?
                 """,
                 (status, final_progress, error, finished, finished, run_id),
+            )
+        return self.get_run(run_id)
+
+    def resume_run(self, run_id: str) -> dict[str, Any]:
+        run = self.get_run(run_id)
+        if run["status"] in {"queued", "running"}:
+            return run
+        if run["status"] == "succeeded":
+            return run
+        existing_completed = sum(
+            1 for cell in self.list_run_cells(run_id) if cell.get("status") == "succeeded"
+        )
+        progress = int(round((existing_completed / max(1, run["cells"])) * 100))
+        now = utc_now()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE experiment_runs
+                SET status = ?, progress = ?, cancel_requested = 0, error = NULL,
+                    worker_id = NULL, finished_at = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                ("queued", progress, now, run_id),
             )
         return self.get_run(run_id)
 
@@ -405,8 +435,28 @@ class ExperimentService:
             )
         return self.get_run(run_id)
 
-    def list_runs(self) -> list[dict[str, Any]]:
+    def list_runs(self, *, scope: str | None = None) -> list[dict[str, Any]]:
+        active_statuses = ["queued", "running", "failed", "cancelled", "partially_failed"]
         with self.database.connect() as connection:
+            if scope == "active":
+                rows = connection.execute(
+                    """
+                    SELECT * FROM experiment_runs
+                    WHERE status IN (?, ?, ?, ?, ?)
+                    ORDER BY
+                      CASE status
+                        WHEN 'running' THEN 0
+                        WHEN 'queued' THEN 1
+                        WHEN 'partially_failed' THEN 2
+                        WHEN 'failed' THEN 3
+                        WHEN 'cancelled' THEN 4
+                        ELSE 5
+                      END,
+                      updated_at DESC
+                    """,
+                    tuple(active_statuses),
+                ).fetchall()
+                return [row_to_run(row) for row in rows]
             rows = connection.execute(
                 "SELECT * FROM experiment_runs ORDER BY created_at DESC"
             ).fetchall()
@@ -505,6 +555,28 @@ class ExperimentService:
             "logPath": log_path,
             "exists": exists,
             "lines": lines,
+        }
+
+    def get_run_events(self, run_id: str, *, max_events: int = 80) -> dict[str, Any]:
+        run = self.get_run(run_id)
+        event_path = Path(run["artifactRoot"]) / "stage_events.jsonl"
+        exists = event_path.exists()
+        events: list[dict[str, Any]] = []
+        if exists:
+            for line in event_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    events.append(item)
+        return {
+            "runId": run_id,
+            "eventPath": str(event_path),
+            "exists": exists,
+            "events": events[-max_events:],
         }
 
     def update_worker_heartbeat(

@@ -11,18 +11,22 @@ set -a
 source .env.autodl
 set +a
 
+export WM_BENCH_DOTENV_PATH="${PWD}/.env.autodl"
+export WM_BENCH_VENV="${WM_BENCH_VENV:-.venv}"
+export WM_BENCH_VENV_SYSTEM_SITE_PACKAGES="${WM_BENCH_VENV_SYSTEM_SITE_PACKAGES:-1}"
+export WM_BENCH_INSTALL_PYTHON_DEPS="${WM_BENCH_INSTALL_PYTHON_DEPS:-1}"
+export WM_BENCH_INSTALL_SHARP_DEPS="${WM_BENCH_INSTALL_SHARP_DEPS:-1}"
+
+bash scripts/bootstrap-python.sh
+
 source infra/autodl/python_env.sh
-autodl_prepare_python_env
+autodl_require_python_env
 
 mkdir -p \
   "${WM_BENCH_RESOURCES_ROOT}/datasets" \
   "${WM_BENCH_RESOURCES_ROOT}/weights" \
   "${WM_BENCH_RUNS_ROOT}" \
   "$(dirname "${WM_BENCH_DB_PATH}")"
-
-"${AUTODL_PYTHON}" -m pip install --upgrade pip
-"${AUTODL_PYTHON}" -m pip install -r apps/api/requirements.txt
-"${AUTODL_PYTHON}" -m pip install -r apps/worker/requirements.txt
 
 corepack enable
 pnpm install

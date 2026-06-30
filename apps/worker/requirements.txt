@@ -1,5 +1,6 @@
-numpy==2.2.1
-pillow==11.0.0
-opencv-python==4.13.0.92
+# CompressAI 1.2.x requires numpy<2.0; keep OpenCV below 4.12 for the same ABI range.
+numpy>=1.26,<2.0
+pillow>=11.0,<13
+opencv-python>=4.9.0.80,<4.12
 PyWavelets==1.9.0
 blind-watermark==0.4.4

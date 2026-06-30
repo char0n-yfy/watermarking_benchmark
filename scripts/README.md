@@ -2,6 +2,16 @@
 
 这些脚本用于一键拉起 WM Bench 的 Web UI、FastAPI 后端和本地 Worker。
 
+启动脚本会在项目根目录创建或复用 `.venv`，并安装 `requirements.txt` 中的 Python 依赖。`requirements.txt` 汇总了 API、Worker 和评测算法运行依赖；SHARP/3D Viewpoint Re-rendering 的 CUDA 重型依赖单独放在 `requirements/sharp.txt`。
+
+可选环境变量：
+
+- `WM_BENCH_VENV`: 虚拟环境目录，默认 `.venv`。
+- `WM_BENCH_DOTENV_PATH`: 指定要加载的 dotenv 文件，默认 `.env`；AutoDL 启动脚本会使用 `.env.autodl`。
+- `WM_BENCH_INSTALL_PYTHON_DEPS`: 设为 `0` 时跳过依赖安装，但要求 `.venv` 已存在。
+- `WM_BENCH_VENV_SYSTEM_SITE_PACKAGES`: 设为 `1` 时允许 `.venv` 读取系统 Python 包，AutoDL 默认开启以复用 CUDA/PyTorch。
+- `WM_BENCH_INSTALL_SHARP_DEPS`: 设为 `1` 时安装 `requirements/sharp.txt`，默认开启；设为 `0` 可跳过 SHARP/3D 重型依赖。
+
 ## 首次配置（OSS 数据集下载）
 
 **默认无需 AccessKey。** 项目已内置团队 OSS 地址（`watermarking-benchmark` / `wmbench` 前缀），开启公开读后，克隆仓库、启动脚本即可在资源页下载。
@@ -44,6 +54,12 @@ bash scripts/start-macos.sh
 API_PORT=8001 WEB_PORT=3001 WM_BENCH_DEVICE=mps bash scripts/start-macos.sh
 ```
 
+需要跳过 SHARP/3D 攻击依赖时：
+
+```bash
+WM_BENCH_INSTALL_SHARP_DEPS=0 bash scripts/start-macos.sh
+```
+
 ## Windows
 
 在 PowerShell 中进入项目根目录：
@@ -63,6 +79,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```powershell
 .\scripts\start-windows.ps1 -ApiPort 8001 -WebPort 3001 -Device cpu
+```
+
+需要在 Windows 上跳过 SHARP/3D 攻击依赖时：
+
+```powershell
+$env:WM_BENCH_INSTALL_SHARP_DEPS = "0"
+.\scripts\start-windows.ps1
 ```
 
 ## Linux / AutoDL

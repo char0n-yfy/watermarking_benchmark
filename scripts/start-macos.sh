@@ -40,14 +40,11 @@ mkdir -p \
   "${LOG_DIR}" \
   "${PID_DIR}"
 
-if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-  "${PYTHON_BIN}" -m venv "${VENV_DIR}"
-fi
-
+export WM_BENCH_VENV="${VENV_DIR}"
+export WM_BENCH_INSTALL_SHARP_DEPS="${WM_BENCH_INSTALL_SHARP_DEPS:-1}"
+export PYTHON="${PYTHON_BIN}"
+bash scripts/bootstrap-python.sh
 PYTHON="${VENV_DIR}/bin/python"
-"${PYTHON}" -m pip install --upgrade pip
-"${PYTHON}" -m pip install -r apps/api/requirements.txt
-"${PYTHON}" -m pip install -r apps/worker/requirements.txt
 
 corepack enable
 corepack pnpm install

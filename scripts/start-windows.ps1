@@ -30,17 +30,11 @@ New-Item -ItemType Directory -Force -Path `
   $LogDir, `
   $PidDir | Out-Null
 
-if (-not (Test-Path $PythonExe)) {
-  if (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3 -m venv $VenvDir
-  } else {
-    & python -m venv $VenvDir
-  }
+if (-not $env:WM_BENCH_INSTALL_SHARP_DEPS) {
+  $env:WM_BENCH_INSTALL_SHARP_DEPS = "1"
 }
 
-& $PythonExe -m pip install --upgrade pip
-& $PythonExe -m pip install -r apps/api/requirements.txt
-& $PythonExe -m pip install -r apps/worker/requirements.txt
+& (Join-Path $PSScriptRoot "bootstrap-python.ps1") -VenvDir $VenvDir
 
 & corepack enable
 & corepack pnpm install

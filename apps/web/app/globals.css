@@ -193,6 +193,12 @@ button {
   color: white;
 }
 
+.button.danger {
+  border-color: color-mix(in srgb, var(--red) 32%, var(--line));
+  background: #fff7f6;
+  color: var(--red);
+}
+
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
@@ -2699,18 +2705,32 @@ a.button {
   font-weight: 700;
 }
 
-.runs-grid {
+.runs-grid,
+.runs-workbench {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
 
-.runs-grid > .panel:last-child .panel-body {
+.runs-workbench {
+  grid-template-columns: 330px minmax(360px, 430px) minmax(0, 1fr);
+}
+
+.run-control-grid {
+  display: grid;
+  grid-template-columns: 320px minmax(430px, 1fr) minmax(360px, 480px);
+  gap: 12px;
+  align-items: start;
+}
+
+.runs-grid > .panel:last-child .panel-body,
+.runs-workbench > .panel:last-child .panel-body {
   overflow-x: auto;
 }
 
-.runs-grid > .panel:last-child .table {
+.runs-grid > .panel:last-child .table,
+.runs-workbench > .panel:last-child .table {
   min-width: 780px;
 }
 
@@ -2723,6 +2743,8 @@ a.button {
 
 @media (max-width: 1380px) and (min-width: 1181px) {
   .runs-grid,
+  .runs-workbench,
+  .run-control-grid,
   .results-grid,
   .leaderboard-grid {
     grid-template-columns: 1fr;
@@ -2740,6 +2762,667 @@ a.button {
 .launcher-panel {
   display: grid;
   gap: 12px;
+}
+
+.task-board-panel .panel-body,
+.live-log-panel .panel-body {
+  min-height: 540px;
+}
+
+.run-task-board {
+  display: grid;
+  gap: 12px;
+}
+
+.run-task-section {
+  display: grid;
+  gap: 8px;
+}
+
+.run-task-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.run-task-section-head > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-task-section-head > span {
+  display: inline-grid;
+  min-width: 26px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
+.run-task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.run-task-card {
+  position: relative;
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 10px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.run-task-card.selected {
+  border-color: color-mix(in srgb, var(--teal) 52%, var(--line));
+  background: var(--teal-soft);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.run-task-main,
+.run-task-status,
+.run-task-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-task-main {
+  align-items: flex-start;
+}
+
+.run-task-main strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.run-task-main span,
+.run-task-status small,
+.run-task-foot span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-task-main span {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.run-task-foot > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-task-action {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.run-task-action.danger {
+  color: var(--red);
+}
+
+.run-task-busy {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, white 72%, transparent);
+}
+
+.live-log-body {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.live-log-preview {
+  min-height: 420px;
+  max-height: 540px;
+}
+
+.run-config-summary {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 10px;
+}
+
+.run-config-summary strong {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.run-config-summary span {
+  font-weight: 800;
+}
+
+.run-config-summary small {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.run-monitor-body {
+  display: grid;
+  gap: 12px;
+}
+
+.run-monitor-head,
+.run-progress-head,
+.run-artifacts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-monitor-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-monitor-head span,
+.run-progress-head span,
+.run-meta-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.run-monitor-head strong {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.run-progress-block {
+  gap: 8px;
+}
+
+.run-progress-head strong {
+  font-size: 13px;
+}
+
+.run-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.run-meta-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfa;
+  padding: 9px;
+}
+
+.run-meta-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-artifacts {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px;
+}
+
+.run-artifacts-head {
+  justify-content: flex-start;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.run-artifacts code {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 7px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.artifact-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.artifact-chip-grid span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcfa;
+  color: var(--muted);
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.run-row {
+  cursor: pointer;
+}
+
+.run-row.selected {
+  background: var(--teal-soft);
+}
+
+.task-detail-panel {
+  margin-top: 12px;
+}
+
+.run-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 430px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.run-events-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.run-events-current,
+.run-events-list {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.run-events-current span,
+.run-event-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.run-events-current strong {
+  font-size: 18px;
+}
+
+.run-events-current small {
+  color: var(--muted);
+}
+
+.run-events-current code,
+.run-event-row code {
+  overflow-wrap: anywhere;
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.run-event-row {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.run-event-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.run-start-panel,
+.run-execution-panel {
+  max-width: 1180px;
+}
+
+.run-start-body {
+  display: grid;
+  gap: 18px;
+}
+
+.run-start-copy {
+  display: grid;
+  max-width: 760px;
+  gap: 10px;
+}
+
+.run-start-copy h2 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.run-start-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.run-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-start-button {
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
+.run-summary-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 14px;
+}
+
+.run-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-summary-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.run-summary-head strong {
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+
+.run-summary-head code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-start-modal {
+  width: min(760px, calc(100vw - 28px));
+}
+
+.run-summary-modal {
+  width: min(720px, calc(100vw - 28px));
+}
+
+.run-start-modal-body {
+  display: grid;
+  gap: 14px;
+}
+
+.run-summary-modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.run-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.run-mode-card {
+  display: grid;
+  gap: 7px;
+  min-height: 112px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.run-mode-card.selected {
+  border-color: color-mix(in srgb, var(--teal) 58%, var(--line));
+  background: var(--teal-soft);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.run-mode-card svg {
+  color: var(--teal);
+}
+
+.run-mode-card strong {
+  font-size: 15px;
+}
+
+.run-mode-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.run-dialog-section {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 12px;
+}
+
+.run-resume-list {
+  display: grid;
+  max-height: 380px;
+  gap: 8px;
+  overflow: auto;
+}
+
+.run-resume-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 11px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.run-resume-card.selected {
+  border-color: color-mix(in srgb, var(--teal) 58%, var(--line));
+  background: var(--teal-soft);
+}
+
+.run-resume-card > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.run-resume-card strong,
+.run-resume-card span,
+.run-resume-card code {
+  overflow-wrap: anywhere;
+}
+
+.run-resume-card > div:first-child > span,
+.run-resume-card small,
+.run-resume-card code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-resume-card > div:last-child {
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.run-execution-body {
+  display: grid;
+  gap: 14px;
+}
+
+.run-monitor-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.run-monitor-toolbar > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.run-monitor-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.run-monitor-toolbar strong {
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.run-monitor-toolbar code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-progress-stack {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 12px;
+}
+
+.run-progress-meter {
+  display: grid;
+  gap: 7px;
+}
+
+.run-monitor-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.run-stage-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.run-stage-card strong {
+  font-size: 18px;
+}
+
+.run-stage-card small {
+  color: var(--muted);
+}
+
+.run-stage-card code {
+  overflow-wrap: anywhere;
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-monitor-meta-grid {
+  align-content: start;
+}
+
+.run-log-shell {
+  display: grid;
+  gap: 8px;
+}
+
+.run-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-log-head > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.run-log-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.run-live-log {
+  min-height: 300px;
+  max-height: 460px;
+}
+
+.run-execution-events {
+  background: var(--panel-soft);
 }
 
 .log-panel,
@@ -2793,6 +3476,11 @@ a.button {
 
   .dashboard-grid,
   .runs-grid,
+  .runs-workbench,
+  .run-control-grid,
+  .run-detail-grid,
+  .run-monitor-grid,
+  .run-mode-grid,
   .console-bottom-grid,
   .results-grid,
   .leaderboard-grid,

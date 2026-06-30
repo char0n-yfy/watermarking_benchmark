@@ -43,6 +43,7 @@ WAVES_CATEGORY_KEYS = [category.key for category in WAVES_ATTACK_CATEGORIES]
 QUALITY_BOUNDS = {
     "psnr_degradation": (0.02, 0.45),
     "ssim_degradation": (0.001, 0.25),
+    "ms_ssim_degradation": (0.001, 0.25),
     "nmi_degradation": (0.05, 0.55),
 }
 
@@ -60,12 +61,10 @@ def benchmark_protocols() -> list[JsonDict]:
             "qualityMetrics": [
                 "PSNR",
                 "SSIM",
+                "MS-SSIM",
                 "NMI",
-                "FID",
-                "CLIP-FID",
                 "LPIPS",
-                "Aesthetic delta",
-                "Artifact delta",
+                "DISTS",
             ],
             "status": "provisional-local-calibration",
         }
@@ -298,21 +297,26 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
     metric_values: dict[str, list[float]] = {
         "psnr": [],
         "ssim": [],
+        "msSsim": [],
         "nmi": [],
         "psnr_degradation": [],
         "ssim_degradation": [],
+        "ms_ssim_degradation": [],
         "nmi_degradation": [],
     }
     for reference_path, target_path in pairs:
-        ref, target = _load_pair(reference_path, target_path)
-        psnr = _psnr(ref, target)
-        ssim = _ssim(ref, target)
-        nmi = _nmi(ref, target)
+        metrics = compute_image_quality_pair(reference_path, target_path)
+        psnr = metrics["psnr"]
+        ssim = metrics["ssim"]
+        ms_ssim = metrics["msSsim"]
+        nmi = metrics["nmi"]
         metric_values["psnr"].append(psnr)
         metric_values["ssim"].append(ssim)
+        metric_values["msSsim"].append(ms_ssim)
         metric_values["nmi"].append(nmi)
         metric_values["psnr_degradation"].append(max(0.0, 60.0 - min(psnr, 60.0)) / 60.0)
         metric_values["ssim_degradation"].append(max(0.0, 1.0 - ssim))
+        metric_values["ms_ssim_degradation"].append(max(0.0, 1.0 - ms_ssim))
         metric_values["nmi_degradation"].append(max(0.0, 1.0 - nmi))
 
     raw_degradation = {
@@ -331,10 +335,12 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
         "metrics": {
             "psnr": _mean(metric_values["psnr"]),
             "ssim": _mean(metric_values["ssim"]),
+            "msSsim": _mean(metric_values["msSsim"]),
             "nmi": _mean(metric_values["nmi"]),
             "fid": None,
             "clipFid": None,
             "lpips": None,
+            "dists": None,
             "aestheticDelta": None,
             "artifactDelta": None,
         },
@@ -343,9 +349,22 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
         "normalizedQualityDegradation": nqd,
         "qualityCompleteness": {
             "availableMetrics": len([value for value in normalized.values() if value is not None]),
-            "targetMetrics": 8,
+            "targetMetrics": 6,
             "mode": "local-lightweight",
         },
+    }
+
+
+def compute_image_quality_pair(reference_path: Path, target_path: Path) -> JsonDict:
+    ref, target = _load_pair(reference_path, target_path)
+    return {
+        "psnr": _psnr(ref, target),
+        "ssim": _ssim(ref, target),
+        "msSsim": _ms_ssim(ref, target),
+        "nmi": _nmi(ref, target),
+        "lpips": None,
+        "dists": None,
+        "perceptualBackend": "not_configured",
     }
 
 
@@ -416,6 +435,38 @@ def _ssim(reference: Any, target: Any) -> float:
     if denominator <= 1e-12:
         return 1.0
     return max(-1.0, min(1.0, numerator / denominator))
+
+
+def _ms_ssim(reference: Any, target: Any) -> float:
+    import numpy as np
+
+    values = [_ssim(reference, target)]
+    ref = reference
+    tgt = target
+    for _scale in range(3):
+        if ref.shape[0] < 32 or ref.shape[1] < 32:
+            break
+        ref = _downsample2x(ref)
+        tgt = _downsample2x(tgt)
+        values.append(_ssim(ref, tgt))
+    clipped = [max(0.0, min(1.0, float(value))) for value in values]
+    if not clipped:
+        return 1.0
+    return float(np.prod(np.asarray(clipped, dtype=np.float64) ** (1.0 / len(clipped))))
+
+
+def _downsample2x(image: Any) -> Any:
+    height = image.shape[0] - (image.shape[0] % 2)
+    width = image.shape[1] - (image.shape[1] % 2)
+    if height <= 0 or width <= 0:
+        return image
+    cropped = image[:height, :width]
+    return (
+        cropped[0::2, 0::2]
+        + cropped[1::2, 0::2]
+        + cropped[0::2, 1::2]
+        + cropped[1::2, 1::2]
+    ) / 4.0
 
 
 def _nmi(reference: Any, target: Any) -> float:

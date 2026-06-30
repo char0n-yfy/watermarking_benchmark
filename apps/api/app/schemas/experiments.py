@@ -27,6 +27,8 @@ class ExperimentConfigRenamePayload(BaseModel):
 class RunCreatePayload(BaseModel):
     config_id: Optional[str] = None
     configId: Optional[str] = None
+    name: Optional[str] = None
+    taskName: Optional[str] = None
     execute: bool = False
 
     def resolved_config_id(self) -> str:
@@ -34,6 +36,13 @@ class RunCreatePayload(BaseModel):
         if not config_id:
             raise ValueError("config_id is required")
         return config_id
+
+    def resolved_name(self) -> str | None:
+        name = self.name or self.taskName
+        if name is None:
+            return None
+        stripped = name.strip()
+        return stripped or None
 
 
 class ExperimentSpecDraft(BaseModel):

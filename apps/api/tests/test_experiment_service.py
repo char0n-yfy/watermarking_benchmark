@@ -100,13 +100,18 @@ class ExperimentServiceTest(unittest.TestCase):
             run = service.create_run(config["id"])
 
             self.assertEqual(run["status"], "queued")
+            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
             finished = service.execute_run(run["id"])
             results = service.get_run_results(run["id"])
             score = service.get_run_score(run["id"])
+            events = service.get_run_events(run["id"])
 
             self.assertEqual(finished["status"], "succeeded")
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
             self.assertEqual(len(results["cells"]), 1)
             self.assertEqual(results["cells"][0]["status"], "succeeded")
+            self.assertTrue(events["exists"])
+            self.assertGreater(len(events["events"]), 0)
             extract_manifest = json.loads(Path(results["cells"][0]["manifestPath"]).read_text())
             self.assertTrue(extract_manifest[0]["metadata"]["match"])
             self.assertIsNone(results["cells"][0]["bitAccuracy"])
@@ -115,6 +120,34 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(score["score"]["status"], "provisional")
             self.assertEqual(service.list_benchmark_protocols()[0]["id"], "waves-official-detection-v1")
             self.assertTrue(results["summaryExists"])
+
+    def test_create_run_records_task_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke Config",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+
+            named_run = service.create_run(config["id"], name="Task A")
+            default_run = service.create_run(config["id"])
+
+            self.assertEqual(named_run["taskName"], "Task A")
+            self.assertEqual(default_run["taskName"], "Smoke Config")
 
     def test_cancel_queued_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,6 +176,12 @@ class ExperimentServiceTest(unittest.TestCase):
 
             self.assertEqual(cancelled["status"], "cancelled")
             self.assertTrue(cancelled["cancelRequested"])
+            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
+
+            resumed = service.resume_run(run["id"])
+
+            self.assertEqual(resumed["status"], "queued")
+            self.assertFalse(resumed["cancelRequested"])
 
 
 if __name__ == "__main__":
