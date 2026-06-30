@@ -17,7 +17,8 @@ import type {
   RuntimeInfo,
   SavedExperimentConfig,
   SystemMetrics,
-  WeightDownloadJob
+  WeightDownloadJob,
+  ResourceInstallationResult
 } from "./types";
 
 const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
@@ -135,6 +136,33 @@ export function startAttackWeightDownload(identifier: string): Promise<WeightDow
 
 export function fetchAttackWeightDownloadJob(jobId: string): Promise<WeightDownloadJob> {
   return requestJson<WeightDownloadJob>(`/resources/attacks/downloads/${encodeURIComponent(jobId)}`);
+}
+
+export function uninstallWatermarkInstallation(identifier: string): Promise<ResourceInstallationResult> {
+  return requestJson<ResourceInstallationResult>(`/resources/watermarks/${encodeURIComponent(identifier)}/installation`, {
+    method: "DELETE"
+  });
+}
+
+export function uninstallAttackInstallation(identifier: string): Promise<ResourceInstallationResult> {
+  return requestJson<ResourceInstallationResult>(`/resources/attacks/${encodeURIComponent(identifier)}/installation`, {
+    method: "DELETE"
+  });
+}
+
+export function uninstallDatasetInstallation(
+  datasetId: string,
+  options: { mode: DatasetDownloadMode; seed?: number; sampleCount?: number }
+): Promise<ResourceInstallationResult> {
+  const params = new URLSearchParams({ mode: options.mode });
+  if (options.mode === "custom") {
+    params.set("seed", String(options.seed ?? 42));
+    params.set("sampleCount", String(options.sampleCount ?? 100));
+  }
+  return requestJson<ResourceInstallationResult>(
+    `/resources/datasets/${encodeURIComponent(datasetId)}/installation?${params.toString()}`,
+    { method: "DELETE" }
+  );
 }
 
 export function fetchSavedConfigs(): Promise<SavedExperimentConfig[]> {

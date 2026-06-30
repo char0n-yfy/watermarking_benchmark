@@ -46,6 +46,10 @@ def weights_dir_name(method: str) -> str | None:
     return WATERMARK_WEIGHT_DIRS.get(method)
 
 
+def methods_for_weights_dir(directory: str) -> list[str]:
+    return sorted(method for method, mapped in WATERMARK_WEIGHT_DIRS.items() if mapped == directory)
+
+
 def weights_need_download(method: str) -> bool:
     return method in WATERMARK_WEIGHT_DIRS
 

@@ -13,7 +13,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { ResourcePagination } from "@/components/ResourcePagination";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDetail, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload } from "@/lib/api";
+import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDetail, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload, uninstallAttackInstallation, uninstallDatasetInstallation, uninstallWatermarkInstallation } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
@@ -1043,6 +1043,9 @@ function WeightDownloadPanel({
   const identifier = resource?.id ?? "";
   const [job, setJob] = useState<WeightDownloadJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uninstallBusy, setUninstallBusy] = useState(false);
+  const [uninstallError, setUninstallError] = useState<string | null>(null);
+  const [uninstallNotice, setUninstallNotice] = useState<string | null>(null);
   const installedJobRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -1082,6 +1085,11 @@ function WeightDownloadPanel({
     }
   }, [resource?.weightsInstalled, resource?.id]);
 
+  useEffect(() => {
+    setUninstallError(null);
+    setUninstallNotice(null);
+  }, [resource?.id, variant]);
+
   if (!resource) {
     return null;
   }
@@ -1097,8 +1105,12 @@ function WeightDownloadPanel({
     variant === "watermark" ? t.resources.weightsAlreadyInstalled : t.resources.attackWeightsAlreadyInstalled;
   const unavailable = variant === "watermark" ? t.resources.weightsUnavailable : t.resources.attackWeightsUnavailable;
   const readyLabel = variant === "watermark" ? t.resources.weightDownloadReady : t.resources.attackWeightDownloadReady;
+  const canUninstall = installed && !jobInFlight && !uninstallBusy;
+  const showUninstallOnly = Boolean(uninstallNotice);
 
   async function handleStart() {
+    setUninstallNotice(null);
+    setUninstallError(null);
     setBusy(true);
     try {
       const startDownload = variant === "watermark" ? startWeightDownload : startAttackWeightDownload;
@@ -1114,14 +1126,40 @@ function WeightDownloadPanel({
     }
   }
 
+  async function handleUninstall() {
+    setUninstallBusy(true);
+    setUninstallError(null);
+    setUninstallNotice(null);
+    try {
+      const uninstall =
+        variant === "watermark" ? uninstallWatermarkInstallation : uninstallAttackInstallation;
+      const result = await uninstall(identifier);
+      setJob(null);
+      installedJobRef.current = null;
+      setUninstallNotice(t.resources.uninstallSuccess);
+      void onInstalled();
+    } catch (error) {
+      setUninstallError(error instanceof Error ? error.message : t.resources.uninstallFailed);
+    } finally {
+      setUninstallBusy(false);
+    }
+  }
+
   return (
     <div className="detail-section dataset-download-panel">
       <strong>{panelTitle}</strong>
-      {installed ? <div className="risk ok">{alreadyInstalled}</div> : null}
-      {!canStart && !installed && !jobInFlight ? <div className="risk warn">{unavailable}</div> : null}
-      <button className="button primary" disabled={!canStart || busy || jobInFlight || installed} onClick={handleStart} type="button">
-        {t.resources.startDownload}
-      </button>
+      {!showUninstallOnly && installed ? <div className="risk ok">{alreadyInstalled}</div> : null}
+      {!showUninstallOnly && !canStart && !installed && !jobInFlight ? <div className="risk warn">{unavailable}</div> : null}
+      <div className="download-action-row">
+        <button className="button primary" disabled={!canStart || busy || jobInFlight || installed} onClick={handleStart} type="button">
+          {t.resources.startDownload}
+        </button>
+        <button className="button danger" disabled={!canUninstall || uninstallBusy} onClick={handleUninstall} type="button">
+          {t.resources.uninstallLocal}
+        </button>
+      </div>
+      {uninstallNotice ? <div className="risk ok">{uninstallNotice}</div> : null}
+      {uninstallError ? <div className="risk error">{t.resources.uninstallFailed}: {uninstallError}</div> : null}
       {job ? (
         <div className="dataset-download-progress">
           <div className="dataset-download-progress-head">
@@ -1133,7 +1171,6 @@ function WeightDownloadPanel({
           </div>
           <small>
             {job.completedItems}/{job.totalItems} · {job.status}
-            {job.message ? ` · ${job.message}` : ""}
           </small>
           {job.status === "failed" && job.error ? <div className="risk error">{t.resources.downloadFailed}: {job.error}</div> : null}
           {job.status === "succeeded" ? (
@@ -1165,6 +1202,9 @@ function DatasetDownloadPanel({
   const [sampleCount, setSampleCount] = useState(100);
   const [job, setJob] = useState<DatasetDownloadJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uninstallBusy, setUninstallBusy] = useState(false);
+  const [uninstallError, setUninstallError] = useState<string | null>(null);
+  const [uninstallNotice, setUninstallNotice] = useState<string | null>(null);
   const [detail, setDetail] = useState<DatasetCatalogItem>(catalog);
   const [detailLoading, setDetailLoading] = useState(false);
   const installedJobRef = useRef<string | null>(null);
@@ -1174,7 +1214,14 @@ function DatasetDownloadPanel({
     setDetail(catalog);
     setDetailLoading(false);
     setJob(null);
+    setUninstallError(null);
+    setUninstallNotice(null);
   }, [catalog.id]);
+
+  useEffect(() => {
+    setUninstallError(null);
+    setUninstallNotice(null);
+  }, [mode, seed, sampleCount]);
 
   useEffect(() => {
     if (catalog.installed || catalog.compactAvailable || catalog.remoteCompactAvailable) {
@@ -1221,18 +1268,34 @@ function DatasetDownloadPanel({
     }
     installedJobRef.current = job.id;
     onInstalled();
-  }, [job, onInstalled]);
+    fetchDatasetDetail(catalog.id)
+      .then((item) => {
+        setDetail(item);
+        onCatalogUpdate(item);
+      })
+      .catch(() => undefined);
+  }, [job, onInstalled, catalog.id, onCatalogUpdate]);
 
   const compactReady = detail.compactAvailable;
   const customReady = detail.customDownloadReady;
   const compactInstalled = detail.installed === true;
-  const canStart = mode === "compact" ? compactReady && !compactInstalled : customReady;
+  const jobSucceededForMode =
+    job?.status === "succeeded" &&
+    job.mode === mode &&
+    (mode === "compact" || (job.seed === seed && job.sampleCount === sampleCount));
+  const installedForMode = mode === "compact" ? compactInstalled || jobSucceededForMode : jobSucceededForMode;
+  const canStart = mode === "compact" ? compactReady && !installedForMode : customReady && !installedForMode;
   const totalImages = detail.officialTotalImages ?? 0;
-  const ossProbing = detailLoading && !compactReady && !compactInstalled;
+  const ossProbing = detailLoading && !compactReady && !installedForMode;
   const progressPercent =
     job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
+  const jobInFlight = job?.status === "queued" || job?.status === "running";
+  const canUninstall = installedForMode && !busy && !uninstallBusy && !jobInFlight;
+  const showUninstallOnly = Boolean(uninstallNotice);
 
   async function handleStart() {
+    setUninstallNotice(null);
+    setUninstallError(null);
     setBusy(true);
     try {
       const created = await startDatasetDownload(detail.id, {
@@ -1243,6 +1306,30 @@ function DatasetDownloadPanel({
       setJob(created);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleUninstall() {
+    setUninstallBusy(true);
+    setUninstallError(null);
+    setUninstallNotice(null);
+    try {
+      const result = await uninstallDatasetInstallation(detail.id, {
+        mode,
+        seed,
+        sampleCount: mode === "compact" ? 1000 : sampleCount
+      });
+      setJob(null);
+      installedJobRef.current = null;
+      setUninstallNotice(t.resources.uninstallSuccess);
+      const refreshed = await fetchDatasetDetail(detail.id);
+      setDetail(refreshed);
+      onCatalogUpdate(refreshed);
+      onInstalled();
+    } catch (error) {
+      setUninstallError(error instanceof Error ? error.message : t.resources.uninstallFailed);
+    } finally {
+      setUninstallBusy(false);
     }
   }
 
@@ -1257,12 +1344,12 @@ function DatasetDownloadPanel({
           {t.resources.customDownload}
         </button>
       </div>
-      {mode === "compact" ? (
+      {!showUninstallOnly && mode === "compact" ? (
         <p className="dataset-download-hint">
           {`${t.resources.compactPack}：${detail.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}`}
         </p>
       ) : null}
-      {mode === "custom" ? (
+      {!showUninstallOnly && mode === "custom" ? (
         <div className="dataset-pool-summary">
           <span>
             {t.resources.datasetTotalImages}：
@@ -1270,16 +1357,18 @@ function DatasetDownloadPanel({
           </span>
         </div>
       ) : null}
-      {ossProbing && mode === "compact" ? <div className="risk warn">{t.resources.ossProbing}</div> : null}
-      {!compactReady && !ossProbing && mode === "compact" ? <div className="risk warn">{t.resources.compactUnavailable}</div> : null}
-      {compactReady && !compactInstalled && detail.remoteCompactAvailable && mode === "compact" ? (
+      {!showUninstallOnly && ossProbing && mode === "compact" ? <div className="risk warn">{t.resources.ossProbing}</div> : null}
+      {!showUninstallOnly && !compactReady && !ossProbing && mode === "compact" ? (
+        <div className="risk warn">{t.resources.compactUnavailable}</div>
+      ) : null}
+      {!showUninstallOnly && compactReady && !installedForMode && detail.remoteCompactAvailable && mode === "compact" ? (
         <div className="risk ok">{t.resources.compactRemoteReady}</div>
       ) : null}
-      {compactInstalled && mode === "compact" ? (
+      {!showUninstallOnly && installedForMode && mode === "compact" ? (
         <div className="risk ok">{t.resources.compactAlreadyInstalled}</div>
       ) : null}
-      {!customReady && mode === "custom" ? <div className="risk warn">{t.resources.customUnavailable}</div> : null}
-      {mode === "custom" ? (
+      {!showUninstallOnly && !customReady && mode === "custom" ? <div className="risk warn">{t.resources.customUnavailable}</div> : null}
+      {!showUninstallOnly && mode === "custom" ? (
         <div className="dataset-download-fields">
           <label>
             {t.resources.randomSeed}
@@ -1302,9 +1391,16 @@ function DatasetDownloadPanel({
           </label>
         </div>
       ) : null}
-      <button className="button primary" disabled={!canStart || busy || job?.status === "running"} onClick={handleStart} type="button">
-        {t.resources.startDownload}
-      </button>
+      <div className="download-action-row">
+        <button className="button primary" disabled={!canStart || busy || jobInFlight} onClick={handleStart} type="button">
+          {t.resources.startDownload}
+        </button>
+        <button className="button danger" disabled={!canUninstall || uninstallBusy} onClick={handleUninstall} type="button">
+          {t.resources.uninstallLocal}
+        </button>
+      </div>
+      {uninstallNotice ? <div className="risk ok">{uninstallNotice}</div> : null}
+      {uninstallError ? <div className="risk error">{t.resources.uninstallFailed}: {uninstallError}</div> : null}
       {job ? (
         <div className="dataset-download-progress">
           <div className="dataset-download-progress-head">

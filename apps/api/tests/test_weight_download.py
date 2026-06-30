@@ -56,7 +56,7 @@ class WeightDownloadServiceTest(unittest.TestCase):
             job = service.start_download("hidden")
 
             self.assertEqual(job.status, "succeeded")
-            self.assertIn("跳过重复下载", job.message or "")
+            self.assertGreaterEqual(job.progress, 1)
 
     def test_skips_when_already_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,13 +71,34 @@ class WeightDownloadServiceTest(unittest.TestCase):
             job = service.get_job(job.id)
 
             self.assertEqual(job.status, "succeeded")
-            self.assertIn("跳过重复下载", job.message or "")
+            self.assertGreaterEqual(job.progress, 1)
 
     def test_rejects_methods_without_packaged_weights(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = WeightDownloadService(Path(tmp))
             with self.assertRaises(ValueError):
                 service.start_download("invisible-watermark-dwtdct")
+
+    def test_uninstall_removes_installed_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            install_dir = root / "weights" / "watermarking" / "hidden"
+            install_dir.mkdir(parents=True)
+            (install_dir / "decoder.pt").write_bytes(b"existing")
+
+            service = WeightDownloadService(root)
+            result = service.uninstall("hidden")
+
+            self.assertFalse(result["installed"])
+            self.assertEqual(result["weightsDir"], "hidden")
+            self.assertTrue(install_dir.exists())
+            self.assertFalse(any(install_dir.iterdir()))
+
+    def test_uninstall_raises_when_not_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WeightDownloadService(Path(tmp))
+            with self.assertRaises(FileNotFoundError):
+                service.uninstall("hidden")
 
 
 if __name__ == "__main__":

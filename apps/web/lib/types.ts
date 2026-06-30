@@ -87,6 +87,19 @@ export interface WeightDownloadJob {
   bytesDownloaded?: number;
 }
 
+export interface ResourceInstallationResult {
+  installed: boolean;
+  removedPath?: string | null;
+  message?: string | null;
+  sharedMethods?: string[];
+  method?: string;
+  weightsDir?: string;
+  datasetId?: string;
+  mode?: DatasetDownloadMode;
+  seed?: number | null;
+  sampleCount?: number | null;
+}
+
 export interface AlgorithmVersion {
   id: string;
   name: string;

@@ -542,3 +542,62 @@ class DatasetDownloadService:
                         if chunk:
                             handle.write(chunk)
                             job.bytes_downloaded += len(chunk)
+
+    def _compact_install_dir(self, dataset_id: str) -> Path:
+        entry = get_catalog_entry(dataset_id)
+        root = dataset_root(self.resources_root, dataset_id)
+        source = compact_dir(self.resources_root, dataset_id, compact_uses_root=entry.compact_uses_root)
+        if entry.compact_uses_root or source == root:
+            return root
+        return root / "compact"
+
+    def _custom_install_dir(self, dataset_id: str, *, seed: int, sample_count: int) -> Path:
+        root = dataset_root(self.resources_root, dataset_id)
+        return root / "custom" / f"seed{seed}_{sample_count}"
+
+    def _remove_compact_installation(self, install_dir: Path) -> None:
+        if not install_dir.exists():
+            return
+        preserved = {"full", "custom"}
+        if install_dir.name == "compact":
+            shutil.rmtree(install_dir)
+            install_dir.mkdir(parents=True, exist_ok=True)
+            return
+        for item in list(install_dir.iterdir()):
+            if item.name in preserved:
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+    def uninstall(
+        self,
+        dataset_id: str,
+        *,
+        mode: DownloadMode,
+        seed: int = 42,
+        sample_count: int = 100,
+    ) -> dict[str, Any]:
+        get_catalog_entry(dataset_id)
+
+        if mode == "compact":
+            install_dir = self._compact_install_dir(dataset_id)
+            if not install_dir.exists() or not iter_image_paths(install_dir):
+                raise FileNotFoundError(f"Compact dataset is not installed: {install_dir}")
+            self._remove_compact_installation(install_dir)
+        else:
+            install_dir = self._custom_install_dir(dataset_id, seed=seed, sample_count=sample_count)
+            if not install_dir.exists() or not iter_image_paths(install_dir):
+                raise FileNotFoundError(f"Custom dataset pool is not installed: {install_dir}")
+            shutil.rmtree(install_dir)
+
+        return {
+            "datasetId": dataset_id,
+            "mode": mode,
+            "installed": False,
+            "removedPath": str(install_dir),
+            "seed": seed if mode == "custom" else None,
+            "sampleCount": sample_count if mode == "custom" else None,
+            "message": "卸载完成",
+        }

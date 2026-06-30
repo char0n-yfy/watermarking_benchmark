@@ -166,6 +166,29 @@ def create_app() -> FastAPI:
     def list_dataset_downloads(dataset_id: str) -> list[dict[str, object]]:
         return [job.to_json() for job in download_service.list_jobs(dataset_id)]
 
+    @app.delete("/resources/datasets/{dataset_id}/installation")
+    def uninstall_dataset(
+        dataset_id: str,
+        mode: str = Query(default="compact"),
+        seed: int = Query(default=42),
+        sample_count: int = Query(default=100, alias="sampleCount"),
+    ) -> dict[str, object]:
+        if mode not in {"compact", "custom"}:
+            raise HTTPException(status_code=400, detail=f"Unsupported dataset uninstall mode: {mode}")
+        try:
+            return download_service.uninstall(
+                dataset_id,
+                mode=mode,  # type: ignore[arg-type]
+                seed=seed,
+                sample_count=sample_count,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/resources/watermarks")
     def watermarks(remote: bool = False) -> list[dict[str, object]]:
         return list_watermark_resources(
@@ -194,6 +217,20 @@ def create_app() -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.delete("/resources/watermarks/{identifier}/installation")
+    def uninstall_watermark_weights(identifier: str) -> dict[str, object]:
+        try:
+            item = get_watermark_catalog_item(identifier)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        method = str(item["method"])
+        try:
+            return weight_download_service.uninstall(method)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/resources/attacks")
     def attacks(remote: bool = False) -> list[dict[str, object]]:
         return list_attack_resources(
@@ -221,6 +258,20 @@ def create_app() -> FastAPI:
             return attack_weight_download_service.get_job(job_id).to_json()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/resources/attacks/{identifier}/installation")
+    def uninstall_attack_weights(identifier: str) -> dict[str, object]:
+        try:
+            item = get_attack_catalog_item(identifier)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        method = str(item["method"])
+        try:
+            return attack_weight_download_service.uninstall(method)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/experiment-configs")
     def create_config(payload: ExperimentConfigCreatePayload) -> dict[str, object]:

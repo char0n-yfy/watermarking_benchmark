@@ -12,6 +12,7 @@ from typing import Any, Literal
 from app.services.object_storage import ObjectStorageClient
 from app.services.watermark_weights import (
     iter_weight_files,
+    methods_for_weights_dir,
     weights_dir_name,
     weights_install_dir,
     weights_installed,
@@ -96,7 +97,6 @@ class WeightDownloadService:
                 method=method,
                 weights_dir=directory,
                 status="succeeded",
-                message="already installed",
             )
             with self._lock:
                 self._jobs[job_id] = job
@@ -109,7 +109,6 @@ class WeightDownloadService:
             id=job_id,
             method=method,
             weights_dir=directory,
-            message="queued",
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -131,10 +130,18 @@ class WeightDownloadService:
     def _canonical_cache_archive(self, weights_dir: str) -> Path:
         return self.cache_root / f"{weights_dir}__weights.zip"
 
-    def _set_progress(self, job: WeightDownloadJob, completed: int, total: int, *, message: str) -> None:
+    def _set_progress(
+        self,
+        job: WeightDownloadJob,
+        completed: int,
+        total: int,
+        *,
+        message: str | None = None,
+    ) -> None:
         job.completed_items = completed
         job.total_items = total
-        job.message = message
+        if message is not None:
+            job.message = message
         job.updated_at = time.time()
         job.progress = int(round((completed / total) * 100)) if total > 0 else 0
 
@@ -142,7 +149,7 @@ class WeightDownloadService:
         job = self.get_job(job_id)
         try:
             job.status = "running"
-            job.message = "starting"
+            job.message = None
             job.updated_at = time.time()
             self._run_download(job)
             job.status = "succeeded"
@@ -151,7 +158,6 @@ class WeightDownloadService:
         except Exception as exc:
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
-            job.message = "failed"
             job.updated_at = time.time()
 
     def _run_download(self, job: WeightDownloadJob) -> None:
@@ -162,7 +168,6 @@ class WeightDownloadService:
 
         cached = self._find_cached_archive(job.weights_dir)
         if cached:
-            job.message = "使用 cache 中的水印算法权重包"
             self._finalize_from_archive(job, cached, install_dir)
             return
 
@@ -184,10 +189,9 @@ class WeightDownloadService:
 
         def on_progress(completed: int, total: int, message: str) -> None:
             total_steps = max(total, 1)
-            self._set_progress(job, min(completed, total_steps), total_steps, message=message)
+            self._set_progress(job, min(completed, total_steps), total_steps)
             job.bytes_downloaded = completed
 
-        job.message = "下载水印算法权重包到 cache"
         self.oss.download_file(object_key, archive_path, on_progress=on_progress)
         self._finalize_from_archive(job, archive_path, install_dir)
 
@@ -200,7 +204,6 @@ class WeightDownloadService:
             job,
             max(file_count, 1),
             max(file_count, 1),
-            message=f"水印算法权重已安装（{install_dir.relative_to(self.resources_root)}），跳过重复下载",
         )
 
     def _find_cached_archive(self, weights_dir: str) -> Path | None:
@@ -236,17 +239,12 @@ class WeightDownloadService:
             self._mark_already_installed(job, install_dir)
             return
 
-        self._set_progress(job, 0, 1, message="解压到水印算法权重目录")
+        self._set_progress(job, 0, 1)
         self._extract_archive(archive_path, install_dir)
         job.output_dir = str(install_dir)
         job.archive_path = str(archive_path)
         file_count = max(len(iter_weight_files(install_dir)), 1)
-        self._set_progress(
-            job,
-            file_count,
-            file_count,
-            message=f"已安装到 {install_dir.relative_to(self.resources_root)}",
-        )
+        self._set_progress(job, file_count, file_count)
 
     def _extract_archive(self, archive_path: Path, target_dir: Path) -> None:
         if target_dir.exists():
@@ -275,3 +273,29 @@ class WeightDownloadService:
                     destination.unlink()
             shutil.move(str(item), str(destination))
         nested.rmdir()
+
+    def uninstall(self, method: str) -> dict[str, Any]:
+        if not weights_need_download(method):
+            raise ValueError(f"Watermark method does not use packaged weights: {method}")
+        directory = weights_dir_name(method)
+        if directory is None:
+            raise ValueError(f"Missing weights directory mapping for: {method}")
+
+        install_dir = weights_install_dir(self.resources_root, method)
+        if not install_dir.exists() or not weights_installed(install_dir):
+            raise FileNotFoundError(f"Watermark weights are not installed: {install_dir}")
+
+        shutil.rmtree(install_dir)
+        install_dir.mkdir(parents=True, exist_ok=True)
+
+        shared_methods = methods_for_weights_dir(directory)
+        message = "卸载完成"
+
+        return {
+            "method": method,
+            "weightsDir": directory,
+            "installed": False,
+            "removedPath": str(install_dir),
+            "sharedMethods": shared_methods,
+            "message": message,
+        }

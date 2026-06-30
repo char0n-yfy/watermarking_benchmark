@@ -49,6 +49,10 @@ def attack_weights_dir_name(method: str) -> str | None:
     return ATTACK_WEIGHT_DIRS.get(method)
 
 
+def methods_for_attack_weights_dir(directory: str) -> list[str]:
+    return sorted(method for method in ATTACK_WEIGHT_DIRS if attack_weights_dir_name(method) == directory)
+
+
 def attack_weights_need_download(method: str) -> bool:
     return attack_weights_dir_name(method) is not None
 
