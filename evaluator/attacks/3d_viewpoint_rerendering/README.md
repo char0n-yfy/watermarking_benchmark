@@ -1,7 +1,7 @@
 # 3D Viewpoint Re-rendering Attacks
 
 本目录实现已从 `regeneration_attacks` 拆分出来的 3D viewpoint re-rendering
-攻击。当前实现对应实验定义 `REG-3D-SHARP-Rotate`，基于 Apple SHARP
+攻击。当前实现对应实验定义 `REG-3D-SHARP`，基于 Apple SHARP
 (`apple/ml-sharp`)：先从单张水印图像预测 3D Gaussian Splatting 表示，再用
 SHARP/gsplat 渲染新视角 PNG。
 
@@ -39,19 +39,32 @@ evaluator/attacks/regeneration_attacks/backends/ml_sharp/
 
 ## 注册方法
 
-8 个相位和 2 种 `lookat_mode` 被拆分为 16 个独立攻击方法：
+4 种运动、8 个相位和 2 种 `lookat_mode` 被拆分为 64 个独立攻击方法：
 
 ```text
-3d_viewpoint_rerendering_phase0_point
+3d_viewpoint_rerendering_swipe_phase0_point
 ...
-3d_viewpoint_rerendering_phase7_point
-3d_viewpoint_rerendering_phase0_ahead
+3d_viewpoint_rerendering_rotate_forward_phase7_point
+3d_viewpoint_rerendering_swipe_phase0_ahead
 ...
-3d_viewpoint_rerendering_phase7_ahead
+3d_viewpoint_rerendering_rotate_forward_phase7_ahead
 ```
 
-每个方法固定一个 `(phase, lookat_mode)`，只输出当前固定组合的一张 PNG。
-如果要复现完整 SHARP 均值定义，应把 16 个方法都纳入评估并聚合。
+每个方法固定一个 `(motion, phase, lookat_mode)`，只输出当前固定组合的一张
+PNG。前端资源页按 4 个 motion 方法展示；实验配置页再由 motion、phase 和
+lookat_mode 三个独立维度展开到底层执行 preset。
+
+为了兼容旧配置，旧 ID：
+
+```text
+3d_viewpoint_rerendering_phaseN_{point|ahead}
+```
+
+会映射到：
+
+```text
+3d_viewpoint_rerendering_rotate_phaseN_{point|ahead}
+```
 
 ## 强度映射
 
@@ -64,7 +77,8 @@ strength=1.0 -> max_disparity=0.04
 ```
 
 中间值按 mild -> medium -> strong 分段线性插值。每次运行会在 metadata 中记录
-`phase_index`、`phase`、`lookat_mode`、`strength` 和实际 `max_disparity`。
+`motion`、`trajectory_type`、`phase_index`、`phase`、`lookat_mode`、`strength`
+和实际 `max_disparity`。
 
 ## 运行要求
 
@@ -85,7 +99,7 @@ from evaluator.attacks.runner import AttackJob, run_attack_dir
 
 run_attack_dir(AttackJob(
     run_id="sharp-viewpoint-demo",
-    attack_name="3d_viewpoint_rerendering_phase0_point",
+    attack_name="3d_viewpoint_rerendering_rotate_phase0_point",
     params={"strength": 0.5},
     input_dir=Path("input_images"),
     output_dir=Path("attacked_images"),

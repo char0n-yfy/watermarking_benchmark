@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive,
   Boxes,
   Database,
   Gauge,
@@ -231,7 +230,7 @@ const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
   cew_s2: { en: "SwinIR", zh: "SwinIR" },
   cew_s3: { en: "BSRGAN", zh: "BSRGAN" }
 };
-const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_phase(\d+)_(point|ahead)$/;
+const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase(\d+)_(point|ahead)$/;
 const VIEWPOINT_MOTION_LABELS: Record<(typeof VIEWPOINT_MOTION_ORDER)[number], { en: string; zh: string }> = {
   swipe: { en: "Swipe", zh: "横向扫动" },
   shake: { en: "Shake", zh: "抖动" },
@@ -330,8 +329,9 @@ function parseViewpointMethod(method: string) {
     return null;
   }
   return {
-    phaseIndex: Number(match[1]),
-    lookatMode: match[2]
+    motion: match[1],
+    phaseIndex: Number(match[2]),
+    lookatMode: match[3]
   };
 }
 
@@ -759,7 +759,6 @@ function ResourceDetail({
   onAlgorithmInstalled: () => void;
   onAttackInstalled: () => void;
 }) {
-  const configHref = buildConfigHref(resource);
   const attackDetail = resource.type === "attacks" ? resource.attackDetail : undefined;
   return (
     <div className="resource-detail-stack">
@@ -853,14 +852,6 @@ function ResourceDetail({
         />
       ) : null}
 
-      {configHref ? (
-        <a className="button primary resource-config-link" href={configHref}>
-          <Archive size={16} />
-          {t.resources.useInConfig}
-        </a>
-      ) : (
-        <div className="risk warn">{t.resources.weightsConfigHint}</div>
-      )}
     </div>
   );
 }
@@ -1415,17 +1406,13 @@ function viewpointDisplayName(method: string, language: "zh" | "en") {
   }
   const mode = parsed.lookatMode === "point" ? "point" : "ahead";
   return language === "zh"
-    ? `3D 视角 Phase ${parsed.phaseIndex} (${mode})`
-    : `3D Viewpoint Phase ${parsed.phaseIndex} (${mode})`;
+    ? `3D 视角 ${viewpointMotionLabel(parsed.motion, language)} Phase ${parsed.phaseIndex} (${mode})`
+    : `3D Viewpoint ${viewpointMotionLabel(parsed.motion, language)} Phase ${parsed.phaseIndex} (${mode})`;
 }
 
 function attackLabelByMethod(method: string, language: "zh" | "en") {
   const display = ATTACK_DISPLAY_NAMES[method];
   return display ? (language === "zh" ? display.zh : display.en) : method;
-}
-
-function viewpointMotionFromPhase(phaseIndex: number): (typeof VIEWPOINT_MOTION_ORDER)[number] {
-  return VIEWPOINT_MOTION_ORDER[Math.min(Math.floor(phaseIndex / 2), VIEWPOINT_MOTION_ORDER.length - 1)] ?? "rotate_forward";
 }
 
 function viewpointMotionLabel(motion: string, language: "zh" | "en") {
@@ -1438,7 +1425,7 @@ function attackResourceMethod(attack: AttackPreset) {
     return attack.displayMethod;
   }
   const parsed = parseViewpointMethod(attack.method);
-  return parsed ? viewpointMotionFromPhase(parsed.phaseIndex) : attack.method;
+  return parsed ? parsed.motion : attack.method;
 }
 
 function attackResourceGroup(attack: AttackPreset) {
@@ -1451,6 +1438,15 @@ function attackMethodRank(method: string) {
     return 30 + viewpointRank;
   }
   return ATTACK_METHOD_ORDER[method] ?? 90;
+}
+
+function viewpointExecutionRank(method: string) {
+  const parsed = parseViewpointMethod(method);
+  if (!parsed) {
+    return attackMethodRank(method);
+  }
+  const motionRank = VIEWPOINT_MOTION_ORDER.indexOf(parsed.motion as (typeof VIEWPOINT_MOTION_ORDER)[number]);
+  return Math.max(0, motionRank) * 16 + parsed.phaseIndex * 2 + (parsed.lookatMode === "point" ? 0 : 1);
 }
 
 function resourceSlug(value: string) {
@@ -1604,7 +1600,7 @@ function buildAttackResourceDetail(
 function attackResourceVariants(category: string, method: string, attacks: AttackPreset[]): AttackResourceVariant[] {
   if (category === "3d_viewpoint_rerendering") {
     return [...attacks]
-      .sort((left, right) => attackMethodRank(left.method) - attackMethodRank(right.method))
+      .sort((left, right) => viewpointExecutionRank(left.method) - viewpointExecutionRank(right.method))
       .map((attack) => {
         const parsed = parseViewpointMethod(attack.method);
         const phase = attack.viewpointPhase ?? parsed?.phaseIndex;
@@ -1900,24 +1896,6 @@ function searchableText(resource: BrowserResource): string {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-}
-
-function buildConfigHref(resource: BrowserResource): string | null {
-  const params = new URLSearchParams();
-  if (resource.type === "datasets") {
-    params.set("datasetIds", resource.id);
-  } else if (resource.type === "watermarks") {
-    params.set("algorithmIds", resource.id);
-  } else if (resource.type === "attacks") {
-    if (resource.attackDetail?.presetIds.length) {
-      params.set("attackPresetIds", resource.attackDetail.presetIds.join(","));
-    } else {
-      params.set("attackPresetIds", resource.id);
-    }
-  } else {
-    return null;
-  }
-  return `/configs?${params.toString()}`;
 }
 
 function resourceTypeLabel(type: ResourceType, t: ReturnType<typeof useLanguage>["t"]): string {

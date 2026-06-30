@@ -17,6 +17,7 @@ from app.core.local_db import (
 from app.core.planner import ExperimentCell, ExperimentSpec, materialize_cells
 from app.core.storage import safe_segment
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
+from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
 from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols
 
 
@@ -37,6 +38,44 @@ def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
         attack_ids.append(HIDDEN_BASELINE_ATTACK_ID)
     next_selection["attackPresetIds"] = attack_ids
     return next_selection
+
+
+def _selection_id_list(selection: dict[str, Any], field: str) -> list[str]:
+    value = selection.get(field) or []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{field} must be a list")
+    return [str(item) for item in value]
+
+
+def _selection_override_keys(selection: dict[str, Any], field: str) -> list[str]:
+    value = selection.get(field) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return [str(item) for item in value.keys()]
+
+
+def validate_selection_resource_ids(selection: dict[str, Any], resources_root: Path) -> None:
+    for dataset_id in _selection_id_list(selection, "datasetIds"):
+        get_dataset_by_id(resources_root, dataset_id)
+    for algorithm_id in _selection_id_list(selection, "algorithmIds"):
+        get_watermark_catalog_item(algorithm_id)
+
+    attack_ids = _selection_id_list(selection, "attackPresetIds")
+    for attack_id in attack_ids:
+        get_attack_catalog_item(attack_id)
+
+    selected_attack_ids = set(attack_ids)
+    for field in ("attackStrengthOverrides", "attackParamOverrides"):
+        unknown_override_ids = sorted(
+            attack_id
+            for attack_id in _selection_override_keys(selection, field)
+            if attack_id not in selected_attack_ids
+        )
+        if unknown_override_ids:
+            raise ValueError(
+                f"{field} contains ids that are not selected in attackPresetIds: "
+                + ", ".join(unknown_override_ids)
+            )
 
 
 class ExperimentService:
@@ -66,7 +105,9 @@ class ExperimentService:
     def create_config(self, name: str, selection: dict[str, Any]) -> dict[str, Any]:
         now = utc_now()
         config_id = f"cfg-{uuid4().hex[:12]}"
-        estimate = estimate_selection(with_hidden_baseline_attack(selection), self.resources_root)
+        selection_with_baseline = with_hidden_baseline_attack(selection)
+        validate_selection_resource_ids(selection_with_baseline, self.resources_root)
+        estimate = estimate_selection(selection_with_baseline, self.resources_root)
         normalized = estimate["selection"]
         with self.database.connect() as connection:
             connection.execute(

@@ -223,9 +223,10 @@ ATTACK_PARAM_BY_METHOD = {
 }
 
 PHYSICAL_CHANNEL_METHODS = {"screen_shoot", "print_camera", "combined_physical"}
-VIEWPOINT_RERENDERING_PREFIX = "3d_viewpoint_rerendering_phase"
+VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
+    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase(\d+)_(point|ahead)"
+)
 VIEWPOINT_RERENDERING_STRENGTHS = [0.0, 0.5, 1.0]
-VIEWPOINT_RERENDERING_MOTIONS = ("swipe", "shake", "rotate", "rotate_forward")
 
 LEGACY_ATTACK_ALIASES: dict[str, str] = {
     "atk-jpeg-smoke": "atk-jpeg",
@@ -234,6 +235,14 @@ LEGACY_ATTACK_ALIASES: dict[str, str] = {
     "atk-blur-sweep": "atk-gaussian-blur",
     "atk-crop-sweep": "atk-resized-crop",
 }
+for _phase_index in range(8):
+    for _lookat_mode in ("point", "ahead"):
+        LEGACY_ATTACK_ALIASES[
+            f"atk-3d-viewpoint-rerendering-phase{_phase_index}-{_lookat_mode}"
+        ] = f"atk-3d-viewpoint-rerendering-rotate-phase{_phase_index}-{_lookat_mode}"
+        LEGACY_ATTACK_ALIASES[
+            f"3d_viewpoint_rerendering_phase{_phase_index}_{_lookat_mode}"
+        ] = f"atk-3d-viewpoint-rerendering-rotate-phase{_phase_index}-{_lookat_mode}"
 
 
 def _slug(value: str) -> str:
@@ -242,24 +251,24 @@ def _slug(value: str) -> str:
 
 
 def _is_viewpoint_rerendering_variant(method: str) -> bool:
-    return method.startswith(VIEWPOINT_RERENDERING_PREFIX)
+    return VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method) is not None
 
 
 def _viewpoint_display_name(method: str) -> str | None:
-    match = re.fullmatch(r"3d_viewpoint_rerendering_phase(\d+)_(point|ahead)", method)
+    match = VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method)
     if match is None:
         return None
-    phase_index, lookat_mode = match.groups()
-    return f"3D Viewpoint Phase {phase_index} ({lookat_mode})"
+    motion, phase_index, lookat_mode = match.groups()
+    return f"3D Viewpoint {motion.replace('_', ' ').title()} Phase {phase_index} ({lookat_mode})"
 
 
 def _viewpoint_resource_metadata(method: str) -> dict[str, Any]:
-    match = re.fullmatch(r"3d_viewpoint_rerendering_phase(\d+)_(point|ahead)", method)
+    match = VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method)
     if match is None:
         return {}
-    phase_index = int(match.group(1))
-    motion = VIEWPOINT_RERENDERING_MOTIONS[min(phase_index // 2, len(VIEWPOINT_RERENDERING_MOTIONS) - 1)]
-    lookat_mode = match.group(2)
+    motion = match.group(1)
+    phase_index = int(match.group(2))
+    lookat_mode = match.group(3)
     return {
         "displayMethod": motion,
         "displayGroup": "3d_viewpoint_rerendering",

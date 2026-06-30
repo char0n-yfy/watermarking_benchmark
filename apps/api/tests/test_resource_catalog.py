@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import sys
 import tempfile
 import unittest
@@ -148,11 +149,11 @@ class ResourceCatalogTest(unittest.TestCase):
     def test_sharp_viewpoint_rerendering_attack_is_grouped_for_frontend(self) -> None:
         resources = list_attack_resources()
         viewpoint_resources = [
-            item for item in resources if item["method"].startswith("3d_viewpoint_rerendering_phase")
+            item for item in resources if item["category"] == "3d_viewpoint_rerendering"
         ]
-        attack = get_attack_catalog_item("3d_viewpoint_rerendering_phase0_point")
+        attack = get_attack_catalog_item("3d_viewpoint_rerendering_rotate_phase0_point")
 
-        self.assertEqual(len(viewpoint_resources), 16)
+        self.assertEqual(len(viewpoint_resources), 64)
         self.assertNotIn("3d_viewpoint_rerendering", {item["method"] for item in resources})
         self.assertEqual(attack["category"], "3d_viewpoint_rerendering")
         self.assertTrue(all(item["category"] == "3d_viewpoint_rerendering" for item in viewpoint_resources))
@@ -160,7 +161,21 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(attack["strengthParam"], "strength")
         self.assertEqual(attack["strengths"], [0.0, 0.5, 1.0])
         self.assertTrue(attack["requiresGpu"])
-        self.assertEqual(get_attack_catalog_item("3d_viewpoint_rerendering_phase7_ahead")["strengthParam"], "strength")
+        self.assertEqual(attack["viewpointMotion"], "rotate")
+        self.assertEqual(attack["viewpointPhase"], 0)
+        self.assertEqual(attack["viewpointLookatMode"], "point")
+        self.assertEqual(
+            Counter(item["viewpointMotion"] for item in viewpoint_resources),
+            Counter({"swipe": 16, "shake": 16, "rotate": 16, "rotate_forward": 16}),
+        )
+        self.assertEqual(
+            get_attack_catalog_item("3d_viewpoint_rerendering_phase7_ahead")["method"],
+            "3d_viewpoint_rerendering_rotate_phase7_ahead",
+        )
+        self.assertEqual(
+            get_attack_catalog_item("3d_viewpoint_rerendering_rotate_forward_phase7_ahead")["strengthParam"],
+            "strength",
+        )
 
     def test_physical_channel_attacks_are_strength_mapped_without_level_variants(self) -> None:
         resources = list_attack_resources()
@@ -215,12 +230,12 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(_attack_params(get_attack_catalog_item("screen_shoot"), 0.5), {"strength": 0.5})
         self.assertEqual(_attack_params(get_attack_catalog_item("combined_physical"), 1.0), {"strength": 1.0})
         self.assertEqual(
-            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering_phase0_point"), 1.0),
+            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering_rotate_phase0_point"), 1.0),
             {"strength": 1.0},
         )
 
     def test_attack_strength_overrides_are_used_by_runner(self) -> None:
-        attack_id = "atk-3d-viewpoint-rerendering-phase0-point"
+        attack_id = "atk-3d-viewpoint-rerendering-rotate-phase0-point"
         with tempfile.TemporaryDirectory() as tmpdir:
             normalized = normalize_selection(
                 {
@@ -246,7 +261,7 @@ class ResourceCatalogTest(unittest.TestCase):
         )
 
     def test_attack_strength_overrides_are_used_by_estimator(self) -> None:
-        attack_id = "atk-3d-viewpoint-rerendering-phase0-point"
+        attack_id = "atk-3d-viewpoint-rerendering-rotate-phase0-point"
         with tempfile.TemporaryDirectory() as tmpdir:
             resources_root = Path(tmpdir)
             dataset_dir = resources_root / "datasets" / "demo"

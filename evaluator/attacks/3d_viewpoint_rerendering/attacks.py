@@ -24,8 +24,9 @@ LEGACY_VIEWPOINT_RERENDERING_ROOT = DEFAULT_ATTACK_WEIGHT_ROOT / "regeneration_a
 DEFAULT_SHARP_SOURCE_ROOT = DEFAULT_BACKEND_ROOT / "ml_sharp"
 DEFAULT_SHARP_CHECKPOINT_PATH = DEFAULT_VIEWPOINT_RERENDERING_ROOT / "checkpoints" / "sharp_2572gikvuh.pt"
 LEGACY_SHARP_CHECKPOINT_PATH = LEGACY_VIEWPOINT_RERENDERING_ROOT / "checkpoints" / "sharp_2572gikvuh.pt"
-DEFAULT_SHARP_ATTACK_DEFINITION = "REG-3D-SHARP-Rotate"
+DEFAULT_SHARP_ATTACK_DEFINITION = "REG-3D-SHARP"
 DEFAULT_SHARP_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+DEFAULT_SHARP_MOTIONS = ("swipe", "shake", "rotate", "rotate_forward")
 DEFAULT_SHARP_PHASES = tuple(index / 8 for index in range(8))
 DEFAULT_SHARP_LOOKAT_MODES = ("point", "ahead")
 DEFAULT_MAX_DISPARITY_LEVELS = (0.01, 0.02, 0.04)
@@ -141,7 +142,8 @@ def _resolve_sharp_checkpoint(
 
 class ViewpointRerendering3DVariantAttack(BaseAttack):
     name = "3d_viewpoint_rerendering_variant"
-    description = "REG-3D-SHARP-Rotate 3D Gaussian viewpoint re-rendering variant."
+    description = "REG-3D-SHARP 3D Gaussian viewpoint re-rendering variant."
+    motion = "rotate"
     phase_index = 0
     phase = 0.0
     lookat_mode = "point"
@@ -171,6 +173,9 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             raise ValueError("max_disparity must be non-negative")
         if image_size is not None and int(image_size) <= 0:
             raise ValueError("image_size must be positive when provided")
+        if self.motion not in DEFAULT_SHARP_MOTIONS:
+            valid = ", ".join(DEFAULT_SHARP_MOTIONS)
+            raise ValueError(f"motion must be one of: {valid}")
         if self.lookat_mode not in DEFAULT_SHARP_LOOKAT_MODES:
             valid = ", ".join(DEFAULT_SHARP_LOOKAT_MODES)
             raise ValueError(f"lookat_mode must be one of: {valid}")
@@ -182,7 +187,8 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             strength=float(strength),
             max_disparity=float(max_disparity),
             max_disparity_levels=list(DEFAULT_MAX_DISPARITY_LEVELS),
-            trajectory_type="rotate",
+            motion=self.motion,
+            trajectory_type=self.motion,
             max_zoom=0.0,
             phase_index=int(self.phase_index),
             phase=float(self.phase),
@@ -208,6 +214,29 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
         self._checkpoint_downloaded = False
         self._source_root: Path | None = None
         self._sharp_modules: dict[str, Any] = {}
+
+    def _eye_position(self, offset_x: float, offset_y: float) -> Any:
+        import numpy as np
+        import torch
+
+        angle = 2 * np.pi * float(self.phase)
+        if self.motion == "swipe":
+            xyz = [float(offset_x) * np.sin(angle), 0.0, 0.0]
+        elif self.motion == "shake":
+            xyz = [
+                float(offset_x) * 0.65 * np.sin(2.0 * angle),
+                float(offset_y) * 0.65 * np.cos(3.0 * angle),
+                0.0,
+            ]
+        elif self.motion == "rotate_forward":
+            xyz = [
+                float(offset_x) * 0.75 * np.sin(angle),
+                float(offset_y) * max(0.0, np.cos(angle)),
+                float(offset_y) * 0.25 * (1.0 - np.cos(angle)),
+            ]
+        else:
+            xyz = [float(offset_x) * np.sin(angle), float(offset_y) * np.cos(angle), 0.0]
+        return torch.tensor(xyz, dtype=torch.float32)
 
     def _ensure_predictor(self, device: str) -> None:
         import torch
@@ -306,14 +335,7 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             resolution_px=metadata.resolution_px,
             f_px=f_px,
         )
-        eye_position = torch.tensor(
-            [
-                float(offset_x) * np.sin(2 * np.pi * self.phase),
-                float(offset_y) * np.cos(2 * np.pi * self.phase),
-                0.0,
-            ],
-            dtype=torch.float32,
-        )
+        eye_position = self._eye_position(float(offset_x), float(offset_y))
         camera_model = camera.create_camera_model(
             gaussians,
             intrinsics,
@@ -387,7 +409,8 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             "checkpoint_path": str(self._checkpoint_path),
             "checkpoint_url": self._checkpoint_url,
             "checkpoint_downloaded": self._checkpoint_downloaded,
-            "trajectory_type": "rotate",
+            "motion": self.motion,
+            "trajectory_type": self.motion,
             "strength": self.strength,
             "max_disparity": self.max_disparity,
             "max_disparity_levels": list(DEFAULT_MAX_DISPARITY_LEVELS),
@@ -405,10 +428,11 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
 VIEWPOINT_ATTACK_CLASSES: list[type[ViewpointRerendering3DVariantAttack]] = []
 
 
-def _register_viewpoint_variant(phase_index: int, phase: float, lookat_mode: str) -> None:
+def _register_viewpoint_variant(motion: str, phase_index: int, phase: float, lookat_mode: str) -> None:
+    motion_name = motion.title().replace("_", "")
     mode_name = lookat_mode.title().replace("_", "")
-    class_name = f"ViewpointRerendering3DPhase{phase_index}{mode_name}Attack"
-    method_name = f"3d_viewpoint_rerendering_phase{phase_index}_{lookat_mode}"
+    class_name = f"ViewpointRerendering3D{motion_name}Phase{phase_index}{mode_name}Attack"
+    method_name = f"3d_viewpoint_rerendering_{motion}_phase{phase_index}_{lookat_mode}"
     cls = type(
         class_name,
         (ViewpointRerendering3DVariantAttack,),
@@ -416,9 +440,10 @@ def _register_viewpoint_variant(phase_index: int, phase: float, lookat_mode: str
             "__module__": __name__,
             "name": method_name,
             "description": (
-                "REG-3D-SHARP-Rotate 3D Gaussian viewpoint re-rendering "
-                f"phase {phase_index}/8 with lookat_mode={lookat_mode}."
+                "REG-3D-SHARP 3D Gaussian viewpoint re-rendering "
+                f"{motion} motion, phase {phase_index}/8, lookat_mode={lookat_mode}."
             ),
+            "motion": motion,
             "phase_index": phase_index,
             "phase": phase,
             "lookat_mode": lookat_mode,
@@ -428,14 +453,16 @@ def _register_viewpoint_variant(phase_index: int, phase: float, lookat_mode: str
     VIEWPOINT_ATTACK_CLASSES.append(globals()[class_name])
 
 
-for _lookat_mode in DEFAULT_SHARP_LOOKAT_MODES:
-    for _phase_index, _phase in enumerate(DEFAULT_SHARP_PHASES):
-        _register_viewpoint_variant(_phase_index, _phase, _lookat_mode)
+for _motion in DEFAULT_SHARP_MOTIONS:
+    for _lookat_mode in DEFAULT_SHARP_LOOKAT_MODES:
+        for _phase_index, _phase in enumerate(DEFAULT_SHARP_PHASES):
+            _register_viewpoint_variant(_motion, _phase_index, _phase, _lookat_mode)
 
 
 __all__ = [
     "DEFAULT_MAX_DISPARITY_LEVELS",
     "DEFAULT_SHARP_LOOKAT_MODES",
+    "DEFAULT_SHARP_MOTIONS",
     "DEFAULT_SHARP_PHASES",
     "VIEWPOINT_ATTACK_CLASSES",
     "ViewpointRerendering3DVariantAttack",

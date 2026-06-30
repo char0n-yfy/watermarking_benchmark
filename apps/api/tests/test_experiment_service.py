@@ -17,6 +17,38 @@ from app.services.experiment_service import ExperimentService
 
 
 class ExperimentServiceTest(unittest.TestCase):
+    def test_create_config_rejects_unknown_resource_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            valid_selection = {
+                "datasetIds": ["smoke"],
+                "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                "attackPresetIds": ["atk-jpeg"],
+                "seeds": [42],
+                "maxSamples": 1,
+            }
+
+            invalid_cases = [
+                {"datasetIds": ["missing-dataset"]},
+                {"algorithmIds": ["alg-missing"]},
+                {"attackPresetIds": ["atk-missing"]},
+                {"attackStrengthOverrides": {"atk-missing": [0.5]}},
+                {"attackParamOverrides": {"atk-missing": [{"strength": 0.5}]}},
+            ]
+            for override in invalid_cases:
+                with self.subTest(override=override):
+                    selection = {**valid_selection, **override}
+                    with self.assertRaises((KeyError, ValueError)):
+                        service.create_config("Invalid", selection)
+
     def test_create_config_adds_hidden_identity_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -4,6 +4,7 @@ from . import attacks as _attacks
 from .attacks import (
     DEFAULT_MAX_DISPARITY_LEVELS,
     DEFAULT_SHARP_LOOKAT_MODES,
+    DEFAULT_SHARP_MOTIONS,
     DEFAULT_SHARP_PHASES,
     VIEWPOINT_ATTACK_CLASSES,
     ViewpointRerendering3DVariantAttack,
@@ -15,6 +16,7 @@ for _cls in VIEWPOINT_ATTACK_CLASSES:
 __all__ = [
     "DEFAULT_MAX_DISPARITY_LEVELS",
     "DEFAULT_SHARP_LOOKAT_MODES",
+    "DEFAULT_SHARP_MOTIONS",
     "DEFAULT_SHARP_PHASES",
     "VIEWPOINT_ATTACK_CLASSES",
     "ViewpointRerendering3DVariantAttack",
