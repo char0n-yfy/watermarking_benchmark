@@ -599,13 +599,14 @@ export default function ResourcesPage() {
         </div>
       </div>
 
-      <section className="resource-summary-grid">
-        <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
-        <SummaryCard icon={Shield} label={t.console.algorithms} value={resourceGroups.watermarks.length.toString()} meta={countByGpu(resourceGroups.watermarks)} />
-        <SummaryCard icon={Gauge} label={t.console.attacks} value={resourceGroups.attacks.length.toString()} meta={countByGpu(resourceGroups.attacks)} />
-      </section>
+      <section className="resources-workbench">
+        <div className="resource-summary-strip">
+          <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
+          <SummaryCard icon={Shield} label={t.console.algorithms} value={resourceGroups.watermarks.length.toString()} meta={countByGpu(resourceGroups.watermarks)} />
+          <SummaryCard icon={Gauge} label={t.console.attacks} value={resourceGroups.attacks.length.toString()} meta={countByGpu(resourceGroups.attacks)} />
+        </div>
 
-      <section className="resources-browser-grid">
+        <div className="resources-browser-grid">
         <aside className="panel resource-filter-panel">
           <div className="panel-header">
             <h2>{t.resources.resourceBrowser}</h2>
@@ -627,67 +628,69 @@ export default function ResourcesPage() {
               ))}
             </div>
 
-            <div className="field">
-              <label htmlFor="resource-search">{t.resources.search}</label>
-              <div className="input-with-icon">
-                <Search size={15} />
-                <input
-                  id="resource-search"
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={t.resources.searchPlaceholder}
-                  value={query}
-                />
+            <div className="resource-filter-fields">
+              <div className="field">
+                <label htmlFor="resource-search">{t.resources.search}</label>
+                <div className="input-with-icon">
+                  <Search size={16} />
+                  <input
+                    id="resource-search"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={t.resources.searchPlaceholder}
+                    value={query}
+                  />
+                </div>
               </div>
-            </div>
 
-            <div className="field">
-              <label htmlFor="resource-category">{t.resources.category}</label>
-              <select
-                id="resource-category"
-                onChange={(event) => setCategoryFilter(event.target.value)}
-                value={categoryFilter}
-              >
-                {categories.map((category) => (
-                  <option key={category.value} value={category.value}>
-                    {category.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {activeType !== "datasets" ? (
-              <div className="segmented-control" aria-label={t.resources.device}>
-                {(["all", "cpu", "gpu"] as DeviceFilter[]).map((value) => (
-                  <button
-                    className={deviceFilter === value ? "active" : ""}
-                    key={value}
-                    onClick={() => setDeviceFilter(value)}
-                    type="button"
-                  >
-                    {value === "all" ? t.resources.allResources : value === "gpu" ? t.common.gpu : t.common.cpu}
-                  </button>
-                ))}
+              <div className="field">
+                <label htmlFor="resource-category">{t.resources.category}</label>
+                <select
+                  id="resource-category"
+                  onChange={(event) => setCategoryFilter(event.target.value)}
+                  value={categoryFilter}
+                >
+                  {categories.map((category) => (
+                    <option key={category.value} value={category.value}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : null}
 
-            {activeType === "watermarks" || activeType === "attacks" ? (
+              {activeType !== "datasets" ? (
+                <div aria-label={t.resources.device} className="segmented-control resource-filter-device">
+                  {(["all", "cpu", "gpu"] as DeviceFilter[]).map((value) => (
+                    <button
+                      className={deviceFilter === value ? "active" : ""}
+                      key={value}
+                      onClick={() => setDeviceFilter(value)}
+                      type="button"
+                    >
+                      {value === "all" ? t.resources.allResources : value === "gpu" ? t.common.gpu : t.common.cpu}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {activeType === "watermarks" || activeType === "attacks" ? (
+                <label className="toggle-row">
+                  <input
+                    checked={recommendedOnly}
+                    onChange={(event) => setRecommendedOnly(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>{t.resources.recommendedOnly}</span>
+                </label>
+              ) : null}
               <label className="toggle-row">
                 <input
-                  checked={recommendedOnly}
-                  onChange={(event) => setRecommendedOnly(event.target.checked)}
+                  checked={availableOnly}
+                  onChange={(event) => setAvailableOnly(event.target.checked)}
                   type="checkbox"
                 />
-                <span>{t.resources.recommendedOnly}</span>
+                <span>{t.resources.availableOnly}</span>
               </label>
-            ) : null}
-            <label className="toggle-row">
-              <input
-                checked={availableOnly}
-                onChange={(event) => setAvailableOnly(event.target.checked)}
-                type="checkbox"
-              />
-              <span>{t.resources.availableOnly}</span>
-            </label>
+            </div>
           </div>
         </aside>
 
@@ -698,10 +701,7 @@ export default function ResourcesPage() {
               {filteredResources.length}/{activeResources.length}
             </span>
           </div>
-          <div
-            className="panel-body resource-list-panel-body"
-            style={{ ["--resource-page-size" as string]: pageSize }}
-          >
+          <div className="panel-body resource-list-panel-body">
             <div className="resource-result-note">
               <SlidersHorizontal size={14} />
               <span>
@@ -759,6 +759,7 @@ export default function ResourcesPage() {
             )}
           </div>
         </aside>
+        </div>
       </section>
     </AppShell>
   );
@@ -976,9 +977,13 @@ function SummaryCard({
   return (
     <div className="summary-card">
       <Icon size={18} />
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{meta}</small>
+      <div className="summary-card-content">
+        <div className="summary-card-head">
+          <strong>{value}</strong>
+          <span>{label}</span>
+        </div>
+        <small>{meta}</small>
+      </div>
     </div>
   );
 }
