@@ -111,6 +111,12 @@ export interface AttackPreset {
   id: string;
   name: string;
   method: string;
+  displayMethod?: string | null;
+  displayGroup?: string | null;
+  executionMethod?: string | null;
+  viewpointMotion?: string | null;
+  viewpointPhase?: number | null;
+  viewpointLookatMode?: string | null;
   strengths: number[];
   description?: string;
   category?: string;

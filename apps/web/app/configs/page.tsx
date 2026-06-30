@@ -204,22 +204,22 @@ const ATTACK_DISPLAY: Record<string, DisplayMeta> = {
   noise_to_image: { en: "CtrlRegen Noise-to-Image", rank: 43, short: "Noise-to-image", zh: "噪声到图像再生成" },
   regen_vae: { en: "CompressAI VAE Reconstruction", rank: 44, short: "VAE", zh: "VAE 再生成" },
   image_to_vedio: { en: "NFPA Image-to-Video", rank: 45, short: "Image-to-video", zh: "图像到视频再生成" },
-  cew_e1: { en: "CEW-E1 Auto-Tone", rank: 50, short: "E1 Auto tone", zh: "CEW-E1 自动色调" },
-  cew_e2: { en: "CEW-E2 Warm-Vivid", rank: 51, short: "E2 Warm vivid", zh: "CEW-E2 暖色鲜艳" },
-  cew_e3: { en: "CEW-E3 Film-Faded", rank: 52, short: "E3 Film faded", zh: "CEW-E3 胶片褪色" },
-  cew_e4: { en: "CEW-E4 Local-Clarity HDR", rank: 53, short: "E4 Local HDR", zh: "CEW-E4 局部清晰 HDR" },
-  cew_c1: { en: "CEW-C1 Basic Auto-Fix SR", rank: 54, short: "C1 Auto fix", zh: "CEW-C1 自动修复+超分" },
-  cew_c2: { en: "CEW-C2 Color Retouch SR", rank: 55, short: "C2 Retouch", zh: "CEW-C2 色彩修饰+超分" },
-  cew_c3: { en: "CEW-C3 Detail Enhance SR", rank: 56, short: "C3 Detail", zh: "CEW-C3 细节增强+超分" },
-  cew_c4: { en: "CEW-C4 Full Enhancement Chain", rank: 57, short: "C4 Full chain", zh: "CEW-C4 完整增强链" },
-  cew_d1: { en: "CEW-D1 Zero-DCE++ Auto-Light", rank: 58, short: "D1 Auto light", zh: "CEW-D1 自动补光" },
-  cew_d2: { en: "CEW-D2 DeepWB Auto-WhiteBalance", rank: 59, short: "D2 White balance", zh: "CEW-D2 自动白平衡" },
-  cew_d3: { en: "CEW-D3 Image-Adaptive 3D LUT", rank: 60, short: "D3 AI color", zh: "CEW-D3 自适应 AI 色彩" },
-  cew_d4: { en: "CEW-D4 Retinexformer Detail Low-Light Enhance", rank: 61, short: "D4 Low light", zh: "CEW-D4 低光细节增强" },
-  cew_d5: { en: "CEW-D5 NAFNet/Restormer AI-Denoise", rank: 62, short: "D5 Denoise", zh: "CEW-D5 AI 去噪" },
-  cew_s1: { en: "CEW-S1 Real-ESRGAN", rank: 63, short: "S1 Real-ESRGAN", zh: "CEW-S1 Real-ESRGAN" },
-  cew_s2: { en: "CEW-S2 SwinIR", rank: 64, short: "S2 SwinIR", zh: "CEW-S2 SwinIR" },
-  cew_s3: { en: "CEW-S3 BSRGAN", rank: 65, short: "S3 BSRGAN", zh: "CEW-S3 BSRGAN" }
+  cew_e1: { en: "Auto-Tone", rank: 50, short: "Auto tone", zh: "自动色调" },
+  cew_e2: { en: "Warm-Vivid", rank: 51, short: "Warm vivid", zh: "暖色鲜艳" },
+  cew_e3: { en: "Film-Faded", rank: 52, short: "Film faded", zh: "胶片褪色" },
+  cew_e4: { en: "Local-Clarity HDR", rank: 53, short: "Local HDR", zh: "局部清晰 HDR" },
+  cew_c1: { en: "Basic Auto-Fix SR", rank: 54, short: "Auto fix", zh: "自动修复+超分" },
+  cew_c2: { en: "Color Retouch SR", rank: 55, short: "Retouch", zh: "色彩修饰+超分" },
+  cew_c3: { en: "Detail Enhance SR", rank: 56, short: "Detail", zh: "细节增强+超分" },
+  cew_c4: { en: "Full Enhancement Chain", rank: 57, short: "Full chain", zh: "完整增强链" },
+  cew_d1: { en: "Zero-DCE++ Auto-Light", rank: 58, short: "Auto light", zh: "自动补光" },
+  cew_d2: { en: "DeepWB Auto-WhiteBalance", rank: 59, short: "White balance", zh: "自动白平衡" },
+  cew_d3: { en: "Image-Adaptive 3D LUT", rank: 60, short: "AI color", zh: "自适应 AI 色彩" },
+  cew_d4: { en: "Retinexformer Detail Low-Light Enhance", rank: 61, short: "Low light", zh: "低光细节增强" },
+  cew_d5: { en: "NAFNet/Restormer AI-Denoise", rank: 62, short: "Denoise", zh: "AI 去噪" },
+  cew_s1: { en: "Real-ESRGAN", rank: 63, short: "Real-ESRGAN", zh: "Real-ESRGAN" },
+  cew_s2: { en: "SwinIR", rank: 64, short: "SwinIR", zh: "SwinIR" },
+  cew_s3: { en: "BSRGAN", rank: 65, short: "BSRGAN", zh: "BSRGAN" }
 };
 
 const ATTACK_ENGLISH_NAME: Record<string, string> = {
@@ -518,7 +518,7 @@ function consumerAttackDisplayName(language: Language, attack: AttackPreset) {
   if (language === "en") {
     return attackEnglishName(attack);
   }
-  return attackDisplayName(language, attack).replace(/^CEW-[A-Z]\d+\s*/i, "");
+  return attackDisplayName(language, attack);
 }
 
 type StrengthRangeAxisProps = {
@@ -1132,7 +1132,7 @@ export default function ConfigsPage() {
         />
         <span className="tile-copy">
           <strong>{title}</strong>
-          {subtitle ? <small>{subtitle}</small> : null}
+          {subtitle ? <small translate="no">{subtitle}</small> : null}
         </span>
         {attack.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
         {attack.available === false ? <span className="badge error">Missing</span> : null}
@@ -1701,10 +1701,37 @@ export default function ConfigsPage() {
                     const selectedCategoryCount = categoryAttacks.filter((attack) =>
                       selection.attackPresetIds.includes(attack.id)
                     ).length;
+                    const selectedViewpointAttacks = categoryAttacks.filter((attack) =>
+                      selection.attackPresetIds.includes(attack.id)
+                    );
+                    const inferredViewpointMotions = VIEWPOINT_MOTION_ORDER.filter((motion) =>
+                      selectedViewpointAttacks.some((attack) => parseViewpointMethod(attack.method)?.motion === motion)
+                    );
+                    const inferredViewpointLookatModes = VIEWPOINT_LOOKAT_MODES.filter((lookatMode) =>
+                      selectedViewpointAttacks.some((attack) => parseViewpointMethod(attack.method)?.lookatMode === lookatMode)
+                    );
+                    const inferredViewpointPhases = VIEWPOINT_PHASES.filter((phase) =>
+                      selectedViewpointAttacks.some((attack) => parseViewpointMethod(attack.method)?.phaseIndex === phase)
+                    );
                     const renderedViewpointSettings =
                       isViewpointCategory && selectedViewpointIds.length > 0 && !viewpointSettings.enabled
-                        ? { ...viewpointSettings, enabled: true, motions: [...VIEWPOINT_MOTION_ORDER] }
+                        ? {
+                            ...viewpointSettings,
+                            enabled: true,
+                            motions: inferredViewpointMotions.length > 0 ? inferredViewpointMotions : [...VIEWPOINT_MOTION_ORDER],
+                            lookatModes:
+                              inferredViewpointLookatModes.length > 0
+                                ? inferredViewpointLookatModes
+                                : [...VIEWPOINT_LOOKAT_MODES],
+                            phases: inferredViewpointPhases.length > 0 ? inferredViewpointPhases : [...VIEWPOINT_PHASES]
+                          }
                         : viewpointSettings;
+                    const displayedCategoryTotal = isViewpointCategory ? VIEWPOINT_MOTION_ORDER.length : categoryAttacks.length;
+                    const displayedSelectedCategoryCount = isViewpointCategory
+                      ? VIEWPOINT_MOTION_ORDER.filter((motion) =>
+                          renderedViewpointSettings.enabled && renderedViewpointSettings.motions.includes(motion)
+                        ).length
+                      : selectedCategoryCount;
                     const updateViewpointSettings = (nextSettings: ViewpointSettings) => {
                       setViewpointSettings(nextSettings);
                       setSelection((current) => applyViewpointSettings(current, categoryAttacks, nextSettings));
@@ -1857,7 +1884,7 @@ export default function ConfigsPage() {
                         <div className="attack-group-title">
                           <strong>{categoryLabel(language, category)}</strong>
                           <span>
-                            {selectedCategoryCount}/{categoryAttacks.length}
+                            {displayedSelectedCategoryCount}/{displayedCategoryTotal}
                           </span>
                           <div className="bulk-actions group-bulk-actions">
                             <button
@@ -2054,7 +2081,7 @@ export default function ConfigsPage() {
                                     />
                                     <span className="tile-copy">
                                       <strong>{motionTitle}</strong>
-                                      {motionSubtitle ? <small>{motionSubtitle}</small> : null}
+                                      {motionSubtitle ? <small translate="no">{motionSubtitle}</small> : null}
                                     </span>
                                     {motionAttacks.some((attack) => attack.requiresGpu) ? (
                                       <span className="badge warn">{t.common.gpu}</span>
@@ -2379,7 +2406,7 @@ export default function ConfigsPage() {
                             {remainingConsumerAttacks.length > 0 ? (
                               <div className="attack-subgroup">
                                 <div className="attack-subgroup-title">
-                                  <strong>{language === "zh" ? "固定增强流程" : "Fixed enhancement workflows"}</strong>
+                                  <strong>{language === "zh" ? "消费级增强流程" : "Consumer enhancement workflows"}</strong>
                                   <span>
                                     {
                                       remainingConsumerAttacks.filter((attack) =>

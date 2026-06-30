@@ -48,10 +48,58 @@ interface BrowserResource {
   catalog?: DatasetCatalogItem;
   algorithm?: AlgorithmVersion;
   attack?: AttackPreset;
+  attacks?: AttackPreset[];
+  attackDetail?: AttackResourceDetail;
+}
+
+interface AttackResourceVariant {
+  id: string;
+  label: string;
+  sublabel?: string;
+}
+
+interface AttackResourceMapping {
+  id: string;
+  label: string;
+  zero: string;
+  one: string;
+  note?: string;
+}
+
+interface AttackResourceWeight {
+  id: string;
+  label: string;
+  value: string;
+  tone?: BrowserResource["statusTone"];
+}
+
+interface AttackResourceDetail {
+  presetCount: number;
+  presetIds: string[];
+  variants: AttackResourceVariant[];
+  mappings: AttackResourceMapping[];
+  weights: AttackResourceWeight[];
+  notes: string[];
 }
 
 const DEFAULT_RESOURCE_PAGE_SIZE = 8;
 const HIDDEN_RESOURCE_ATTACK_METHODS = new Set(["identity"]);
+const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
+const VIEWPOINT_MAX_DISPARITY_LEVELS = [0.01, 0.02, 0.04] as const;
+const REGENERATION_UNIT_METHODS = ["2x_regen", "4x_regen", "regen_diffusion", "noise_to_image"] as const;
+const REGENERATION_VAE_METHOD = "regen_vae";
+const REGENERATION_IMAGE_TO_VIDEO_METHOD = "image_to_vedio";
+const REGENERATION_IMAGE_TO_VIDEO_XY = [0, 10, 20, 30, 40, 60] as const;
+const REGENERATION_VAE_MODEL_NAMES = [
+  "bmshj2018-factorized",
+  "cheng2020-anchor",
+  "bmshj2018-hyperprior",
+  "mbt2018-mean"
+] as const;
+const REGENERATION_VAE_QUALITIES = [1, 2, 3, 4, 5, 6] as const;
+const CONSUMER_STRENGTH_METHODS = ["cew_e1", "cew_e2", "cew_e3", "cew_e4"] as const;
+const CONSUMER_SUPER_RESOLUTION_METHODS = ["cew_s1", "cew_s2", "cew_s3"] as const;
+const CONSUMER_SUPER_RESOLUTION_SCALES = [2, 4] as const;
 const DATASET_CATEGORY_ORDER: Record<string, number> = {
   "natural-benchmark": 10,
   aigc: 20,
@@ -166,24 +214,41 @@ const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
   noise_to_image: { en: "CtrlRegen Noise-to-Image", zh: "噪声到图像再生成" },
   regen_vae: { en: "CompressAI VAE Reconstruction", zh: "VAE 再生成" },
   image_to_vedio: { en: "NFPA Image-to-Video", zh: "图像到视频再生成" },
-  cew_e1: { en: "CEW-E1 Auto-Tone", zh: "CEW-E1 自动色调" },
-  cew_e2: { en: "CEW-E2 Warm-Vivid", zh: "CEW-E2 暖色鲜艳" },
-  cew_e3: { en: "CEW-E3 Film-Faded", zh: "CEW-E3 胶片褪色" },
-  cew_e4: { en: "CEW-E4 Local-Clarity HDR", zh: "CEW-E4 局部清晰 HDR" },
-  cew_c1: { en: "CEW-C1 Basic Auto-Fix SR", zh: "CEW-C1 自动修复+超分" },
-  cew_c2: { en: "CEW-C2 Color Retouch SR", zh: "CEW-C2 色彩修饰+超分" },
-  cew_c3: { en: "CEW-C3 Detail Enhance SR", zh: "CEW-C3 细节增强+超分" },
-  cew_c4: { en: "CEW-C4 Full Enhancement Chain", zh: "CEW-C4 完整增强链" },
-  cew_d1: { en: "CEW-D1 Zero-DCE++ Auto-Light", zh: "CEW-D1 自动补光" },
-  cew_d2: { en: "CEW-D2 DeepWB Auto-WhiteBalance", zh: "CEW-D2 自动白平衡" },
-  cew_d3: { en: "CEW-D3 Image-Adaptive 3D LUT", zh: "CEW-D3 自适应 AI 色彩" },
-  cew_d4: { en: "CEW-D4 Retinexformer Detail Low-Light Enhance", zh: "CEW-D4 低光细节增强" },
-  cew_d5: { en: "CEW-D5 NAFNet/Restormer AI-Denoise", zh: "CEW-D5 AI 去噪" },
-  cew_s1: { en: "CEW-S1 Real-ESRGAN", zh: "CEW-S1 Real-ESRGAN" },
-  cew_s2: { en: "CEW-S2 SwinIR", zh: "CEW-S2 SwinIR" },
-  cew_s3: { en: "CEW-S3 BSRGAN", zh: "CEW-S3 BSRGAN" }
+  cew_e1: { en: "Auto-Tone", zh: "自动色调" },
+  cew_e2: { en: "Warm-Vivid", zh: "暖色鲜艳" },
+  cew_e3: { en: "Film-Faded", zh: "胶片褪色" },
+  cew_e4: { en: "Local-Clarity HDR", zh: "局部清晰 HDR" },
+  cew_c1: { en: "Basic Auto-Fix SR", zh: "自动修复+超分" },
+  cew_c2: { en: "Color Retouch SR", zh: "色彩修饰+超分" },
+  cew_c3: { en: "Detail Enhance SR", zh: "细节增强+超分" },
+  cew_c4: { en: "Full Enhancement Chain", zh: "完整增强链" },
+  cew_d1: { en: "Zero-DCE++ Auto-Light", zh: "自动补光" },
+  cew_d2: { en: "DeepWB Auto-WhiteBalance", zh: "自动白平衡" },
+  cew_d3: { en: "Image-Adaptive 3D LUT", zh: "自适应 AI 色彩" },
+  cew_d4: { en: "Retinexformer Detail Low-Light Enhance", zh: "低光细节增强" },
+  cew_d5: { en: "NAFNet/Restormer AI-Denoise", zh: "AI 去噪" },
+  cew_s1: { en: "Real-ESRGAN", zh: "Real-ESRGAN" },
+  cew_s2: { en: "SwinIR", zh: "SwinIR" },
+  cew_s3: { en: "BSRGAN", zh: "BSRGAN" }
 };
 const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_phase(\d+)_(point|ahead)$/;
+const VIEWPOINT_MOTION_LABELS: Record<(typeof VIEWPOINT_MOTION_ORDER)[number], { en: string; zh: string }> = {
+  swipe: { en: "Swipe", zh: "横向扫动" },
+  shake: { en: "Shake", zh: "抖动" },
+  rotate: { en: "Rotate", zh: "环绕旋转" },
+  rotate_forward: { en: "Rotate Forward", zh: "前向环绕" }
+};
+const DISTORTION_STRENGTH_MAPPINGS: Record<string, { param: string; zero: string; one: string }> = {
+  brightness: { param: "factor", zero: "1.0", one: "2.0" },
+  contrast: { param: "factor", zero: "1.0", one: "2.0" },
+  gaussian_blur: { param: "radius", zero: "0", one: "20" },
+  gaussian_noise: { param: "sigma", zero: "0", one: "0.1" },
+  jpeg: { param: "quality", zero: "90", one: "10" },
+  resize: { param: "scale", zero: "0.5", one: "0.5" },
+  resized_crop: { param: "crop scale", zero: "1.0", one: "0.5" },
+  rotation: { param: "angle", zero: "0°", one: "45°" },
+  erasing: { param: "area ratio", zero: "0", one: "0.25" }
+};
 
 function getResponsiveResourcePageSize(width: number, height: number): number {
   if (width >= 1680 && height >= 950) {
@@ -254,11 +319,7 @@ function resourceRank(resource: BrowserResource) {
     return WATERMARK_METHOD_ORDER[resource.method ?? ""] ?? 90;
   }
   if (resource.type === "attacks") {
-    const parsed = parseViewpointMethod(resource.method ?? "");
-    if (parsed) {
-      return 30 + parsed.phaseIndex * 2 + (parsed.lookatMode === "point" ? 0 : 1);
-    }
-    return ATTACK_METHOD_ORDER[resource.method ?? ""] ?? 90;
+    return attackMethodRank(resource.method ?? "");
   }
   return 0;
 }
@@ -360,10 +421,10 @@ export default function ResourcesPage() {
     () => ({
       datasets: catalogItems.map((item) => catalogToResource(item, language)).sort(compareResources),
       watermarks: algorithms.map((algorithm) => algorithmToResource(algorithm, language)).sort(compareResources),
-      attacks: attacks
-        .filter((attack) => !HIDDEN_RESOURCE_ATTACK_METHODS.has(attack.method))
-        .map((attack) => attackToResource(attack, language))
-        .sort(compareResources)
+      attacks: attackMethodResources(
+        attacks.filter((attack) => !HIDDEN_RESOURCE_ATTACK_METHODS.has(attack.method)),
+        language
+      ).sort(compareResources)
     }),
     [algorithms, attacks, catalogItems, language]
   );
@@ -434,7 +495,7 @@ export default function ResourcesPage() {
     >
       <span className="resource-row-main">
         <strong>{resource.name}</strong>
-        <small>{resource.subtitle}</small>
+        <small translate={resource.type === "attacks" ? "no" : undefined}>{resource.subtitle}</small>
       </span>
       <span className="resource-row-meta">
         {resource.type === "datasets" ? (
@@ -699,6 +760,7 @@ function ResourceDetail({
   onAttackInstalled: () => void;
 }) {
   const configHref = buildConfigHref(resource);
+  const attackDetail = resource.type === "attacks" ? resource.attackDetail : undefined;
   return (
     <div className="resource-detail-stack">
       <div>
@@ -712,6 +774,18 @@ function ResourceDetail({
       <div className={resource.type === "datasets" ? "detail-metrics-grid dataset-only-category" : "detail-metrics-grid"}>
         {resource.type === "datasets" ? (
           <DetailMetric label={t.resources.category} value={resource.category} />
+        ) : attackDetail ? (
+          <>
+            <DetailMetric label="ID" value={resource.id} />
+            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
+            <DetailMetric label="Method" value={resource.method ?? "n/a"} />
+            <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
+            <DetailMetric label={language === "zh" ? "底层 preset" : "Presets"} value={attackDetail.presetCount.toString()} />
+            <DetailMetric
+              label={language === "zh" ? "权重" : "Weights"}
+              value={attackDetail.weights.length > 0 ? attackDetail.weights.length.toString() : language === "zh" ? "无需额外权重" : "none"}
+            />
+          </>
         ) : (
           <>
             <DetailMetric label="ID" value={resource.id} />
@@ -726,7 +800,9 @@ function ResourceDetail({
         )}
       </div>
 
-      {resource.strengths ? (
+      {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
+
+      {resource.strengths && resource.type !== "attacks" ? (
         <div className="detail-section">
           <strong>{t.resources.strengthGrid}</strong>
           <div className="strength-chip-row">
@@ -739,7 +815,7 @@ function ResourceDetail({
         </div>
       ) : null}
 
-      {resource.params && Object.keys(resource.params).length > 0 ? (
+      {resource.params && Object.keys(resource.params).length > 0 && resource.type !== "attacks" ? (
         <div className="detail-section">
           <strong>Params</strong>
           <pre className="detail-json">{JSON.stringify(resource.params, null, 2)}</pre>
@@ -786,6 +862,76 @@ function ResourceDetail({
         <div className="risk warn">{t.resources.weightsConfigHint}</div>
       )}
     </div>
+  );
+}
+
+function AttackResourceDetailPanel({
+  detail,
+  language
+}: {
+  detail: AttackResourceDetail;
+  language: "zh" | "en";
+}) {
+  return (
+    <>
+      <div className="detail-section">
+        <strong>{detail.variants.length > 1 ? (language === "zh" ? "底层执行 preset" : "Execution presets") : language === "zh" ? "执行接口" : "Execution interface"}</strong>
+        <div className="attack-method-chip-grid">
+          {detail.variants.map((variant) => (
+            <span className="attack-method-chip" key={variant.id}>
+              <strong>{variant.label}</strong>
+              {variant.sublabel ? <small translate="no">{variant.sublabel}</small> : null}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {detail.mappings.length > 0 ? (
+        <div className="detail-section">
+          <strong>{language === "zh" ? "强度 0/1 映射" : "Strength 0/1 mapping"}</strong>
+          <div className="attack-mapping-list">
+            {detail.mappings.map((mapping) => (
+              <div className="attack-mapping-row" key={mapping.id}>
+                <span>{mapping.label}</span>
+                <code>0 → {mapping.zero}</code>
+                <code>1 → {mapping.one}</code>
+                {mapping.note ? <small>{mapping.note}</small> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="detail-section">
+        <strong>{language === "zh" ? "权重 / 模型" : "Weights / models"}</strong>
+        {detail.weights.length > 0 ? (
+          <div className="attack-weight-list">
+            {detail.weights.map((weight) => (
+              <div className="attack-weight-row" key={weight.id}>
+                <span>{weight.label}</span>
+                <code>{weight.value}</code>
+                {weight.tone ? <span className={badgeClass(weight.tone)}>{weightStatusLabel(weight.tone, language)}</span> : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="dataset-download-hint">
+            {language === "zh" ? "该攻击族不需要额外攻击权重。" : "This attack family does not require extra attack weights."}
+          </p>
+        )}
+      </div>
+
+      {detail.notes.length > 0 ? (
+        <div className="detail-section">
+          <strong>{language === "zh" ? "配置说明" : "Configuration notes"}</strong>
+          <div className="attack-family-notes">
+            {detail.notes.map((note) => (
+              <span key={note}>{note}</span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -1273,51 +1419,468 @@ function viewpointDisplayName(method: string, language: "zh" | "en") {
     : `3D Viewpoint Phase ${parsed.phaseIndex} (${mode})`;
 }
 
-function formatStrengthSummary(attack: AttackPreset, language: "zh" | "en") {
-  const count = attack.strengths.filter((strength) => Number.isFinite(strength)).length;
-  if (attack.strengthParam === "scale") {
-    return language === "zh" ? `${count} 个倍率` : `${count} scale${count === 1 ? "" : "s"}`;
-  }
-  if (attack.strengthParam === "xy") {
-    return language === "zh" ? `${count} 个 XY 档位` : `${count} XY level${count === 1 ? "" : "s"}`;
-  }
-  if (attack.strengthParam === "strength" || attack.strengthParam === "step") {
-    return language === "zh" ? `${count} 个强度档位` : `${count} strength level${count === 1 ? "" : "s"}`;
-  }
-  return language === "zh" ? "固定参数" : "fixed parameters";
+function attackLabelByMethod(method: string, language: "zh" | "en") {
+  const display = ATTACK_DISPLAY_NAMES[method];
+  return display ? (language === "zh" ? display.zh : display.en) : method;
 }
 
-function attackSubtitle(attack: AttackPreset, categoryLabel: string, language: "zh" | "en") {
-  const strengthSummary = formatStrengthSummary(attack, language);
-  const englishName = englishSubtitleForTitle(language, attackDisplayName(attack, language), attackEnglishName(attack));
-  return [englishName, categoryLabel, strengthSummary].filter(Boolean).join(" · ");
+function viewpointMotionFromPhase(phaseIndex: number): (typeof VIEWPOINT_MOTION_ORDER)[number] {
+  return VIEWPOINT_MOTION_ORDER[Math.min(Math.floor(phaseIndex / 2), VIEWPOINT_MOTION_ORDER.length - 1)] ?? "rotate_forward";
 }
 
-function attackToResource(attack: AttackPreset, language: "zh" | "en"): BrowserResource {
-  const available = attack.available !== false;
-  const needsWeights = attack.weightsPackRequired === true;
-  const weightsReady = !needsWeights || attack.weightsInstalled === true;
-  const category = normalizeAttackCategory(attack);
+function viewpointMotionLabel(motion: string, language: "zh" | "en") {
+  const labels = VIEWPOINT_MOTION_LABELS[motion as (typeof VIEWPOINT_MOTION_ORDER)[number]];
+  return labels ? (language === "zh" ? labels.zh : labels.en) : motion;
+}
+
+function attackResourceMethod(attack: AttackPreset) {
+  if (attack.displayMethod) {
+    return attack.displayMethod;
+  }
+  const parsed = parseViewpointMethod(attack.method);
+  return parsed ? viewpointMotionFromPhase(parsed.phaseIndex) : attack.method;
+}
+
+function attackResourceGroup(attack: AttackPreset) {
+  return attack.displayGroup ?? normalizeAttackCategory(attack);
+}
+
+function attackMethodRank(method: string) {
+  const viewpointRank = VIEWPOINT_MOTION_ORDER.indexOf(method as (typeof VIEWPOINT_MOTION_ORDER)[number]);
+  if (viewpointRank >= 0) {
+    return 30 + viewpointRank;
+  }
+  return ATTACK_METHOD_ORDER[method] ?? 90;
+}
+
+function resourceSlug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "attack";
+}
+
+function attackMethodResources(attacks: AttackPreset[], language: "zh" | "en"): BrowserResource[] {
+  const groups = new Map<string, { category: string; method: string; attacks: AttackPreset[] }>();
+  for (const attack of attacks) {
+    const category = attackResourceGroup(attack);
+    const method = attackResourceMethod(attack);
+    const key = `${category}:${method}`;
+    const current = groups.get(key) ?? { category, method, attacks: [] };
+    current.attacks.push(attack);
+    groups.set(key, current);
+  }
+  return Array.from(groups.values()).map((group) =>
+    attackMethodToResource(group.category, group.method, group.attacks, language)
+  );
+}
+
+function attackMethodToResource(
+  category: string,
+  method: string,
+  methodAttacks: AttackPreset[],
+  language: "zh" | "en"
+): BrowserResource {
   const categoryLabel = attackCategoryLabel(category, language);
+  const detail = buildAttackResourceDetail(category, method, methodAttacks, language);
+  const available = methodAttacks.some((attack) => attack.available !== false);
+  const requiresGpu = methodAttacks.some((attack) => attack.requiresGpu);
+  const needsWeights = methodAttacks.some((attack) => attack.weightsPackRequired === true);
+  const weightsReady =
+    !needsWeights || methodAttacks.every((attack) => attack.weightsPackRequired !== true || attack.weightsInstalled === true);
+  const name = attackResourceDisplayName(category, method, methodAttacks, language);
+  const englishName = attackResourceEnglishName(category, method, methodAttacks);
+  const singleAttack = methodAttacks.length === 1 ? methodAttacks[0] : undefined;
   return {
-    id: attack.id,
+    id: singleAttack?.id ?? `atk-${resourceSlug(category)}-${resourceSlug(method)}`,
     type: "attacks",
-    name: attackDisplayName(attack, language),
-    subtitle: attackSubtitle(attack, categoryLabel, language),
+    name,
+    subtitle: attackMethodSubtitle(name, englishName, categoryLabel, category, method, detail, language),
     category,
     categoryLabel,
     status: available ? "enabled" : "missing",
     statusTone: available && weightsReady ? "ok" : needsWeights && !weightsReady ? "warn" : available ? "ok" : "error",
     available,
-    method: attack.method,
-    path: attack.categoryPath,
-    description: attack.description,
-    params: attack.params,
-    strengths: attack.strengths,
-    requiresGpu: attack.requiresGpu,
-    recommended: attack.recommended,
-    attack
+    method,
+    path: methodAttacks[0]?.categoryPath ?? `evaluator/attacks/${category}`,
+    description: attackMethodDescription(category, method, methodAttacks, language),
+    requiresGpu,
+    recommended: methodAttacks.some((attack) => attack.recommended),
+    attack: singleAttack,
+    attacks: methodAttacks,
+    attackDetail: detail
   };
+}
+
+function attackResourceDisplayName(
+  category: string,
+  method: string,
+  methodAttacks: AttackPreset[],
+  language: "zh" | "en"
+) {
+  if (category === "3d_viewpoint_rerendering") {
+    return viewpointMotionLabel(method, language);
+  }
+  const display = ATTACK_DISPLAY_NAMES[method];
+  if (display) {
+    return language === "zh" ? display.zh : display.en;
+  }
+  return methodAttacks[0] ? attackDisplayName(methodAttacks[0], language) : method;
+}
+
+function attackResourceEnglishName(category: string, method: string, methodAttacks: AttackPreset[]) {
+  if (category === "3d_viewpoint_rerendering") {
+    return viewpointMotionLabel(method, "en");
+  }
+  return ATTACK_DISPLAY_NAMES[method]?.en ?? methodAttacks[0]?.name ?? method;
+}
+
+function attackMethodSubtitle(
+  name: string,
+  englishName: string,
+  categoryLabel: string,
+  category: string,
+  method: string,
+  detail: AttackResourceDetail,
+  language: "zh" | "en"
+) {
+  const english = englishSubtitleForTitle(language, name, englishName);
+  const summary = attackMethodControlSummary(category, method, detail, language);
+  return [english, categoryLabel, summary].filter(Boolean).join(" · ");
+}
+
+function attackMethodControlSummary(
+  category: string,
+  method: string,
+  detail: AttackResourceDetail,
+  language: "zh" | "en"
+) {
+  if (category === "3d_viewpoint_rerendering") {
+    return language === "zh" ? `${detail.presetCount} 个底层 preset` : `${detail.presetCount} execution presets`;
+  }
+  if (method === REGENERATION_VAE_METHOD) {
+    return language === "zh" ? "VAE 权重类型 + quality" : "VAE model + quality";
+  }
+  if (method === REGENERATION_IMAGE_TO_VIDEO_METHOD) {
+    return language === "zh" ? "XY 离散参数" : "XY options";
+  }
+  if ((CONSUMER_SUPER_RESOLUTION_METHODS as readonly string[]).includes(method)) {
+    return language === "zh" ? "超分倍率" : "super-resolution scale";
+  }
+  if (detail.mappings.length > 0 && detail.mappings.some((mapping) => mapping.zero !== mapping.one)) {
+    return language === "zh" ? "0-1 强度映射" : "0-1 strength mapping";
+  }
+  return language === "zh" ? "固定/离散参数" : "fixed/discrete parameters";
+}
+
+function attackMethodDescription(
+  category: string,
+  method: string,
+  methodAttacks: AttackPreset[],
+  language: "zh" | "en"
+) {
+  if (category === "3d_viewpoint_rerendering") {
+    const motion = viewpointMotionLabel(method, language);
+    return language === "zh"
+      ? `${motion} 运动变体；底层由 phase 与 look-at mode 组合展开，攻击强度映射到 max_disparity。`
+      : `${motion} motion variant; execution expands by phase and look-at mode, with strength mapped to max_disparity.`;
+  }
+  return methodAttacks[0]?.description ?? attackResourceEnglishName(category, method, methodAttacks);
+}
+
+function buildAttackResourceDetail(
+  category: string,
+  method: string,
+  attacks: AttackPreset[],
+  language: "zh" | "en"
+): AttackResourceDetail {
+  return {
+    presetCount: attacks.length,
+    presetIds: attacks.map((attack) => attack.id),
+    variants: attackResourceVariants(category, method, attacks),
+    mappings: attackResourceMappings(category, method, language),
+    weights: attackResourceWeights(category, method, attacks, language),
+    notes: attackResourceNotes(category, method, language)
+  };
+}
+
+function attackResourceVariants(category: string, method: string, attacks: AttackPreset[]): AttackResourceVariant[] {
+  if (category === "3d_viewpoint_rerendering") {
+    return [...attacks]
+      .sort((left, right) => attackMethodRank(left.method) - attackMethodRank(right.method))
+      .map((attack) => {
+        const parsed = parseViewpointMethod(attack.method);
+        const phase = attack.viewpointPhase ?? parsed?.phaseIndex;
+        const lookat = attack.viewpointLookatMode ?? parsed?.lookatMode;
+        return {
+          id: attack.id,
+          label: `phase ${phase ?? "?"}`,
+          sublabel: lookat ? `look-at ${lookat}` : attack.method
+        };
+      });
+  }
+  const first = attacks[0];
+  return [
+    {
+      id: first?.id ?? method,
+      label: first?.method ?? method,
+      sublabel: first?.id
+    }
+  ];
+}
+
+function attackResourceMappings(category: string, method: string, language: "zh" | "en"): AttackResourceMapping[] {
+  if (category === "distortion_attacks") {
+    const mapping = DISTORTION_STRENGTH_MAPPINGS[method];
+    if (!mapping) {
+      return [];
+    }
+    return [
+      {
+        id: method,
+        label: mapping.param,
+        zero: mapping.zero,
+        one: mapping.one,
+        note:
+          method === "resize"
+            ? language === "zh"
+              ? "固定参数，不参与强度连续调节。"
+              : "Fixed parameter; not part of continuous strength control."
+            : undefined
+      }
+    ];
+  }
+  if (category === "physical_channel_attacks") {
+    if (method === "combined_physical") {
+      return [
+        {
+          id: method,
+          label: attackLabelByMethod(method, language),
+          zero: "print 0 + screen 0",
+          one: "print 0.5 + screen 0.5",
+          note:
+            language === "zh"
+              ? "0-0.5 先增强打印信道，0.5-1 再叠加屏幕-拍摄信道。"
+              : "0-0.5 raises the print channel first; 0.5-1 adds the screen-camera channel."
+        }
+      ];
+    }
+    return [
+      {
+        id: method,
+        label: attackLabelByMethod(method, language),
+        zero: "mild",
+        one: "strong",
+        note:
+          language === "zh"
+            ? "0.5 对应 medium；数值参数逐项线性插值。"
+            : "0.5 maps to medium; numeric parameters are interpolated."
+      }
+    ];
+  }
+  if (category === "3d_viewpoint_rerendering") {
+    return [
+      {
+        id: "max_disparity",
+        label: "max_disparity",
+        zero: `${VIEWPOINT_MAX_DISPARITY_LEVELS[0]}`,
+        one: `${VIEWPOINT_MAX_DISPARITY_LEVELS[2]}`,
+        note:
+          language === "zh"
+            ? "0.5 对应 0.02；phase 和 look-at mode 在实验配置页继续细分。"
+            : "0.5 maps to 0.02; phase and look-at mode remain configurable in the experiment page."
+      }
+    ];
+  }
+  if (category === "regeneration_attacks") {
+    if ((REGENERATION_UNIT_METHODS as readonly string[]).includes(method)) {
+      if (method === "noise_to_image") {
+        return [
+          {
+            id: method,
+            label: "step",
+            zero: "0",
+            one: "1",
+            note: language === "zh" ? "CtrlRegen 管线中的 img2img 强度。" : "Img2img strength inside the CtrlRegen pipeline."
+          }
+        ];
+      }
+      return [
+        {
+          id: method,
+          label: "noise_step",
+          zero: "20",
+          one: "100",
+          note:
+            language === "zh"
+              ? "通过 strength 在 20-100 的噪声步范围内线性映射。"
+              : "The strength value maps linearly to the 20-100 noise-step range."
+        }
+      ];
+    }
+    if (method === REGENERATION_VAE_METHOD) {
+      return [
+        {
+          id: method,
+          label: "quality",
+          zero: "1",
+          one: "6",
+          note:
+            language === "zh"
+              ? "VAE 使用权重类型和 quality 勾选，不使用连续强度轴。"
+              : "VAE uses selected model and quality rather than the continuous strength axis."
+        }
+      ];
+    }
+    if (method === REGENERATION_IMAGE_TO_VIDEO_METHOD) {
+      return [
+        {
+          id: method,
+          label: "xy",
+          zero: "0",
+          one: "60",
+          note: `xy ∈ ${REGENERATION_IMAGE_TO_VIDEO_XY.join("/")}`
+        }
+      ];
+    }
+  }
+  if (category === "consumer_enhancement_workflow_attacks") {
+    if ((CONSUMER_STRENGTH_METHODS as readonly string[]).includes(method)) {
+      return [
+        {
+          id: method,
+          label: "strength",
+          zero: "light",
+          one: "strong",
+          note:
+            language === "zh"
+              ? "实验配置页按 0-1 轴生成档位，执行时映射到 CEW 编辑强度。"
+              : "Experiment configuration generates 0-1 levels and maps them to CEW edit strength."
+        }
+      ];
+    }
+    if ((CONSUMER_SUPER_RESOLUTION_METHODS as readonly string[]).includes(method)) {
+      return [
+        {
+          id: method,
+          label: "scale",
+          zero: "2",
+          one: "4",
+          note: `scale ∈ ${CONSUMER_SUPER_RESOLUTION_SCALES.join("/")}`
+        }
+      ];
+    }
+  }
+  return [];
+}
+
+function attackResourceWeights(
+  category: string,
+  method: string,
+  attacks: AttackPreset[],
+  language: "zh" | "en"
+): AttackResourceWeight[] {
+  const rows = weightRowsFromAttacks(attacks, language);
+  if (method === REGENERATION_VAE_METHOD) {
+    rows.push(
+      {
+        id: "vae-models",
+        label: language === "zh" ? "VAE 权重类型" : "VAE model types",
+        value: REGENERATION_VAE_MODEL_NAMES.join(", "),
+        tone: "neutral"
+      },
+      {
+        id: "vae-quality",
+        label: "VAE Quality",
+        value: REGENERATION_VAE_QUALITIES.join(", "),
+        tone: "neutral"
+      }
+    );
+  }
+  if (category === "consumer_enhancement_workflow_attacks" && (CONSUMER_SUPER_RESOLUTION_METHODS as readonly string[]).includes(method)) {
+    rows.push({
+      id: "sr-scales",
+      label: language === "zh" ? "可选倍率" : "Selectable scales",
+      value: CONSUMER_SUPER_RESOLUTION_SCALES.join(", "),
+      tone: "neutral"
+    });
+  }
+  return rows;
+}
+
+function attackResourceNotes(category: string, method: string, language: "zh" | "en"): string[] {
+  if (category === "physical_channel_attacks") {
+    return [
+      language === "zh"
+        ? "透视矫正可在实验配置页选择：开启、不开启，或两者都跑。"
+        : "Perspective correction can be configured as enabled, disabled, or both."
+    ];
+  }
+  if (category === "3d_viewpoint_rerendering") {
+    return [
+      language === "zh"
+        ? "资源页按 4 个运动方法计数；底层执行仍由所选 phase × look-at mode 展开。"
+        : "The resource page counts four motion methods; execution still expands by selected phase and look-at mode."
+    ];
+  }
+  if (method === REGENERATION_VAE_METHOD) {
+    return [
+      language === "zh"
+        ? "当前前端只开放 quality 1-6，与实验配置页面保持一致。"
+        : "The UI exposes quality 1-6 only, matching the experiment configuration page."
+    ];
+  }
+  if (method === REGENERATION_IMAGE_TO_VIDEO_METHOD) {
+    return [`xy ∈ ${REGENERATION_IMAGE_TO_VIDEO_XY.join("/")}`];
+  }
+  if (category === "consumer_enhancement_workflow_attacks" && method.startsWith("cew_c")) {
+    return [
+      language === "zh"
+        ? "组合增强链是固定流程；具体链路由后端攻击实现定义。"
+        : "Composite enhancement chains are fixed workflows defined by the backend attack implementation."
+    ];
+  }
+  if (category === "consumer_enhancement_workflow_attacks" && method.startsWith("cew_d")) {
+    return [
+      language === "zh"
+        ? "深度增强方法可能依赖权重；实现允许 fallback 的方法会在缺失权重时使用本地近似。"
+        : "Deep enhancement methods may require weights; fallback-enabled methods use local approximations when weights are missing."
+    ];
+  }
+  return [];
+}
+
+function weightRowsFromAttacks(attacks: AttackPreset[], language: "zh" | "en"): AttackResourceWeight[] {
+  const rows = new Map<string, AttackResourceWeight>();
+  for (const attack of attacks) {
+    if (attack.weightsPackRequired !== true || !attack.weightsDir) {
+      continue;
+    }
+    const id = attack.weightsDir;
+    const current = rows.get(id);
+    const tone: BrowserResource["statusTone"] = attack.weightsInstalled === true ? "ok" : attack.weightsDownloadReady ? "warn" : "error";
+    if (current) {
+      current.tone = current.tone === "ok" && tone !== "ok" ? tone : current.tone;
+      continue;
+    }
+    rows.set(id, {
+      id,
+      label: language === "zh" ? "攻击权重目录" : "Attack weight directory",
+      value: `resources/weights/attacks/${attack.weightsDir}`,
+      tone
+    });
+  }
+  return Array.from(rows.values());
+}
+
+function weightStatusLabel(tone: BrowserResource["statusTone"], language: "zh" | "en") {
+  if (tone === "ok") {
+    return language === "zh" ? "已安装" : "installed";
+  }
+  if (tone === "warn") {
+    return language === "zh" ? "可下载" : "downloadable";
+  }
+  if (tone === "error") {
+    return language === "zh" ? "缺失" : "missing";
+  }
+  return language === "zh" ? "可选" : "optional";
 }
 
 function searchableText(resource: BrowserResource): string {
@@ -1329,7 +1892,10 @@ function searchableText(resource: BrowserResource): string {
     resource.categoryLabel,
     resource.description,
     resource.method,
-    resource.path
+    resource.path,
+    ...(resource.attackDetail?.variants.flatMap((variant) => [variant.label, variant.sublabel]) ?? []),
+    ...(resource.attackDetail?.mappings.flatMap((mapping) => [mapping.label, mapping.zero, mapping.one, mapping.note]) ?? []),
+    ...(resource.attackDetail?.weights.flatMap((weight) => [weight.label, weight.value]) ?? [])
   ]
     .filter(Boolean)
     .join(" ")
@@ -1343,7 +1909,11 @@ function buildConfigHref(resource: BrowserResource): string | null {
   } else if (resource.type === "watermarks") {
     params.set("algorithmIds", resource.id);
   } else if (resource.type === "attacks") {
-    params.set("attackPresetIds", resource.id);
+    if (resource.attackDetail?.presetIds.length) {
+      params.set("attackPresetIds", resource.attackDetail.presetIds.join(","));
+    } else {
+      params.set("attackPresetIds", resource.id);
+    }
   } else {
     return null;
   }

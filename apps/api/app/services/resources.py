@@ -138,22 +138,22 @@ WATERMARK_DISPLAY_NAMES = {
 }
 
 ATTACK_DISPLAY_NAMES = {
-    "cew_c1": "CEW-C1 Basic Auto-Fix SR",
-    "cew_c2": "CEW-C2 Color Retouch SR",
-    "cew_c3": "CEW-C3 Detail Enhance SR",
-    "cew_c4": "CEW-C4 Full Enhancement Chain",
-    "cew_d1": "CEW-D1 Zero-DCE++ Auto-Light",
-    "cew_d2": "CEW-D2 DeepWB Auto-WhiteBalance",
-    "cew_d3": "CEW-D3 Image-Adaptive 3D LUT",
-    "cew_d4": "CEW-D4 Retinexformer Detail Low-Light Enhance",
-    "cew_d5": "CEW-D5 NAFNet/Restormer AI-Denoise",
-    "cew_e1": "CEW-E1 Auto-Tone",
-    "cew_e2": "CEW-E2 Warm-Vivid",
-    "cew_e3": "CEW-E3 Film-Faded",
-    "cew_e4": "CEW-E4 Local-Clarity HDR",
-    "cew_s1": "CEW-S1 Real-ESRGAN",
-    "cew_s2": "CEW-S2 SwinIR",
-    "cew_s3": "CEW-S3 BSRGAN",
+    "cew_c1": "Basic Auto-Fix SR",
+    "cew_c2": "Color Retouch SR",
+    "cew_c3": "Detail Enhance SR",
+    "cew_c4": "Full Enhancement Chain",
+    "cew_d1": "Zero-DCE++ Auto-Light",
+    "cew_d2": "DeepWB Auto-WhiteBalance",
+    "cew_d3": "Image-Adaptive 3D LUT",
+    "cew_d4": "Retinexformer Detail Low-Light Enhance",
+    "cew_d5": "NAFNet/Restormer AI-Denoise",
+    "cew_e1": "Auto-Tone",
+    "cew_e2": "Warm-Vivid",
+    "cew_e3": "Film-Faded",
+    "cew_e4": "Local-Clarity HDR",
+    "cew_s1": "Real-ESRGAN",
+    "cew_s2": "SwinIR",
+    "cew_s3": "BSRGAN",
     "2x_regen": "2-pass Diffusion Regeneration",
     "4x_regen": "4-pass Diffusion Regeneration",
     "combined_physical": "Combined Physical Channel",
@@ -225,6 +225,7 @@ ATTACK_PARAM_BY_METHOD = {
 PHYSICAL_CHANNEL_METHODS = {"screen_shoot", "print_camera", "combined_physical"}
 VIEWPOINT_RERENDERING_PREFIX = "3d_viewpoint_rerendering_phase"
 VIEWPOINT_RERENDERING_STRENGTHS = [0.0, 0.5, 1.0]
+VIEWPOINT_RERENDERING_MOTIONS = ("swipe", "shake", "rotate", "rotate_forward")
 
 LEGACY_ATTACK_ALIASES: dict[str, str] = {
     "atk-jpeg-smoke": "atk-jpeg",
@@ -250,6 +251,28 @@ def _viewpoint_display_name(method: str) -> str | None:
         return None
     phase_index, lookat_mode = match.groups()
     return f"3D Viewpoint Phase {phase_index} ({lookat_mode})"
+
+
+def _viewpoint_resource_metadata(method: str) -> dict[str, Any]:
+    match = re.fullmatch(r"3d_viewpoint_rerendering_phase(\d+)_(point|ahead)", method)
+    if match is None:
+        return {}
+    phase_index = int(match.group(1))
+    motion = VIEWPOINT_RERENDERING_MOTIONS[min(phase_index // 2, len(VIEWPOINT_RERENDERING_MOTIONS) - 1)]
+    lookat_mode = match.group(2)
+    return {
+        "displayMethod": motion,
+        "displayGroup": "3d_viewpoint_rerendering",
+        "executionMethod": method,
+        "viewpointMotion": motion,
+        "viewpointPhase": phase_index,
+        "viewpointLookatMode": lookat_mode,
+    }
+
+
+def _attack_resource_method(method: str) -> str:
+    metadata = _viewpoint_resource_metadata(method)
+    return str(metadata.get("displayMethod") or method)
 
 
 def _display_name(method: str, overrides: dict[str, str]) -> str:
@@ -352,10 +375,15 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
         else ATTACK_STRENGTH_SWEEPS.get(method, [0.5] if strength_param else [0.0])
     )
     category = _attack_category(method, cls)
+    resource_metadata = _viewpoint_resource_metadata(method)
+    display_method = _attack_resource_method(method)
     return {
         "id": f"atk-{_slug(method)}",
         "name": _display_name(method, ATTACK_DISPLAY_NAMES),
         "method": method,
+        "displayMethod": display_method,
+        "displayGroup": resource_metadata.get("displayGroup", category),
+        "executionMethod": method,
         "description": cls.description,
         "category": category,
         "categoryLabel": _attack_category_label(category),
@@ -366,6 +394,7 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
         "recommended": method == "identity",
         "available": True,
         "params": {},
+        **resource_metadata,
     }
 
 

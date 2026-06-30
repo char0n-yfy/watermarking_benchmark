@@ -2063,6 +2063,98 @@ a.button {
   gap: 6px;
 }
 
+.attack-method-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.attack-method-chip {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfa;
+  padding: 8px 9px;
+}
+
+.attack-method-chip strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attack-method-chip small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attack-mapping-list,
+.attack-weight-list,
+.attack-family-notes {
+  display: grid;
+  gap: 6px;
+}
+
+.attack-mapping-row,
+.attack-weight-row {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.attack-mapping-row {
+  grid-template-columns: minmax(0, 1fr) minmax(82px, auto) minmax(82px, auto);
+  align-items: center;
+}
+
+.attack-mapping-row span,
+.attack-weight-row span {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attack-mapping-row code,
+.attack-weight-row code {
+  min-width: 0;
+  border-radius: 6px;
+  padding: 6px 7px;
+  font-size: 10px;
+}
+
+.attack-mapping-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.attack-weight-row {
+  grid-template-columns: minmax(86px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.attack-family-notes span {
+  border-left: 3px solid #9dbb88;
+  background: #f6faf4;
+  color: var(--muted);
+  padding: 7px 9px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .detail-json {
   max-height: 180px;
   overflow: auto;

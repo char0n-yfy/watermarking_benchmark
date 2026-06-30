@@ -14,8 +14,10 @@ REGENERATION_ATTACK_METHODS = {
     "4x_regen",
     "noise_to_image",
     "image_to_vedio",
-    "3d_viewpoint_rerendering",
 }
+
+VIEWPOINT_RERENDERING_METHOD = "3d_viewpoint_rerendering"
+VIEWPOINT_RERENDERING_PREFIX = "3d_viewpoint_rerendering_phase"
 
 CEW_ATTACK_METHODS = {
     "cew_c1",
@@ -33,11 +35,14 @@ CEW_ATTACK_METHODS = {
 # attack method -> resources/weights/attacks/<dir>
 ATTACK_WEIGHT_DIRS: dict[str, str] = {
     **{method: "regeneration_attacks" for method in REGENERATION_ATTACK_METHODS},
+    VIEWPOINT_RERENDERING_METHOD: "3d_viewpoint_rerendering",
     **{method: "consumer_enhancement_workflow_attacks" for method in CEW_ATTACK_METHODS},
 }
 
 
 def attack_weights_dir_name(method: str) -> str | None:
+    if method.startswith(VIEWPOINT_RERENDERING_PREFIX):
+        return "3d_viewpoint_rerendering"
     return ATTACK_WEIGHT_DIRS.get(method)
 
 
