@@ -1938,14 +1938,19 @@ a.button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .resource-page-list {
   display: grid;
-  flex: 1;
+  flex: 1 1 auto;
   gap: 8px;
   align-content: start;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  padding-bottom: 2px;
 }
 
 .pagination-row {
@@ -1955,9 +1960,10 @@ a.button {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-top: auto;
+  margin-top: 0;
   padding-top: 10px;
   border-top: 1px solid var(--line);
+  background: var(--panel);
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
