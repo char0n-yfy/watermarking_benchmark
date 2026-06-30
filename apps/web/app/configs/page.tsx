@@ -127,7 +127,7 @@ const REGENERATION_VAE_MODEL_NAMES = Object.keys(REGENERATION_VAE_QUALITY_BY_MOD
 const CONSUMER_STRENGTH_METHODS = ["cew_e1", "cew_e2", "cew_e3", "cew_e4"] as const;
 const CONSUMER_SUPER_RESOLUTION_METHODS = ["cew_s1", "cew_s2", "cew_s3"] as const;
 const CONSUMER_SUPER_RESOLUTION_SCALES = [2, 4];
-const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_phase(\d+)_(point|ahead)$/;
+const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase(\d+)_(point|ahead)$/;
 const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
 const VIEWPOINT_LOOKAT_MODES = ["point", "ahead"] as const;
 const VIEWPOINT_PHASES = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -331,12 +331,10 @@ function parseViewpointMethod(method: string):
   if (match === null) {
     return null;
   }
-  const phaseIndex = Number(match[1]);
-  const motion = VIEWPOINT_MOTION_ORDER[Math.floor(phaseIndex / 2)] ?? "rotate_forward";
   return {
-    phaseIndex,
-    motion,
-    lookatMode: match[2] as ViewpointLookatMode
+    phaseIndex: Number(match[2]),
+    motion: match[1] as ViewpointMotion,
+    lookatMode: match[3] as ViewpointLookatMode
   };
 }
 
@@ -484,7 +482,11 @@ function attackEnglishName(attack: AttackPreset) {
 function attackRank(attack: AttackPreset) {
   const categoryRank = ATTACK_CATEGORY_ORDER[attackCategory(attack)] ?? 90;
   const parsed = parseViewpointMethod(attack.method);
-  const methodRank = parsed ? parsed.phaseIndex * 2 + (parsed.lookatMode === "point" ? 0 : 1) : ATTACK_DISPLAY[attack.method]?.rank ?? 99;
+  const methodRank = parsed
+    ? VIEWPOINT_MOTION_ORDER.indexOf(parsed.motion) * 16 +
+      parsed.phaseIndex * 2 +
+      (parsed.lookatMode === "point" ? 0 : 1)
+    : ATTACK_DISPLAY[attack.method]?.rank ?? 99;
   return categoryRank * 100 + methodRank;
 }
 
@@ -990,20 +992,6 @@ function parseSeeds(value: string) {
     .filter((seed) => Number.isFinite(seed));
 }
 
-function idsFromQuery(paramName: string, validIds: Set<string>): string[] | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const raw = new URLSearchParams(window.location.search).get(paramName);
-  if (raw == null) {
-    return null;
-  }
-  return raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value && validIds.has(value));
-}
-
 export default function ConfigsPage() {
   const { language, t } = useLanguage();
   const [selection, setSelection] = useState<ExperimentSelection>(emptySelection);
@@ -1194,48 +1182,10 @@ export default function ConfigsPage() {
         if (cancelled) {
           return;
         }
-        const validDatasetIds = new Set(apiDatasets.map((dataset) => dataset.id));
-        const validAlgorithmIds = new Set(apiAlgorithms.map((algorithm) => algorithm.id));
-        const validAttackIds = new Set(apiAttacks.map((attack) => attack.id));
-        const hiddenAttackIds = hiddenIdentityIds(apiAttacks);
-        const queryDatasetIds = idsFromQuery("datasetIds", validDatasetIds);
-        const queryAlgorithmIds = idsFromQuery("algorithmIds", validAlgorithmIds);
-        const queryAttackIds = idsFromQuery("attackPresetIds", validAttackIds)?.filter(
-          (attackId) => !hiddenAttackIds.has(attackId)
-        );
-        const hasQuerySelection =
-          Boolean(queryDatasetIds && queryDatasetIds.length > 0) ||
-          Boolean(queryAlgorithmIds && queryAlgorithmIds.length > 0) ||
-          Boolean(queryAttackIds && queryAttackIds.length > 0);
-
         setDatasets(apiDatasets);
         setAlgorithms(apiAlgorithms);
         setAttacks(apiAttacks);
         setSavedConfigs(apiConfigs);
-
-        if (hasQuerySelection) {
-          setSelection((current) => {
-            const visibleCurrent = removeHiddenIdentityFromSelection(current, apiAttacks);
-            const attackSelection = addAttackIdsToSelection(
-              {
-                ...visibleCurrent,
-                attackPresetIds: [],
-                attackStrengthOverrides: {},
-                attackParamOverrides: {}
-              },
-              queryAttackIds ??
-                visibleCurrent.attackPresetIds.filter((id) => validAttackIds.has(id) && !hiddenAttackIds.has(id))
-            );
-            return {
-              ...attackSelection,
-              datasetIds: queryDatasetIds ?? visibleCurrent.datasetIds.filter((id) => validDatasetIds.has(id)),
-              algorithmIds: queryAlgorithmIds ?? visibleCurrent.algorithmIds.filter((id) => validAlgorithmIds.has(id))
-            };
-          });
-          setIsCreateOpen(true);
-          setMessage(t.configs.prefilledFromResources);
-          return;
-        }
 
         if (apiDatasets.length === 0) {
           setMessage("resources/datasets 下还没有可用图片，请先解压数据集。");
@@ -1604,9 +1554,44 @@ export default function ConfigsPage() {
                     <button
                       className="button compact"
                       disabled={visibleAttackIds.length === 0}
-                      onClick={() =>
+                      onClick={() => {
+                        const visibleViewpointAttacks = filteredAttacks.filter(
+                          (attack) => attackCategory(attack) === VIEWPOINT_CATEGORY
+                        );
+                        const visibleViewpointMotions = VIEWPOINT_MOTION_ORDER.filter((motion) =>
+                          visibleViewpointAttacks.some((attack) => parseViewpointMethod(attack.method)?.motion === motion)
+                        );
+                        const nextViewpointSettings =
+                          visibleViewpointAttacks.length > 0
+                            ? {
+                                ...viewpointSettings,
+                                enabled: true,
+                                motions:
+                                  viewpointSettings.motions.length > 0
+                                    ? viewpointSettings.motions
+                                    : visibleViewpointMotions,
+                                lookatModes:
+                                  viewpointSettings.lookatModes.length > 0
+                                    ? viewpointSettings.lookatModes
+                                    : [...VIEWPOINT_LOOKAT_MODES],
+                                phases:
+                                  viewpointSettings.phases.length > 0
+                                    ? viewpointSettings.phases
+                                    : [...VIEWPOINT_PHASES]
+                              }
+                            : viewpointSettings;
+                        if (visibleViewpointAttacks.length > 0) {
+                          setViewpointSettings(nextViewpointSettings);
+                        }
                         setSelection((current) => {
                           let nextSelection = addAttackIdsToSelection(current, visibleAttackIds);
+                          if (visibleViewpointAttacks.length > 0) {
+                            nextSelection = applyViewpointSettings(
+                              nextSelection,
+                              visibleViewpointAttacks,
+                              nextViewpointSettings
+                            );
+                          }
                           const visibleDistortionAttacks = filteredAttacks.filter(
                             (attack) => attackCategory(attack) === DISTORTION_CATEGORY
                           );
@@ -1644,8 +1629,8 @@ export default function ConfigsPage() {
                             );
                           }
                           return nextSelection;
-                        })
-                      }
+                        });
+                      }}
                       type="button"
                     >
                       <Check size={14} />

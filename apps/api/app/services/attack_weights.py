@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,9 @@ REGENERATION_ATTACK_METHODS = {
 }
 
 VIEWPOINT_RERENDERING_METHOD = "3d_viewpoint_rerendering"
-VIEWPOINT_RERENDERING_PREFIX = "3d_viewpoint_rerendering_phase"
+VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
+    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase\d+_(point|ahead)"
+)
 
 CEW_ATTACK_METHODS = {
     "cew_c1",
@@ -41,13 +44,13 @@ ATTACK_WEIGHT_DIRS: dict[str, str] = {
 
 
 def attack_weights_dir_name(method: str) -> str | None:
-    if method.startswith(VIEWPOINT_RERENDERING_PREFIX):
+    if VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method):
         return "3d_viewpoint_rerendering"
     return ATTACK_WEIGHT_DIRS.get(method)
 
 
 def attack_weights_need_download(method: str) -> bool:
-    return method in ATTACK_WEIGHT_DIRS
+    return attack_weights_dir_name(method) is not None
 
 
 def attack_weights_install_dir(resources_root: Path, method: str) -> Path:

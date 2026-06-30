@@ -25,7 +25,7 @@ class ScoringTest(unittest.TestCase):
     def test_ctrlregen_and_nfpa_are_regeneration_scoring_categories(self) -> None:
         self.assertEqual(attack_category("noise_to_image"), "regeneration-single")
         self.assertEqual(attack_category("image_to_vedio"), "regeneration-single")
-        self.assertEqual(attack_category("3d_viewpoint_rerendering_phase0_point"), "regeneration-single")
+        self.assertEqual(attack_category("3d_viewpoint_rerendering_rotate_phase0_point"), "regeneration-single")
 
     def test_score_cell_uses_negative_quantile_for_low_fpr_threshold(self) -> None:
         scoring = score_cell(
