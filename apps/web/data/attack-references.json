@@ -1,0 +1,2130 @@
+{
+  "cew_e1": {
+    "summary": {
+      "zh": "CEW-E1 Auto-Tone，项目内置的自动影调编辑预设，主要包含自动对比度、曝光、鲜艳度和锐化调整。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无独立论文；属于项目内消费级编辑预设。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    ]
+  },
+  "cew_e2": {
+    "summary": {
+      "zh": "CEW-E2 Warm-Vivid，项目内置的暖色鲜艳化编辑预设，主要改变色温、色调、饱和度、对比度和曲线。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无独立论文；属于项目内消费级编辑预设。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    ]
+  },
+  "cew_e3": {
+    "summary": {
+      "zh": "CEW-E3 Film-Faded，项目内置的胶片褪色风格预设，主要降低对比度/饱和度、抬升黑场并软化局部对比。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无独立论文；属于项目内消费级编辑预设。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    ]
+  },
+  "cew_e4": {
+    "summary": {
+      "zh": "CEW-E4 Local-Clarity HDR，项目内置的局部清晰度/HDR 风格预设，主要包含暗部提升、局部对比增强和锐化。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无独立论文；属于项目内消费级编辑预设。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    ]
+  },
+  "cew_d1": {
+    "summary": {
+      "zh": "CEW-D1 Auto-Light，自动低光增强攻击；有权重时使用 Zero-DCE++ 风格后端，无权重时使用确定性增强 fallback。"
+    },
+    "papers": [
+      {
+        "label": "Zero-DCE++, arXiv:2103.00860",
+        "url": "https://arxiv.org/abs/2103.00860"
+      },
+      {
+        "label": "Zero-DCE, arXiv:2001.06826",
+        "url": "https://arxiv.org/abs/2001.06826"
+      }
+    ],
+    "repos": [
+      {
+        "label": "Li-Chongyi/Zero-DCE_extension",
+        "url": "https://github.com/Li-Chongyi/Zero-DCE_extension"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_d2": {
+    "summary": {
+      "zh": "CEW-D2 Auto-WhiteBalance，自动白平衡攻击；有权重时使用 Deep White-Balance Editing，无权重时使用灰世界白平衡 fallback。"
+    },
+    "papers": [
+      {
+        "label": "Deep White-Balance Editing, arXiv:2004.01354",
+        "url": "https://arxiv.org/abs/2004.01354"
+      }
+    ],
+    "repos": [
+      {
+        "label": "mahmoudnafifi/Deep_White_Balance",
+        "url": "https://github.com/mahmoudnafifi/Deep_White_Balance"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_d3": {
+    "summary": {
+      "zh": "CEW-D3 Adaptive AI Color，自适应 AI 调色攻击；有权重时使用 Image-Adaptive 3D LUT 风格后端，无权重时使用本地 LUT fallback。"
+    },
+    "papers": [
+      {
+        "label": "Image-Adaptive 3D LUT, arXiv:2009.14468",
+        "url": "https://arxiv.org/abs/2009.14468"
+      }
+    ],
+    "repos": [
+      {
+        "label": "HuiZeng/Image-Adaptive-3DLUT",
+        "url": "https://github.com/HuiZeng/Image-Adaptive-3DLUT"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_d4": {
+    "summary": {
+      "zh": "CEW-D4 Detail Low-Light Enhance，低光细节增强攻击；有权重时使用 Retinexformer 风格后端，无权重时使用 HDR-like fallback。"
+    },
+    "papers": [
+      {
+        "label": "Retinexformer, arXiv:2303.06705",
+        "url": "https://arxiv.org/abs/2303.06705"
+      }
+    ],
+    "repos": [
+      {
+        "label": "caiyuanhao1998/Retinexformer",
+        "url": "https://github.com/caiyuanhao1998/Retinexformer"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_d5": {
+    "summary": {
+      "zh": "CEW-D5 AI-Denoise Clean，AI 降噪/复原攻击，参考 NAFNet 和 Restormer 的图像复原任务；无权重时使用本地确定性降噪 fallback。"
+    },
+    "papers": [
+      {
+        "label": "NAFNet, arXiv:2204.04676",
+        "url": "https://arxiv.org/abs/2204.04676"
+      },
+      {
+        "label": "Restormer, arXiv:2111.09881",
+        "url": "https://arxiv.org/abs/2111.09881"
+      }
+    ],
+    "repos": [
+      {
+        "label": "megvii-research/NAFNet",
+        "url": "https://github.com/megvii-research/NAFNet"
+      },
+      {
+        "label": "swz30/Restormer",
+        "url": "https://github.com/swz30/Restormer"
+      }
+    ]
+  },
+  "cew_s1": {
+    "summary": {
+      "zh": "CEW-S1 RealESRGAN，超分辨率攻击，支持 x2/x4 scale；权重不可用时退化到本地 resize+锐化 fallback。"
+    },
+    "papers": [
+      {
+        "label": "Real-ESRGAN, arXiv:2107.10833",
+        "url": "https://arxiv.org/abs/2107.10833"
+      }
+    ],
+    "repos": [
+      {
+        "label": "xinntao/Real-ESRGAN",
+        "url": "https://github.com/xinntao/Real-ESRGAN"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_s2": {
+    "summary": {
+      "zh": "CEW-S2 SwinIR，基于 Swin Transformer 思路的超分/复原攻击，支持 x2/x4 scale；权重不可用时使用本地 fallback。"
+    },
+    "papers": [
+      {
+        "label": "SwinIR, arXiv:2108.10257",
+        "url": "https://arxiv.org/abs/2108.10257"
+      }
+    ],
+    "repos": [
+      {
+        "label": "JingyunLiang/SwinIR",
+        "url": "https://github.com/JingyunLiang/SwinIR"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_s3": {
+    "summary": {
+      "zh": "CEW-S3 BSRGAN，盲超分辨率攻击，支持 x2/x4 scale；权重不可用时使用本地 fallback。"
+    },
+    "papers": [
+      {
+        "label": "BSRGAN, arXiv:2103.14006",
+        "url": "https://arxiv.org/abs/2103.14006"
+      }
+    ],
+    "repos": [
+      {
+        "label": "cszn/BSRGAN",
+        "url": "https://github.com/cszn/BSRGAN"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    ]
+  },
+  "cew_c1": {
+    "summary": {
+      "zh": "CEW-C1 Basic Auto-Fix SR，组合攻击：先执行 D1 自动亮度增强，再执行 D2 白平衡、D5 降噪，最后执行 S1 RealESRGAN 超分。"
+    },
+    "papers": [
+      {
+        "label": "Zero-DCE++",
+        "url": "https://arxiv.org/abs/2103.00860"
+      },
+      {
+        "label": "DeepWB",
+        "url": "https://arxiv.org/abs/2004.01354"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://arxiv.org/abs/2204.04676"
+      },
+      {
+        "label": "Real-ESRGAN",
+        "url": "https://arxiv.org/abs/2107.10833"
+      }
+    ],
+    "repos": [
+      {
+        "label": "Zero-DCE++",
+        "url": "https://github.com/Li-Chongyi/Zero-DCE_extension"
+      },
+      {
+        "label": "DeepWB",
+        "url": "https://github.com/mahmoudnafifi/Deep_White_Balance"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://github.com/megvii-research/NAFNet"
+      },
+      {
+        "label": "Real-ESRGAN",
+        "url": "https://github.com/xinntao/Real-ESRGAN"
+      }
+    ],
+    "paperNotes": [
+      "子攻击来源：、、、"
+    ],
+    "repoNotes": [
+      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
+      "子攻击仓库：、、、"
+    ]
+  },
+  "cew_c2": {
+    "summary": {
+      "zh": "CEW-C2 Color Retouch SR，组合攻击：先执行 D2 白平衡，再执行 D3 自适应调色、D5 降噪，最后执行 S2 SwinIR x2 超分。"
+    },
+    "papers": [
+      {
+        "label": "DeepWB",
+        "url": "https://arxiv.org/abs/2004.01354"
+      },
+      {
+        "label": "Image-Adaptive 3D LUT",
+        "url": "https://arxiv.org/abs/2009.14468"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://arxiv.org/abs/2204.04676"
+      },
+      {
+        "label": "SwinIR",
+        "url": "https://arxiv.org/abs/2108.10257"
+      }
+    ],
+    "repos": [
+      {
+        "label": "DeepWB",
+        "url": "https://github.com/mahmoudnafifi/Deep_White_Balance"
+      },
+      {
+        "label": "Image-Adaptive-3DLUT",
+        "url": "https://github.com/HuiZeng/Image-Adaptive-3DLUT"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://github.com/megvii-research/NAFNet"
+      },
+      {
+        "label": "SwinIR",
+        "url": "https://github.com/JingyunLiang/SwinIR"
+      }
+    ],
+    "paperNotes": [
+      "子攻击来源：、、、"
+    ],
+    "repoNotes": [
+      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
+      "子攻击仓库：、、、"
+    ]
+  },
+  "cew_c3": {
+    "summary": {
+      "zh": "CEW-C3 Detail Enhance SR，组合攻击：先执行 D1 自动亮度增强，再执行 D4 低光细节增强、D5 降噪，最后执行 S1 RealESRGAN x4 超分。"
+    },
+    "papers": [
+      {
+        "label": "Zero-DCE++",
+        "url": "https://arxiv.org/abs/2103.00860"
+      },
+      {
+        "label": "Retinexformer",
+        "url": "https://arxiv.org/abs/2303.06705"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://arxiv.org/abs/2204.04676"
+      },
+      {
+        "label": "Real-ESRGAN",
+        "url": "https://arxiv.org/abs/2107.10833"
+      }
+    ],
+    "repos": [
+      {
+        "label": "Zero-DCE++",
+        "url": "https://github.com/Li-Chongyi/Zero-DCE_extension"
+      },
+      {
+        "label": "Retinexformer",
+        "url": "https://github.com/caiyuanhao1998/Retinexformer"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://github.com/megvii-research/NAFNet"
+      },
+      {
+        "label": "Real-ESRGAN",
+        "url": "https://github.com/xinntao/Real-ESRGAN"
+      }
+    ],
+    "paperNotes": [
+      "子攻击来源：、、、"
+    ],
+    "repoNotes": [
+      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
+      "子攻击仓库：、、、"
+    ]
+  },
+  "cew_c4": {
+    "summary": {
+      "zh": "CEW-C4 Full Enhancement Chain，组合攻击：依次执行 D1 自动亮度、D2 白平衡、D3 自适应调色、D4 低光细节增强、D5 降噪，最后执行 S3 BSRGAN x4 超分。"
+    },
+    "papers": [
+      {
+        "label": "Zero-DCE++",
+        "url": "https://arxiv.org/abs/2103.00860"
+      },
+      {
+        "label": "DeepWB",
+        "url": "https://arxiv.org/abs/2004.01354"
+      },
+      {
+        "label": "Image-Adaptive 3D LUT",
+        "url": "https://arxiv.org/abs/2009.14468"
+      },
+      {
+        "label": "Retinexformer",
+        "url": "https://arxiv.org/abs/2303.06705"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://arxiv.org/abs/2204.04676"
+      },
+      {
+        "label": "BSRGAN",
+        "url": "https://arxiv.org/abs/2103.14006"
+      }
+    ],
+    "repos": [
+      {
+        "label": "Zero-DCE++",
+        "url": "https://github.com/Li-Chongyi/Zero-DCE_extension"
+      },
+      {
+        "label": "DeepWB",
+        "url": "https://github.com/mahmoudnafifi/Deep_White_Balance"
+      },
+      {
+        "label": "Image-Adaptive-3DLUT",
+        "url": "https://github.com/HuiZeng/Image-Adaptive-3DLUT"
+      },
+      {
+        "label": "Retinexformer",
+        "url": "https://github.com/caiyuanhao1998/Retinexformer"
+      },
+      {
+        "label": "NAFNet",
+        "url": "https://github.com/megvii-research/NAFNet"
+      },
+      {
+        "label": "BSRGAN",
+        "url": "https://github.com/cszn/BSRGAN"
+      }
+    ],
+    "paperNotes": [
+      "子攻击来源：、、、、、"
+    ],
+    "repoNotes": [
+      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
+      "子攻击仓库：、、、、、"
+    ]
+  },
+  "screen_shoot": {
+    "summary": {
+      "zh": "屏幕拍摄模拟攻击，组合透视变化、非均匀光照、摩尔纹、相机成像噪声/模糊和 JPEG 压缩，整体参考 PIMoG 的屏摄失真建模。"
+    },
+    "papers": [
+      {
+        "label": "PIMoG, DOI:10.1145/3503161.3548049",
+        "url": "https://doi.org/10.1145/3503161.3548049"
+      }
+    ],
+    "repos": [
+      {
+        "label": "FangHanNUS/PIMoG",
+        "url": "https://github.com/FangHanNUS/PIMoG-An-Effective-Screen-shooting-Noise-Layer-Simulation-for-Deep-Learning-Based-Watermarking-Netw"
+      }
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/physical_channel_attacks/attacks.py`"
+    ]
+  },
+  "print_camera": {
+    "summary": {
+      "zh": "打印-翻拍模拟攻击，组合打印半色调/CMYK 色域、透视变化、光照扰动、相机成像和 JPEG 压缩，整体参考 CamMark 的相机链路思想。"
+    },
+    "papers": [
+      {
+        "label": "CamMark, DOI:10.1145/2557642.2557644",
+        "url": "https://doi.org/10.1145/2557642.2557644"
+      }
+    ],
+    "repos": [],
+    "repoNotes": [
+      "未使用官方攻击仓库；项目源码：`evaluator/attacks/physical_channel_attacks/attacks.py`"
+    ]
+  },
+  "combined_physical": {
+    "summary": {
+      "zh": "跨媒介组合物理攻击：先执行 `print_camera` 打印-翻拍链路，再执行 `screen_shoot` 屏摄链路，并降低每跳强度以模拟真实分享传播。"
+    },
+    "papers": [
+      {
+        "label": "CamMark",
+        "url": "https://doi.org/10.1145/2557642.2557644"
+      },
+      {
+        "label": "PIMoG",
+        "url": "https://doi.org/10.1145/3503161.3548049"
+      }
+    ],
+    "repos": [
+      {
+        "label": "PIMoG 仓库",
+        "url": "https://github.com/FangHanNUS/PIMoG-An-Effective-Screen-shooting-Noise-Layer-Simulation-for-Deep-Learning-Based-Watermarking-Netw"
+      }
+    ],
+    "paperNotes": [
+      "子攻击来源：、"
+    ],
+    "repoNotes": [
+      "组合源码：`evaluator/attacks/physical_channel_attacks/attacks.py`",
+      "子攻击来源： 和项目内 CamMark-style 模拟"
+    ]
+  },
+  "regen_vae": {
+    "summary": {
+      "zh": "CompressAI VAE 重构攻击，把水印图像送入 learned image compression 模型再解码，借压缩重构破坏水印信号；支持 `bmshj2018-factorized`、`bmshj2018-hyperprior`、`mbt2018-mean`、`cheng2020-anchor` 等模型。"
+    },
+    "papers": [
+      {
+        "label": "Ballé hyperprior, arXiv:1802.01436",
+        "url": "https://arxiv.org/abs/1802.01436"
+      },
+      {
+        "label": "Minnen et al., arXiv:1809.02736",
+        "url": "https://arxiv.org/abs/1809.02736"
+      },
+      {
+        "label": "Cheng2020, arXiv:2001.01568",
+        "url": "https://arxiv.org/abs/2001.01568"
+      }
+    ],
+    "repos": [
+      {
+        "label": "InterDigitalInc/CompressAI",
+        "url": "https://github.com/InterDigitalInc/CompressAI"
+      }
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    ]
+  },
+  "regen_diffusion": {
+    "summary": {
+      "zh": "单次 Stable Diffusion 2.1-base 图像再生成攻击，通过 image-to-image diffusion 生成语义相近图像，从而削弱水印可恢复性。"
+    },
+    "papers": [
+      {
+        "label": "Latent Diffusion Models, arXiv:2112.10752",
+        "url": "https://arxiv.org/abs/2112.10752"
+      },
+      {
+        "label": "WAVES benchmark, arXiv:2401.08573",
+        "url": "https://arxiv.org/abs/2401.08573"
+      }
+    ],
+    "repos": [
+      {
+        "label": "stabilityai/stable-diffusion-2-1-base",
+        "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
+      }
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    ]
+  },
+  "2x_regen": {
+    "summary": {
+      "zh": "两次连续 Stable Diffusion 2.1-base 再生成攻击，本质是把 `regen_diffusion` 重复两轮，比单次扩散再生成更强。"
+    },
+    "papers": [
+      {
+        "label": "Latent Diffusion Models",
+        "url": "https://arxiv.org/abs/2112.10752"
+      },
+      {
+        "label": "WAVES benchmark",
+        "url": "https://arxiv.org/abs/2401.08573"
+      }
+    ],
+    "repos": [
+      {
+        "label": "stabilityai/stable-diffusion-2-1-base",
+        "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
+      }
+    ],
+    "paperNotes": [
+      "组成来源：、"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    ]
+  },
+  "4x_regen": {
+    "summary": {
+      "zh": "四次连续 Stable Diffusion 2.1-base 再生成攻击，本质是把 `regen_diffusion` 重复四轮，用于更强的水印移除压力测试。"
+    },
+    "papers": [
+      {
+        "label": "Latent Diffusion Models",
+        "url": "https://arxiv.org/abs/2112.10752"
+      },
+      {
+        "label": "WAVES benchmark",
+        "url": "https://arxiv.org/abs/2401.08573"
+      }
+    ],
+    "repos": [
+      {
+        "label": "stabilityai/stable-diffusion-2-1-base",
+        "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
+      }
+    ],
+    "paperNotes": [
+      "组成来源：、"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    ]
+  },
+  "noise_to_image": {
+    "summary": {
+      "zh": "CtrlRegen noise-to-image 可控再生成攻击，从干净噪声出发并用条件控制生成视觉相关图像，以破坏原图中的水印信号。"
+    },
+    "papers": [
+      {
+        "label": "CtrlRegen, arXiv:2410.05470",
+        "url": "https://arxiv.org/abs/2410.05470"
+      }
+    ],
+    "repos": [
+      {
+        "label": "yepengliu/ctrlregen 模型资源",
+        "url": "https://huggingface.co/yepengliu/ctrlregen"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ctrlregen/`"
+    ]
+  },
+  "image_to_vedio": {
+    "summary": {
+      "zh": "NFPA image-to-video next-frame prediction 攻击；项目 ID 保留 `vedio` 拼写。它使用 vendored Diffusers next-frame pipeline，把单图通过视频式下一帧预测再生成。"
+    },
+    "papers": [
+      {
+        "label": "Latent Diffusion Models, arXiv:2112.10752",
+        "url": "https://arxiv.org/abs/2112.10752"
+      }
+    ],
+    "repos": [],
+    "paperNotes": [
+      "项目中未记录独立 NFPA 论文链接；底层扩散模型可参考"
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/nfpa/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase0_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 0/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase1_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 1/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase2_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 2/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase3_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 3/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase4_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 4/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase5_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 5/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase6_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 6/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase7_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 7/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase0_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 0/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase1_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 1/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase2_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 2/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase3_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 3/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase4_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 4/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase5_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 5/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase6_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 6/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_swipe_phase7_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：swipe 运动，phase 7/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase0_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 0/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase1_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 1/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase2_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 2/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase3_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 3/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase4_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 4/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase5_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 5/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase6_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 6/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase7_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 7/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase0_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 0/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase1_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 1/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase2_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 2/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase3_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 3/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase4_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 4/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase5_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 5/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase6_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 6/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_shake_phase7_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：shake 运动，phase 7/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase0_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 0/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase1_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 1/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase2_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 2/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase3_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 3/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase4_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 4/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase5_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 5/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase6_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 6/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase7_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 7/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase0_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 0/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase1_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 1/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase2_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 2/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase3_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 3/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase4_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 4/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase5_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 5/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase6_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 6/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_phase7_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate 运动，phase 7/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase0_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 0/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase1_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 1/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase2_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 2/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase3_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 3/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase4_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 4/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase5_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 5/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase6_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 6/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase7_point": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 7/8，lookat 模式为 `point`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase0_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 0/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase1_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 1/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase2_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 2/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase3_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 3/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase4_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 4/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase5_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 5/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase6_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 6/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "3d_viewpoint_rerendering_rotate_forward_phase7_ahead": {
+    "summary": {
+      "zh": "REG-3D-SHARP 视角重渲染变体：rotate_forward 运动，phase 7/8，lookat 模式为 `ahead`。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "identity": {
+    "summary": {
+      "zh": "无攻击基线，直接复制水印图像，用于衡量 clean 情况下的提取/检测性能。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；benchmark baseline。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "rotation": {
+    "summary": {
+      "zh": "几何旋转失真，按固定或相对角度旋转图像。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "resized_crop": {
+    "summary": {
+      "zh": "裁剪再缩放失真，裁出方形区域后 resize 回原图尺寸。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "erasing": {
+    "summary": {
+      "zh": "随机擦除/遮挡失真，在图像中抹除一个方形区域并保持原尺寸。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "brightness": {
+    "summary": {
+      "zh": "亮度缩放失真，用于模拟简单曝光或亮度编辑。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "contrast": {
+    "summary": {
+      "zh": "对比度缩放失真，用于模拟简单对比度编辑。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "gaussian_blur": {
+    "summary": {
+      "zh": "高斯模糊失真，使用 Gaussian kernel 降低图像细节。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "gaussian_noise": {
+    "summary": {
+      "zh": "加性零均值高斯噪声失真，用于模拟传感器或传输噪声。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "jpeg": {
+    "summary": {
+      "zh": "JPEG 压缩失真，内部执行 JPEG 编码/解码后再保存回 PNG，方便下游统一读取。"
+    },
+    "papers": [
+      {
+        "label": "JPEG 标准 ISO/IEC 10918-1",
+        "url": "https://www.iso.org/standard/18902.html"
+      }
+    ],
+    "repos": [],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "resize": {
+    "summary": {
+      "zh": "缩放再恢复失真，先按比例 resize，再恢复到原图尺寸。"
+    },
+    "papers": [],
+    "repos": [],
+    "paperNotes": [
+      "无；标准图像变换。"
+    ],
+    "repoNotes": [
+      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    ]
+  },
+  "swipe": {
+    "summary": {
+      "zh": "本组方法属于 REG-3D-SHARP 视角重渲染攻击族：先用 SHARP 从单张水印图预测 3D Gaussian 表示，再渲染新视角图像。前端按 motion 聚合多个 phase/lookat 变体。 当前资源对应 swipe 运动下的 16 个执行变体。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "shake": {
+    "summary": {
+      "zh": "本组方法属于 REG-3D-SHARP 视角重渲染攻击族：先用 SHARP 从单张水印图预测 3D Gaussian 表示，再渲染新视角图像。前端按 motion 聚合多个 phase/lookat 变体。 当前资源对应 shake 运动下的 16 个执行变体。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "rotate": {
+    "summary": {
+      "zh": "本组方法属于 REG-3D-SHARP 视角重渲染攻击族：先用 SHARP 从单张水印图预测 3D Gaussian 表示，再渲染新视角图像。前端按 motion 聚合多个 phase/lookat 变体。 当前资源对应 rotate 运动下的 16 个执行变体。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  },
+  "rotate_forward": {
+    "summary": {
+      "zh": "本组方法属于 REG-3D-SHARP 视角重渲染攻击族：先用 SHARP 从单张水印图预测 3D Gaussian 表示，再渲染新视角图像。前端按 motion 聚合多个 phase/lookat 变体。 当前资源对应 rotate forward 运动下的 16 个执行变体。"
+    },
+    "papers": [
+      {
+        "label": "SHARP, arXiv:2512.10685",
+        "url": "https://arxiv.org/abs/2512.10685"
+      }
+    ],
+    "repos": [
+      {
+        "label": "apple/ml-sharp",
+        "url": "https://github.com/apple/ml-sharp"
+      }
+    ],
+    "repoNotes": [
+      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    ]
+  }
+}

@@ -163,8 +163,8 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         category_zh="电商版权保护",
         description="Shopee Product Matching provides e-commerce product images for catalog matching and copyright protection experiments.",
         description_zh="Shopee Product Matching 提供电商商品图像，用于商品匹配与版权保护实验。",
-        source_url="https://amazon-berkeley-objects.s3.amazonaws.com/index.html",
-        official_total_images=398_212,
+        source_url="https://www.kaggle.com/competitions/shopee-product-matching/data",
+        official_total_images=34_250,
     ),
     DatasetCatalogEntry(
         id="products-10k",
@@ -196,8 +196,8 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         category_zh="移动端截图和UI内容保护",
         description="MobileViews provides mobile screenshots and UI content for mobile interface protection experiments.",
         description_zh="MobileViews 提供移动端截图和 UI 内容，用于移动界面内容保护实验。",
-        source_url="",
-        official_total_images=None,
+        source_url="https://huggingface.co/datasets/mllmTeam/MobileViews",
+        official_total_images=1_200_000,
     ),
 )
 

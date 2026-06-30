@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { ResourcePagination } from "@/components/ResourcePagination";
+import { ResourceReferencePanel } from "@/components/ResourceReferencePanel";
 import { useLanguage } from "@/components/LanguageProvider";
 import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDetail, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload, uninstallAttackInstallation, uninstallDatasetInstallation, uninstallWatermarkInstallation } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
@@ -20,6 +21,7 @@ import {
   attacks as fallbackAttacks,
   datasets as fallbackDatasets
 } from "@/lib/mock-data";
+import { buildDatasetReference, getAttackReference, getWatermarkReference, referenceOverviewText } from "@/lib/resource-references";
 import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ResourceStatus, WeightDownloadJob } from "@/lib/types";
 
 type ResourceType = "datasets" | "watermarks" | "attacks";
@@ -791,23 +793,58 @@ function ResourceDetail({
     resource.type === "attacks" && resource.attacks
       ? resource.attacks.every((item) => item.weightsPackRequired !== true || item.weightsInstalled === true)
       : attackWeightTarget?.weightsInstalled === true;
+  const reference = useMemo(() => {
+    if (resource.type === "watermarks") {
+      return getWatermarkReference(resource.method);
+    }
+    if (resource.type === "attacks") {
+      const executionMethods =
+        resource.attacks?.map((item) => item.executionMethod ?? item.method).filter(Boolean) ?? [];
+      return getAttackReference(resource.method, executionMethods as string[]);
+    }
+    if (resource.type === "datasets" && resource.catalog) {
+      return buildDatasetReference(
+        resource.catalog.description,
+        resource.catalog.descriptionZh,
+        resource.catalog.sourceUrl
+      );
+    }
+    return undefined;
+  }, [resource]);
+  const referenceLabels = {
+    overview:
+      resource.type === "datasets" ? t.resources.referenceDatasetOverview : t.resources.referenceOverview,
+    papers: t.resources.referencePapers,
+    repos:
+      resource.type === "datasets" ? t.resources.referenceDatasetSource : t.resources.referenceRepos
+  };
+  const referenceOverview = referenceOverviewText(reference, language);
+  const headerLine =
+    resource.type === "datasets" || !referenceOverview
+      ? resource.description || resource.subtitle
+      : resource.subtitle || resource.description;
   return (
     <div className="resource-detail-stack">
       <div>
         <div className="detail-title-row">
-          <h3>{resource.name}</h3>
+          <div className="detail-title-heading">
+            <h3>{resource.name}</h3>
+            {resource.categoryLabel ?? resource.category ? (
+              <span className="badge resource-category-badge">
+                {resource.categoryLabel ?? resource.category}
+              </span>
+            ) : null}
+          </div>
           <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
         </div>
-        <p>{resource.description || resource.subtitle}</p>
+        <p>{headerLine}</p>
       </div>
 
-      <div className={resource.type === "datasets" ? "detail-metrics-grid dataset-only-category" : "detail-metrics-grid"}>
-        {resource.type === "datasets" ? (
-          <DetailMetric label={t.resources.category} value={resource.category} />
-        ) : attackDetail ? (
+      {resource.type !== "datasets" ? (
+        <div className="detail-metrics-grid">
+          {attackDetail ? (
           <>
             <DetailMetric label="ID" value={resource.id} />
-            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
             <DetailMetric label="Method" value={resource.method ?? "n/a"} />
             <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
             <DetailMetric label={language === "zh" ? "底层 preset" : "Presets"} value={attackDetail.presetCount.toString()} />
@@ -819,7 +856,6 @@ function ResourceDetail({
         ) : (
           <>
             <DetailMetric label="ID" value={resource.id} />
-            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
             <DetailMetric label="Method" value={resource.method ?? "n/a"} />
             <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
             {resource.sampleCount != null ? (
@@ -828,7 +864,8 @@ function ResourceDetail({
             {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
           </>
         )}
-      </div>
+        </div>
+      ) : null}
 
       {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
 
@@ -857,6 +894,15 @@ function ResourceDetail({
           <strong>Path</strong>
           <code>{resource.path}</code>
         </div>
+      ) : null}
+
+      {reference ? (
+        <ResourceReferencePanel
+          hideOverview={resource.type === "datasets"}
+          language={language}
+          labels={referenceLabels}
+          reference={reference}
+        />
       ) : null}
 
       {resource.type === "datasets" && resource.catalog ? (
@@ -1467,8 +1513,8 @@ function algorithmDisplayName(algorithm: AlgorithmVersion) {
   return algorithm.name;
 }
 
-function algorithmSubtitle(algorithm: AlgorithmVersion, categoryLabel: string) {
-  return `${algorithm.method ?? algorithm.id} · ${categoryLabel}`;
+function algorithmSubtitle(algorithm: AlgorithmVersion) {
+  return algorithm.method ?? algorithm.id;
 }
 
 function isAsciiText(value: string) {
@@ -1500,7 +1546,7 @@ function algorithmToResource(algorithm: AlgorithmVersion, language: "zh" | "en")
     id: algorithm.id,
     type: "watermarks",
     name: algorithmDisplayName(algorithm),
-    subtitle: algorithmSubtitle(algorithm, categoryLabel),
+    subtitle: algorithmSubtitle(algorithm),
     category,
     categoryLabel,
     status: algorithm.status,
@@ -1644,7 +1690,7 @@ function attackMethodToResource(
     id: singleAttack?.id ?? `atk-${resourceSlug(category)}-${resourceSlug(method)}`,
     type: "attacks",
     name,
-    subtitle: attackMethodSubtitle(name, englishName, categoryLabel, category, method, detail, language),
+    subtitle: attackMethodSubtitle(name, englishName, category, method, detail, language),
     category,
     categoryLabel,
     status: available ? "enabled" : "missing",
@@ -1687,7 +1733,6 @@ function attackResourceEnglishName(category: string, method: string, methodAttac
 function attackMethodSubtitle(
   name: string,
   englishName: string,
-  categoryLabel: string,
   category: string,
   method: string,
   detail: AttackResourceDetail,
@@ -1695,7 +1740,7 @@ function attackMethodSubtitle(
 ) {
   const english = englishSubtitleForTitle(language, name, englishName);
   const summary = attackMethodControlSummary(category, method, detail, language);
-  return [english, categoryLabel, summary].filter(Boolean).join(" · ");
+  return [english, summary].filter(Boolean).join(" · ");
 }
 
 function attackMethodControlSummary(
