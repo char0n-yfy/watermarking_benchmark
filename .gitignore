@@ -52,6 +52,7 @@ out/
 .env.autodl
 
 # Local agent/workflow notes
+/work/
 /AGENTS.md
 /PARETOGUARD_MEMORY.md
 /WORKFLOW.md
