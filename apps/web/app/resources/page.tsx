@@ -83,6 +83,12 @@ interface AttackResourceDetail {
   notes: string[];
 }
 
+interface ResourceActionSummary {
+  tone: BrowserResource["statusTone"];
+  title: string;
+  detail: string;
+}
+
 const DEFAULT_RESOURCE_PAGE_SIZE = 8;
 const HIDDEN_RESOURCE_ATTACK_METHODS = new Set(["identity"]);
 const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
@@ -767,6 +773,188 @@ export default function ResourcesPage() {
   );
 }
 
+function firstReadableSentence(text: string | undefined, fallback: string, maxLength = 118) {
+  const normalized = text?.replace(/\s+/g, " ").trim() || fallback.trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  const sentenceEnd = ["。", "！", "？", ". ", "! ", "? "]
+    .map((marker) => normalized.indexOf(marker))
+    .filter((index) => index >= 24 && index <= maxLength)
+    .sort((left, right) => left - right)[0];
+  if (sentenceEnd != null) {
+    return normalized.slice(0, sentenceEnd + 1).trim();
+  }
+  return `${normalized.slice(0, maxLength - 1).trim()}…`;
+}
+
+function resourcePurposeSummary(resource: BrowserResource, language: "zh" | "en") {
+  const fallback =
+    resource.type === "datasets"
+      ? language === "zh"
+        ? "用于基准实验的数据集资源，可按精简包或自定义采样下载。"
+        : "Dataset resource for benchmark runs, available as compact or custom sampled downloads."
+      : resource.type === "watermarks"
+        ? language === "zh"
+          ? "水印算法资源，可在实验配置中与数据集和攻击组合使用。"
+          : "Watermark algorithm resource for pairing with datasets and attacks in experiment configs."
+        : language === "zh"
+          ? "攻击算法资源，按攻击文件夹和方法聚合，便于选择执行强度和权重状态。"
+          : "Attack algorithm resource grouped by attack folder and method for easier preset selection.";
+  if (resource.description && resource.description !== resource.path) {
+    return firstReadableSentence(resource.description, fallback);
+  }
+  return firstReadableSentence(resource.subtitle, fallback);
+}
+
+function shouldShowLongDescription(resource: BrowserResource, summary: string) {
+  const description = resource.description?.trim();
+  if (!description || description === resource.path || description === summary) {
+    return false;
+  }
+  return description.length > summary.length + 12;
+}
+
+function resourceActionSummary(
+  resource: BrowserResource,
+  language: "zh" | "en",
+  attackWeightTarget?: AttackPreset,
+  attackGroupWeightsInstalled?: boolean
+): ResourceActionSummary {
+  if (resource.type === "datasets") {
+    const catalog = resource.catalog;
+    if (catalog?.installed) {
+      return {
+        tone: "ok",
+        title: language === "zh" ? "本地已就绪" : "Ready locally",
+        detail:
+          language === "zh"
+            ? "已安装到数据集目录，可直接加入实验配置。"
+            : "Installed in the dataset directory and ready for configs."
+      };
+    }
+    if (catalog?.compactAvailable || catalog?.remoteCompactAvailable || catalog?.customDownloadReady) {
+      return {
+        tone: "warn",
+        title: language === "zh" ? "请选择下载方式" : "Choose a download option",
+        detail:
+          language === "zh"
+            ? "远程主机磁盘有限时优先使用精简包，也可以按数量自定义采样。"
+            : "Use the compact pack first on disk-limited hosts, or sample a custom count."
+      };
+    }
+    return {
+      tone: "warn",
+      title: language === "zh" ? "下载源待就绪" : "Download source pending",
+      detail:
+        language === "zh"
+          ? "目录信息已收录，下载包或远程采样入口尚未探测到。"
+          : "Catalog metadata is indexed, but no download pack or remote sampling source is ready yet."
+    };
+  }
+
+  if (resource.type === "watermarks") {
+    const algorithm = resource.algorithm;
+    if (resource.available === false) {
+      return {
+        tone: "error",
+        title: language === "zh" ? "当前不可运行" : "Not runnable yet",
+        detail:
+          language === "zh"
+            ? "算法资源未启用，暂时不能加入实验。"
+            : "The algorithm resource is not enabled and cannot be used in experiments yet."
+      };
+    }
+    if (algorithm?.weightsPackRequired !== true) {
+      return {
+        tone: "ok",
+        title: language === "zh" ? "无需额外权重" : "No extra weights",
+        detail:
+          language === "zh"
+            ? "算法可直接用于实验配置。"
+            : "The algorithm can be used directly in experiment configs."
+      };
+    }
+    if (algorithm.weightsInstalled) {
+      return {
+        tone: "ok",
+        title: language === "zh" ? "权重已安装" : "Weights installed",
+        detail:
+          language === "zh"
+            ? "本地权重目录已就绪，可以直接运行。"
+            : "The local weight directory is ready for execution."
+      };
+    }
+    if (algorithm.weightsDownloadReady) {
+      return {
+        tone: "warn",
+        title: language === "zh" ? "需要下载权重" : "Weights required",
+        detail:
+          language === "zh"
+            ? "下载按钮会拉取对应权重包，不会影响算法实现文件。"
+            : "The download action fetches the matching pack without changing algorithm code."
+      };
+    }
+    return {
+      tone: "error",
+      title: language === "zh" ? "权重包未就绪" : "Weight pack unavailable",
+      detail:
+        language === "zh"
+          ? "需要权重但远程包尚未配置，暂时不能完整运行。"
+          : "This method needs weights, but no remote pack is configured yet."
+    };
+  }
+
+  if (resource.available === false) {
+    return {
+      tone: "error",
+      title: language === "zh" ? "当前不可运行" : "Not runnable yet",
+      detail:
+        language === "zh"
+          ? "攻击实现或依赖未就绪，暂时不能加入实验。"
+          : "The attack implementation or dependency is not ready for experiments yet."
+    };
+  }
+  if (!attackWeightTarget?.weightsPackRequired) {
+    return {
+      tone: "ok",
+      title: language === "zh" ? "可直接选择" : "Ready to select",
+      detail:
+        language === "zh"
+          ? "该攻击族不需要额外权重，可在配置页选择强度。"
+          : "This attack family does not require extra weights; choose strengths in the config page."
+    };
+  }
+  if (attackGroupWeightsInstalled) {
+    return {
+      tone: "ok",
+      title: language === "zh" ? "攻击权重已安装" : "Attack weights installed",
+      detail:
+        language === "zh"
+          ? "该攻击族所需权重已在本地就绪。"
+          : "Required weights for this attack family are installed locally."
+    };
+  }
+  if (attackWeightTarget.weightsDownloadReady) {
+    return {
+      tone: "warn",
+      title: language === "zh" ? "需要下载攻击权重" : "Attack weights required",
+      detail:
+        language === "zh"
+          ? "同一攻击族可能共用权重目录，下载一次即可服务多个 preset。"
+          : "One shared weight directory may serve multiple presets in this attack family."
+    };
+  }
+  return {
+    tone: "error",
+    title: language === "zh" ? "攻击权重未就绪" : "Attack weights unavailable",
+    detail:
+      language === "zh"
+        ? "需要权重但远程包尚未配置，暂时不能完整运行。"
+        : "Weights are required, but no remote pack is configured yet."
+  };
+}
+
 function ResourceDetail({
   resource,
   language,
@@ -819,13 +1007,15 @@ function ResourceDetail({
       resource.type === "datasets" ? t.resources.referenceDatasetSource : t.resources.referenceRepos
   };
   const referenceOverview = referenceOverviewText(reference, language);
-  const headerLine =
+  const rawSummary = resourcePurposeSummary(resource, language);
+  const summary =
     resource.type === "datasets" || !referenceOverview
-      ? resource.description || resource.subtitle
-      : resource.subtitle || resource.description;
+      ? rawSummary
+      : firstReadableSentence(resource.subtitle || resource.description, rawSummary);
+  const actionSummary = resourceActionSummary(resource, language, attackWeightTarget, attackGroupWeightsInstalled);
   return (
     <div className="resource-detail-stack">
-      <div>
+      <div className="resource-detail-hero">
         <div className="detail-title-row">
           <div className="detail-title-heading">
             <h3>{resource.name}</h3>
@@ -837,14 +1027,38 @@ function ResourceDetail({
           </div>
           <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
         </div>
-        <p>{headerLine}</p>
+        <p>{summary}</p>
+        {shouldShowLongDescription(resource, summary) ? (
+          <details className="resource-long-description">
+            <summary>{language === "zh" ? "查看完整说明" : "View full description"}</summary>
+            <p>{resource.description}</p>
+          </details>
+        ) : null}
       </div>
 
-      {resource.type !== "datasets" ? (
-        <div className="detail-metrics-grid">
-          {attackDetail ? (
+      <div className={`resource-action-summary ${actionSummary.tone}`}>
+        <strong>{actionSummary.title}</strong>
+        <span>{actionSummary.detail}</span>
+      </div>
+
+      <div className="detail-metrics-grid">
+        {resource.type === "datasets" ? (
+          <>
+            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
+            {resource.sampleCount != null ? (
+              <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
+            ) : null}
+            {resource.catalog?.officialTotalImages ? (
+              <DetailMetric
+                label={t.resources.datasetTotalImages}
+                value={resource.catalog.officialTotalImages.toLocaleString()}
+              />
+            ) : null}
+          </>
+        ) : attackDetail ? (
           <>
             <DetailMetric label="ID" value={resource.id} />
+            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
             <DetailMetric label="Method" value={resource.method ?? "n/a"} />
             <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
             <DetailMetric label={language === "zh" ? "底层 preset" : "Presets"} value={attackDetail.presetCount.toString()} />
@@ -856,6 +1070,7 @@ function ResourceDetail({
         ) : (
           <>
             <DetailMetric label="ID" value={resource.id} />
+            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
             <DetailMetric label="Method" value={resource.method ?? "n/a"} />
             <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
             {resource.sampleCount != null ? (
@@ -864,8 +1079,7 @@ function ResourceDetail({
             {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
           </>
         )}
-        </div>
-      ) : null}
+      </div>
 
       {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
 
@@ -1330,11 +1544,12 @@ function DatasetDownloadPanel({
   const compactReady = detail.compactAvailable;
   const customReady = detail.customDownloadReady;
   const compactInstalled = detail.installed === true;
-  const jobSucceededForMode =
-    job?.status === "succeeded" &&
-    job.mode === mode &&
-    (mode === "compact" || (job.seed === seed && job.sampleCount === sampleCount));
-  const installedForMode = mode === "compact" ? compactInstalled || jobSucceededForMode : jobSucceededForMode;
+  const compactJobSucceeded = job?.status === "succeeded" && job.mode === "compact";
+  const customJobSucceeded =
+    job?.status === "succeeded" && job.mode === "custom" && job.seed === seed && job.sampleCount === sampleCount;
+  const compactInstalledForOption = compactInstalled || compactJobSucceeded;
+  const customInstalledForOption = customJobSucceeded;
+  const installedForMode = mode === "compact" ? compactInstalledForOption : customInstalledForOption;
   const canStart = mode === "compact" ? compactReady && !installedForMode : customReady && !installedForMode;
   const totalImages = detail.officialTotalImages ?? 0;
   const ossProbing = detailLoading && !compactReady && !installedForMode;
@@ -1343,6 +1558,21 @@ function DatasetDownloadPanel({
   const jobInFlight = job?.status === "queued" || job?.status === "running";
   const canUninstall = installedForMode && !busy && !uninstallBusy && !jobInFlight;
   const showUninstallOnly = Boolean(uninstallNotice);
+  const compactState = compactInstalledForOption
+    ? { label: t.resources.installed, tone: "ok" as const }
+    : compactReady || detail.remoteCompactAvailable
+      ? { label: t.resources.downloadable, tone: "warn" as const }
+      : ossProbing
+        ? { label: t.resources.checkingAvailability, tone: "neutral" as const }
+        : { label: t.resources.compactUnavailable, tone: "error" as const };
+  const customState = customInstalledForOption
+    ? { label: t.resources.installed, tone: "ok" as const }
+    : customReady
+      ? { label: t.resources.downloadable, tone: "warn" as const }
+      : { label: t.resources.customUnavailable, tone: "error" as const };
+  const compactCountLabel = `${detail.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}`;
+  const customCountLabel =
+    totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : `— ${t.resources.imagesUnit}`;
 
   async function handleStart() {
     setUninstallNotice(null);
@@ -1387,14 +1617,39 @@ function DatasetDownloadPanel({
   return (
     <div className="detail-section dataset-download-panel">
       <strong>{t.resources.downloadPanel}</strong>
-      <div className="segmented-control dataset-download-mode">
-        <button className={mode === "compact" ? "active" : ""} onClick={() => setMode("compact")} type="button">
-          {t.resources.compactDownload}
+      <div className="dataset-download-choice-grid" aria-label={t.resources.downloadChoice}>
+        <button
+          className={mode === "compact" ? "dataset-download-choice active" : "dataset-download-choice"}
+          onClick={() => setMode("compact")}
+          type="button"
+        >
+          <span className="dataset-download-choice-head">
+            <strong>{t.resources.compactDownload}</strong>
+            <span className={badgeClass(compactState.tone)}>{compactState.label}</span>
+          </span>
+          <span>{compactCountLabel}</span>
+          <small>{t.resources.compactDownloadMeta}</small>
         </button>
-        <button className={mode === "custom" ? "active" : ""} onClick={() => setMode("custom")} type="button">
-          {t.resources.customDownload}
+        <button
+          className={mode === "custom" ? "dataset-download-choice active" : "dataset-download-choice"}
+          onClick={() => setMode("custom")}
+          type="button"
+        >
+          <span className="dataset-download-choice-head">
+            <strong>{t.resources.customDownload}</strong>
+            <span className={badgeClass(customState.tone)}>{customState.label}</span>
+          </span>
+          <span>{customCountLabel}</span>
+          <small>{t.resources.customDownloadMeta}</small>
         </button>
       </div>
+      {!showUninstallOnly ? (
+        <div className="dataset-download-selected">
+          <span>{t.resources.selectedDownloadChoice}</span>
+          <strong>{mode === "compact" ? t.resources.compactDownload : t.resources.customDownload}</strong>
+          <small>{mode === "compact" ? t.resources.compactDownloadHint : t.resources.customDownloadHint}</small>
+        </div>
+      ) : null}
       {!showUninstallOnly && mode === "compact" ? (
         <p className="dataset-download-hint">
           {`${t.resources.compactPack}：${detail.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}`}
