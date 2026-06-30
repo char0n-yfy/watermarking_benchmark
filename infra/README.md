@@ -26,4 +26,4 @@ pnpm --filter @wm-bench/web dev
 python apps/worker/local_worker.py --poll-seconds 2
 ```
 
-For AutoDL, use `infra/autodl/setup_env.sh` and `infra/autodl/start_all_screen.sh`.
+For AutoDL, use the single entrypoint: `bash infra/autodl/start.sh`. The `infra/autodl/*` scripts are lower-level helpers for debugging.

@@ -7,17 +7,27 @@ _LOADED = False
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
+def _env_file_path() -> Path:
+    configured = os.getenv("WM_BENCH_DOTENV_PATH")
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        return path.resolve()
+    return PROJECT_ROOT / ".env"
+
+
 def load_project_env(*, override: bool = False) -> bool:
-    """Load ``.env`` from the repository root into ``os.environ``.
+    """Load the configured dotenv file into ``os.environ``.
 
     Existing environment variables are kept unless ``override=True``.
-    Returns True when a ``.env`` file was found and loaded.
+    Returns True when a dotenv file was found and loaded.
     """
     global _LOADED
     if _LOADED and not override:
         return False
 
-    env_file = PROJECT_ROOT / ".env"
+    env_file = _env_file_path()
     if not env_file.is_file():
         _LOADED = True
         return False

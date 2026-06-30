@@ -22,7 +22,7 @@ autodl_require_python_env() {
 
   if [[ ! -x "${AUTODL_PYTHON}" ]]; then
     echo "Missing AutoDL Python environment: ${AUTODL_PYTHON}" >&2
-    echo "Run: bash infra/autodl/setup_env.sh" >&2
+    echo "Run: bash infra/autodl/start.sh" >&2
     exit 1
   fi
 }

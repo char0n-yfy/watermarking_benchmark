@@ -90,15 +90,26 @@ $env:WM_BENCH_INSTALL_SHARP_DEPS = "0"
 
 ## Linux / AutoDL
 
-在 AutoDL 服务器的项目根目录执行：
+在 AutoDL 服务器的项目根目录执行这一条命令即可：
+
+```bash
+bash infra/autodl/start.sh
+```
+
+这条命令会创建 `.env.autodl`、创建或复用 `.venv`、安装 Python 依赖、在缺少 `screen` 或 Node.js/pnpm 时自动准备运行工具链、安装 Web 依赖、构建静态前端，并用 `screen` 启动 API 与 Worker。
+
+兼容入口仍然可用：
 
 ```bash
 bash scripts/start-autodl-linux.sh
 ```
 
+该脚本只会转发到 `infra/autodl/start.sh`。
+
 连接方式：
 
 - 服务器本机: `http://127.0.0.1:6006`
+- 健康检查: `http://127.0.0.1:6006/health`
 - AutoDL 公网访问: 在 AutoDL 控制台把本机端口 `6006` 暴露为自定义服务或隧道，然后用控制台生成的公网 URL 访问。
 - SSH 隧道访问:
 
@@ -110,11 +121,20 @@ ssh -L 6006:127.0.0.1:6006 root@<server-ip>
 
 AutoDL 默认路径：
 
-- 数据集: `/root/autodl-fs/wm-bench/resources/datasets`
-- 权重: `/root/autodl-fs/wm-bench/resources/weights`
+- 数据集: `<仓库根目录>/resources/datasets`
+- 权重: `<仓库根目录>/resources/weights`
 - 运行结果: `/root/autodl-tmp/wm-bench/runs`
+- 日志: `/root/autodl-tmp/wm-bench/runs/logs`
 - SQLite: `/root/autodl-fs/wm-bench/state/wmbench.sqlite`
 - Python 虚拟环境: 项目根目录 `.venv`，默认允许读取 AutoDL 基础镜像中的系统包以复用 CUDA/PyTorch。
+
+常用 AutoDL 配置写在 `.env.autodl` 中：
+
+- `WM_BENCH_INSTALL_SHARP_DEPS=0`: 跳过 SHARP/3D 重型依赖。
+- `WM_BENCH_AUTO_INSTALL_NODE=0`: 不自动安装 Node.js/pnpm，缺失时直接报错。
+- `WM_BENCH_AUTO_INSTALL_SCREEN=0`: 不自动安装 `screen`，缺失时直接报错。
+- `API_PORT=6006`: 修改服务端口。
+- `WM_BENCH_DEVICE=cuda:0`: 修改 Worker 使用的设备。
 
 ## 服务关系
 

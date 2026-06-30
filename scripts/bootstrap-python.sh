@@ -4,12 +4,39 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+load_dotenv_defaults() {
+  local env_file="$1"
+  local line key value
+
+  [[ -f "${env_file}" ]] || return 0
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" || "${line}" == \#* || "${line}" != *= ]] && continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key+x}" ]] && continue
+
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" && "${#value}" -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' && "${#value}" -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "${key}=${value}"
+  done <"${env_file}"
+}
+
 DOTENV_PATH="${WM_BENCH_DOTENV_PATH:-${ROOT_DIR}/.env}"
-if [[ -n "${DOTENV_PATH}" && -f "${DOTENV_PATH}" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${DOTENV_PATH}"
-  set +a
+if [[ -n "${DOTENV_PATH}" ]]; then
+  load_dotenv_defaults "${DOTENV_PATH}"
 fi
 
 VENV_DIR="${WM_BENCH_VENV:-.venv}"

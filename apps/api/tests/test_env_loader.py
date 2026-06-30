@@ -44,6 +44,21 @@ class EnvLoaderTest(unittest.TestCase):
                 env_loader.load_project_env()
                 self.assertEqual(os.environ["WM_BENCH_OSS_BUCKET"], "from-shell")
 
+    def test_load_project_env_uses_configured_dotenv_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            autodl_env = root / ".env.autodl"
+            autodl_env.write_text("APP_ENV=autodl\nAPI_PORT=6006\n", encoding="utf-8")
+            (root / ".env").write_text("APP_ENV=development\nAPI_PORT=8000\n", encoding="utf-8")
+            with patch.object(env_loader, "PROJECT_ROOT", root), patch.dict(
+                os.environ, {"WM_BENCH_DOTENV_PATH": str(autodl_env)}, clear=True
+            ):
+                env_loader._LOADED = False
+                loaded = env_loader.load_project_env()
+                self.assertTrue(loaded)
+                self.assertEqual(os.environ["APP_ENV"], "autodl")
+                self.assertEqual(os.environ["API_PORT"], "6006")
+
 
 if __name__ == "__main__":
     unittest.main()

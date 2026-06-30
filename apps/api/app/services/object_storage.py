@@ -40,7 +40,7 @@ class ObjectStorageSettings:
     def from_env(cls) -> ObjectStorageSettings:
         from ..core.env_loader import load_project_env
 
-        load_project_env(override=True)
+        load_project_env(override=False)
         enabled_flag = os.getenv("WM_BENCH_OSS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
         public_read = os.getenv("WM_BENCH_OSS_PUBLIC_READ", "true").strip().lower() in {"1", "true", "yes", "on"}
         bucket = os.getenv("WM_BENCH_OSS_BUCKET", DEFAULT_OSS_BUCKET).strip()
