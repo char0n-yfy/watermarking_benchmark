@@ -31,12 +31,12 @@ class DatasetDownloadServiceTest(unittest.TestCase):
                 grouped,
                 {
                     "基础自然图像基准": ["MS COCO", "ImageNet"],
-                    "AIGC 图像": ["DiffusionDB", "W-Bench"],
-                    "高清版权图": ["CLIC", "Flickr2K"],
+                    "AIGC图像": ["DiffusionDB", "W-Bench"],
+                    "高清版权图": ["4K Benchmark Images", "Flickr2K"],
                     "真实复杂开放世界图片": ["OpenImages V7", "Mapillary Vistas"],
                     "文档、截图、海报类场景": ["DocLayNet", "PubLayNet"],
-                    "电商版权保护": ["ABO (Amazon Berkeley Objects)", "Products-10K"],
-                    "移动端截图和 UI 内容保护": ["RICO", "AMEX"],
+                    "电商版权保护": ["shopee-product-matching", "Products-10K"],
+                    "移动端截图和UI内容保护": ["RICO", "MobileViews"],
                 },
             )
 
@@ -60,7 +60,7 @@ class DatasetDownloadServiceTest(unittest.TestCase):
     def test_compact_download_skips_display_name_folder_when_already_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            install_dir = root / "datasets" / "Shopee Product Matching"
+            install_dir = root / "datasets" / "shopee-product-matching"
             install_dir.mkdir(parents=True)
             for index in range(COMPACT_SAMPLE_COUNT):
                 Image.new("RGB", (8, 8), (index % 255, 40, 80)).save(install_dir / f"{index:06d}.png")
@@ -82,17 +82,17 @@ class DatasetDownloadServiceTest(unittest.TestCase):
     def test_compact_download_creates_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            dataset_dir = root / "datasets" / "abo" / "compact"
+            dataset_dir = root / "datasets" / "shopee-product-matching" / "compact"
             dataset_dir.mkdir(parents=True)
             for index in range(5):
                 Image.new("RGB", (32, 32), (index * 10, 80, 120)).save(dataset_dir / f"img_{index:03d}.png")
 
             catalog = list_dataset_catalog(root)
-            abo = next(item for item in catalog if item["id"] == "abo")
-            self.assertTrue(abo["compactAvailable"])
+            shopee = next(item for item in catalog if item["id"] == "shopee-product-matching")
+            self.assertTrue(shopee["compactAvailable"])
 
             service = DatasetDownloadService(root)
-            job = service.start_download("abo", mode="compact", sample_count=COMPACT_SAMPLE_COUNT)
+            job = service.start_download("shopee-product-matching", mode="compact", sample_count=COMPACT_SAMPLE_COUNT)
             for _ in range(100):
                 job = service.get_job(job.id)
                 if job.status in {"succeeded", "failed"}:
@@ -107,21 +107,21 @@ class DatasetDownloadServiceTest(unittest.TestCase):
             self.assertTrue(str(job.archive_path).endswith("__compact.zip"))
             install_dir = Path(job.output_dir or "")
             self.assertTrue(install_dir.exists())
-            self.assertEqual(install_dir, root / "datasets" / "abo" / "compact")
+            self.assertEqual(install_dir, root / "datasets" / "shopee-product-matching" / "compact")
             self.assertGreaterEqual(len(list(install_dir.glob("*.png"))), 5)
             self.assertIn("__compact__", job.id)
 
     def test_custom_download_samples_with_seed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            dataset_dir = root / "datasets" / "abo" / "full"
+            dataset_dir = root / "datasets" / "shopee-product-matching" / "full"
             dataset_dir.mkdir(parents=True)
             for index in range(20):
                 Image.new("RGB", (32, 32), (index * 5, 90, 140)).save(dataset_dir / f"full_{index:03d}.png")
 
             service = DatasetDownloadService(root)
             job = service.start_download(
-                "abo",
+                "shopee-product-matching",
                 mode="custom",
                 seed=7,
                 sample_count=8,
@@ -139,7 +139,7 @@ class DatasetDownloadServiceTest(unittest.TestCase):
             self.assertTrue(output_dir.exists())
             self.assertEqual(
                 output_dir,
-                root / "datasets" / "abo" / "custom" / "seed7_8",
+                root / "datasets" / "shopee-product-matching" / "custom" / "seed7_8",
             )
             self.assertEqual(len(list(output_dir.glob("*.png"))), 8)
             self.assertTrue(Path(job.archive_path or "").exists())
@@ -149,13 +149,13 @@ class DatasetDownloadServiceTest(unittest.TestCase):
     def test_compact_skips_when_already_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            install_dir = root / "datasets" / "abo" / "compact"
+            install_dir = root / "datasets" / "shopee-product-matching" / "compact"
             install_dir.mkdir(parents=True)
             for index in range(COMPACT_SAMPLE_COUNT):
                 Image.new("RGB", (8, 8), (index % 255, 40, 80)).save(install_dir / f"{index:06d}.png")
 
             service = DatasetDownloadService(root)
-            job = service.start_download("abo", mode="compact", sample_count=COMPACT_SAMPLE_COUNT)
+            job = service.start_download("shopee-product-matching", mode="compact", sample_count=COMPACT_SAMPLE_COUNT)
             for _ in range(100):
                 job = service.get_job(job.id)
                 if job.status in {"succeeded", "failed"}:
@@ -171,7 +171,7 @@ class DatasetDownloadServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = DatasetDownloadService(root)
-            cache_path = service.cache_root / "abo__compact.zip"
+            cache_path = service.cache_root / "shopee-product-matching__compact.zip"
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(cache_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 for index in range(COMPACT_SAMPLE_COUNT):
@@ -179,7 +179,7 @@ class DatasetDownloadServiceTest(unittest.TestCase):
                     Image.new("RGB", (8, 8), (index % 255, 40, 80)).save(image_path)
                     archive.write(image_path, arcname=f"{index:06d}.png")
 
-            job = service.start_download("abo", mode="compact", sample_count=COMPACT_SAMPLE_COUNT)
+            job = service.start_download("shopee-product-matching", mode="compact", sample_count=COMPACT_SAMPLE_COUNT)
             for _ in range(100):
                 job = service.get_job(job.id)
                 if job.status in {"succeeded", "failed"}:

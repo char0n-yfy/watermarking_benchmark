@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Boxes,
@@ -14,7 +14,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { ResourcePagination } from "@/components/ResourcePagination";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload } from "@/lib/api";
+import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDetail, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
@@ -115,16 +115,16 @@ const DATASET_METHOD_ORDER: Record<string, number> = {
   imagenet: 11,
   diffusiondb: 20,
   "w-bench": 21,
-  clic: 30,
+  "4k-benchmark": 30,
   flickr2k: 31,
   "openimages-v7": 40,
   "mapillary-vistas": 41,
   doclaynet: 50,
   publaynet: 51,
-  abo: 60,
+  "shopee-product-matching": 60,
   "products-10k": 61,
   rico: 70,
-  amex: 71
+  mobileviews: 71
 };
 const WATERMARK_CATEGORY_ORDER: Record<string, number> = {
   traditional_watermark: 10,
@@ -368,22 +368,17 @@ export default function ResourcesPage() {
       );
     };
 
+    setCatalogLoading(true);
+
     fetchDatasetCatalog()
       .then((catalog) => {
         if (cancelled) {
           return;
         }
         applyCatalog(catalog);
-        setCatalogLoading(false);
-        return fetchDatasetCatalog({ remote: true });
       })
-      .then((catalog) => {
-        if (cancelled || !catalog) {
-          return;
-        }
-        applyCatalog(catalog);
-      })
-      .catch(() => {
+      .catch(() => undefined)
+      .finally(() => {
         if (!cancelled) {
           setCatalogLoading(false);
         }
@@ -544,7 +539,11 @@ export default function ResourcesPage() {
   }, [selectedResourceId, visibleResources]);
 
   async function refreshDatasetCatalog() {
-    const catalog = await fetchDatasetCatalog();
+    const [localCatalog, remoteCatalog] = await Promise.all([
+      fetchDatasetCatalog(),
+      fetchDatasetCatalog({ remote: true }).catch(() => null)
+    ]);
+    const catalog = remoteCatalog ?? localCatalog;
     setCatalogItems(catalog.items);
     setDatasets(
       catalog.items.map((item) => ({
@@ -556,6 +555,26 @@ export default function ResourcesPage() {
       }))
     );
   }
+
+  const handleCatalogItemUpdate = useCallback((item: DatasetCatalogItem) => {
+    setCatalogItems((items) =>
+      items.map((entry) => {
+        if (entry.id !== item.id) {
+          return entry;
+        }
+        if (
+          entry.compactAvailable === item.compactAvailable &&
+          entry.remoteCompactAvailable === item.remoteCompactAvailable &&
+          entry.compactSampleCount === item.compactSampleCount &&
+          entry.installed === item.installed &&
+          entry.customDownloadReady === item.customDownloadReady
+        ) {
+          return entry;
+        }
+        return item;
+      })
+    );
+  }, []);
 
   async function refreshAlgorithms() {
     const remoteAlgorithms = await fetchAlgorithms({ remote: true });
@@ -730,6 +749,7 @@ export default function ResourcesPage() {
                 language={language}
                 onAlgorithmInstalled={refreshAlgorithms}
                 onAttackInstalled={refreshAttacks}
+                onCatalogItemUpdate={handleCatalogItemUpdate}
                 onDatasetInstalled={refreshDatasetCatalog}
                 resource={selectedResource}
                 t={t}
@@ -748,6 +768,7 @@ function ResourceDetail({
   resource,
   language,
   t,
+  onCatalogItemUpdate,
   onDatasetInstalled,
   onAlgorithmInstalled,
   onAttackInstalled
@@ -755,12 +776,21 @@ function ResourceDetail({
   resource: BrowserResource;
   language: "zh" | "en";
   t: ReturnType<typeof useLanguage>["t"];
+  onCatalogItemUpdate: (item: DatasetCatalogItem) => void;
   onDatasetInstalled: () => void;
   onAlgorithmInstalled: () => void;
   onAttackInstalled: () => void;
 }) {
   const configHref = buildConfigHref(resource);
   const attackDetail = resource.type === "attacks" ? resource.attackDetail : undefined;
+  const attackWeightTarget =
+    resource.type === "attacks"
+      ? resource.attack ?? resource.attacks?.find((item) => item.weightsPackRequired === true)
+      : undefined;
+  const attackGroupWeightsInstalled =
+    resource.type === "attacks" && resource.attacks
+      ? resource.attacks.every((item) => item.weightsPackRequired !== true || item.weightsInstalled === true)
+      : attackWeightTarget?.weightsInstalled === true;
   return (
     <div className="resource-detail-stack">
       <div>
@@ -830,7 +860,13 @@ function ResourceDetail({
       ) : null}
 
       {resource.type === "datasets" && resource.catalog ? (
-        <DatasetDownloadPanel catalog={resource.catalog} language={language} onInstalled={onDatasetInstalled} t={t} />
+        <DatasetDownloadPanel
+          catalog={resource.catalog}
+          language={language}
+          onCatalogUpdate={onCatalogItemUpdate}
+          onInstalled={onDatasetInstalled}
+          t={t}
+        />
       ) : null}
 
       {resource.type === "watermarks" && resource.algorithm?.weightsPackRequired ? (
@@ -843,10 +879,11 @@ function ResourceDetail({
         />
       ) : null}
 
-      {resource.type === "attacks" && resource.attack?.weightsPackRequired ? (
+      {resource.type === "attacks" && attackWeightTarget?.weightsPackRequired ? (
         <WeightDownloadPanel
-          attack={resource.attack}
-          key={`attack-${resource.id}`}
+          attack={attackWeightTarget}
+          groupWeightsInstalled={attackGroupWeightsInstalled}
+          key={`attack-${resource.id}-${attackWeightTarget.id}`}
           onInstalled={onAttackInstalled}
           t={t}
           variant="attack"
@@ -909,7 +946,6 @@ function AttackResourceDetailPanel({
             {detail.weights.map((weight) => (
               <div className="attack-weight-row" key={weight.id}>
                 <span>{weight.label}</span>
-                <code>{weight.value}</code>
                 {weight.tone ? <span className={badgeClass(weight.tone)}>{weightStatusLabel(weight.tone, language)}</span> : null}
               </div>
             ))}
@@ -1000,19 +1036,20 @@ function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): Bro
 function WeightDownloadPanel({
   algorithm,
   attack,
+  groupWeightsInstalled,
   onInstalled,
   t,
   variant
 }: {
   algorithm?: AlgorithmVersion;
   attack?: AttackPreset;
+  groupWeightsInstalled?: boolean;
   onInstalled: () => void;
   t: ReturnType<typeof useLanguage>["t"];
   variant: "watermark" | "attack";
 }) {
   const resource = variant === "watermark" ? algorithm : attack;
   const identifier = resource?.id ?? "";
-  const weightsDir = resource?.weightsDir;
   const [job, setJob] = useState<WeightDownloadJob | null>(null);
   const [busy, setBusy] = useState(false);
   const installedJobRef = useRef<string | null>(null);
@@ -1058,18 +1095,17 @@ function WeightDownloadPanel({
     return null;
   }
 
-  const installed = resource.weightsInstalled === true || job?.status === "succeeded";
+  const installed =
+    (variant === "attack" ? groupWeightsInstalled : resource.weightsInstalled === true) || job?.status === "succeeded";
   const jobInFlight = job?.status === "queued" || job?.status === "running";
   const canStart = resource.weightsDownloadReady === true && !installed && !jobInFlight;
   const progressPercent =
     job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
   const panelTitle = variant === "watermark" ? t.resources.weightDownloadPanel : t.resources.attackWeightDownloadPanel;
-  const panelHint = variant === "watermark" ? t.resources.weightDownloadHint : t.resources.attackWeightDownloadHint;
   const alreadyInstalled =
     variant === "watermark" ? t.resources.weightsAlreadyInstalled : t.resources.attackWeightsAlreadyInstalled;
   const unavailable = variant === "watermark" ? t.resources.weightsUnavailable : t.resources.attackWeightsUnavailable;
   const readyLabel = variant === "watermark" ? t.resources.weightDownloadReady : t.resources.attackWeightDownloadReady;
-  const weightsRoot = variant === "watermark" ? "weights/watermarking" : "weights/attacks";
 
   async function handleStart() {
     setBusy(true);
@@ -1090,19 +1126,11 @@ function WeightDownloadPanel({
   return (
     <div className="detail-section dataset-download-panel">
       <strong>{panelTitle}</strong>
-      <p className="dataset-download-hint">{panelHint}</p>
-      {weightsDir ? (
-        <div className="dataset-pool-summary">
-          <span>{weightsRoot}/{weightsDir}</span>
-        </div>
-      ) : null}
       {installed ? <div className="risk ok">{alreadyInstalled}</div> : null}
       {!canStart && !installed && !jobInFlight ? <div className="risk warn">{unavailable}</div> : null}
-      {!installed ? (
-        <button className="button primary" disabled={!canStart || busy || jobInFlight} onClick={handleStart} type="button">
-          {t.resources.startDownload}
-        </button>
-      ) : null}
+      <button className="button primary" disabled={!canStart || busy || jobInFlight || installed} onClick={handleStart} type="button">
+        {t.resources.startDownload}
+      </button>
       {job ? (
         <div className="dataset-download-progress">
           <div className="dataset-download-progress-head">
@@ -1120,12 +1148,6 @@ function WeightDownloadPanel({
           {job.status === "succeeded" ? (
             <div className="dataset-download-success">
               <div className="badge ok">{readyLabel}</div>
-              {job.outputDir ? (
-                <div className="dataset-download-path">
-                  <span>{t.resources.downloadInstalledTo}</span>
-                  <code>{job.outputDir}</code>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -1137,11 +1159,13 @@ function WeightDownloadPanel({
 function DatasetDownloadPanel({
   catalog,
   language,
+  onCatalogUpdate,
   onInstalled,
   t
 }: {
   catalog: DatasetCatalogItem;
   language: "zh" | "en";
+  onCatalogUpdate: (item: DatasetCatalogItem) => void;
   onInstalled: () => void;
   t: ReturnType<typeof useLanguage>["t"];
 }) {
@@ -1150,7 +1174,43 @@ function DatasetDownloadPanel({
   const [sampleCount, setSampleCount] = useState(100);
   const [job, setJob] = useState<DatasetDownloadJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [detail, setDetail] = useState<DatasetCatalogItem>(catalog);
+  const [detailLoading, setDetailLoading] = useState(false);
   const installedJobRef = useRef<string | null>(null);
+  const probeTokenRef = useRef(0);
+
+  useEffect(() => {
+    setDetail(catalog);
+    setDetailLoading(false);
+    setJob(null);
+  }, [catalog.id]);
+
+  useEffect(() => {
+    if (catalog.installed || catalog.compactAvailable || catalog.remoteCompactAvailable) {
+      return;
+    }
+    const token = probeTokenRef.current + 1;
+    probeTokenRef.current = token;
+    let cancelled = false;
+    setDetailLoading(true);
+    fetchDatasetDetail(catalog.id)
+      .then((item) => {
+        if (cancelled || token !== probeTokenRef.current) {
+          return;
+        }
+        setDetail(item);
+        onCatalogUpdate(item);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled && token === probeTokenRef.current) {
+          setDetailLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalog.id, catalog.installed, catalog.compactAvailable, catalog.remoteCompactAvailable, onCatalogUpdate]);
 
   useEffect(() => {
     if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
@@ -1172,18 +1232,19 @@ function DatasetDownloadPanel({
     onInstalled();
   }, [job, onInstalled]);
 
-  const compactReady = catalog.compactAvailable;
-  const customReady = catalog.customDownloadReady;
-  const compactInstalled = (catalog.compactSampleCount ?? 0) > 0;
+  const compactReady = detail.compactAvailable;
+  const customReady = detail.customDownloadReady;
+  const compactInstalled = detail.installed === true;
   const canStart = mode === "compact" ? compactReady && !compactInstalled : customReady;
-  const totalImages = catalog.officialTotalImages ?? 0;
+  const totalImages = detail.officialTotalImages ?? 0;
+  const ossProbing = detailLoading && !compactReady && !compactInstalled;
   const progressPercent =
     job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
 
   async function handleStart() {
     setBusy(true);
     try {
-      const created = await startDatasetDownload(catalog.id, {
+      const created = await startDatasetDownload(detail.id, {
         mode,
         seed,
         sampleCount: mode === "compact" ? 1000 : sampleCount
@@ -1207,22 +1268,22 @@ function DatasetDownloadPanel({
       </div>
       {mode === "compact" ? (
         <p className="dataset-download-hint">
-          {`${t.resources.compactDownloadHint}（${t.resources.compactPack}：${catalog.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}）`}
+          {`${t.resources.compactPack}：${detail.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}`}
         </p>
       ) : null}
       {mode === "custom" ? (
-        <>
-          <p className="dataset-download-hint">{t.resources.customDownloadHint}</p>
-          <p className="dataset-download-hint muted">{t.resources.customFolderHint}</p>
-          <div className="dataset-pool-summary">
-            <span>
-              {t.resources.datasetTotalImages}：
-              {totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : "—"}
-            </span>
-          </div>
-        </>
+        <div className="dataset-pool-summary">
+          <span>
+            {t.resources.datasetTotalImages}：
+            {totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : "—"}
+          </span>
+        </div>
       ) : null}
-      {!compactReady && mode === "compact" ? <div className="risk warn">{t.resources.compactUnavailable}</div> : null}
+      {ossProbing && mode === "compact" ? <div className="risk warn">{t.resources.ossProbing}</div> : null}
+      {!compactReady && !ossProbing && mode === "compact" ? <div className="risk warn">{t.resources.compactUnavailable}</div> : null}
+      {compactReady && !compactInstalled && detail.remoteCompactAvailable && mode === "compact" ? (
+        <div className="risk ok">{t.resources.compactRemoteReady}</div>
+      ) : null}
       {compactInstalled && mode === "compact" ? (
         <div className="risk ok">{t.resources.compactAlreadyInstalled}</div>
       ) : null}
@@ -1270,12 +1331,6 @@ function DatasetDownloadPanel({
           {job.status === "succeeded" ? (
             <div className="dataset-download-success">
               <div className="badge ok">{t.resources.downloadReady}</div>
-              {job.outputDir ? (
-                <div className="dataset-download-path">
-                  <span>{t.resources.downloadInstalledTo}</span>
-                  <code>{job.outputDir}</code>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -1862,8 +1917,8 @@ function weightRowsFromAttacks(attacks: AttackPreset[], language: "zh" | "en"): 
     }
     rows.set(id, {
       id,
-      label: language === "zh" ? "攻击权重目录" : "Attack weight directory",
-      value: `resources/weights/attacks/${attack.weightsDir}`,
+      label: language === "zh" ? "攻击权重包" : "Attack weight pack",
+      value: "",
       tone
     });
   }

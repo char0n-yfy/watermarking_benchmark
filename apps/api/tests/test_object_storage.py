@@ -34,6 +34,9 @@ class FakeObjectStorage:
     def exists(self, key: str) -> bool:
         return key in self.files
 
+    def exists_many(self, keys) -> dict[str, bool]:
+        return {key: self.exists(key) for key in keys}
+
     def read_text(self, key: str) -> str:
         return self.files[key].decode("utf-8")
 
@@ -72,6 +75,17 @@ class ObjectStorageIntegrationTest(unittest.TestCase):
             self.assertTrue(item["remoteCompactAvailable"])
             self.assertTrue(item["compactAvailable"])
             self.assertFalse(item["installed"])
+
+    def test_catalog_marks_remote_compact_available_for_4k_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            oss = FakeObjectStorage({"wmbench/datasets/4k-benchmark/compact-1000.zip": b"zip"})
+            entry = get_catalog_entry("4k-benchmark")
+            item = build_catalog_item(root, entry, oss=oss)  # type: ignore[arg-type]
+            self.assertTrue(item["remoteCompactAvailable"])
+            self.assertTrue(item["compactAvailable"])
+            self.assertFalse(item["installed"])
+            self.assertEqual(entry.name, "4K Benchmark Images")
 
     def test_compact_download_from_object_storage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

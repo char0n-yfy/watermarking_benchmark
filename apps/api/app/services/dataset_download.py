@@ -19,6 +19,7 @@ from app.services.dataset_catalog import (
     dataset_root,
     full_dir,
     get_catalog_entry,
+    remote_compact_object_key,
 )
 from app.services.object_storage import ObjectStorageClient, parse_manifest_lines
 from app.services.resources import IMAGE_EXTS, iter_image_paths
@@ -352,14 +353,14 @@ class DatasetDownloadService:
             return
 
         if self.oss and self.oss.enabled:
-            object_key = self.oss.dataset_compact_key(job.dataset_id)
-            if self.oss.exists(object_key):
+            object_key = remote_compact_object_key(self.oss, entry)
+            if object_key:
                 self._run_compact_from_object_storage(job, object_key)
                 return
 
         oss_hint = "wmbench/datasets/<id>/compact-1000.zip"
         if self.oss and self.oss.enabled:
-            oss_hint = self.oss.dataset_compact_key(job.dataset_id)
+            oss_hint = " or ".join(self.oss.dataset_compact_key(name) for name in (entry.id, *entry.aliases))
 
         raise FileNotFoundError(
             f"Compact dataset not found under {source}. "

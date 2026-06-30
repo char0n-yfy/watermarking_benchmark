@@ -46,7 +46,11 @@ export function fetchDatasets(): Promise<DatasetVersion[]> {
 
 export function fetchDatasetCatalog(options?: { remote?: boolean }): Promise<DatasetCatalogResponse> {
   const query = options?.remote ? "?remote=1" : "";
-  return requestJson<DatasetCatalogResponse>(`/resources/datasets/catalog${query}`).catch(async () => {
+  const request = requestJson<DatasetCatalogResponse>(`/resources/datasets/catalog${query}`);
+  if (options?.remote) {
+    return request;
+  }
+  return request.catch(async () => {
     const datasets = await fetchDatasets();
     return {
       categories: [{ id: "local", nameZh: "本地数据集" }],

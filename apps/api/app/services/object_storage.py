@@ -5,14 +5,17 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 from urllib.parse import urlparse
 
 import httpx
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 ProgressCallback = Callable[[int, int, str], None]
-_EXISTS_CACHE_TTL_SECONDS = 60.0
+_EXISTS_CACHE_TTL_SECONDS = 300.0
+_EXISTS_NEGATIVE_CACHE_TTL_SECONDS = 60.0
+_EXISTS_HTTP_TIMEOUT = httpx.Timeout(connect=8.0, read=15.0, write=8.0, pool=8.0)
 
 # Team defaults: clone and start without per-user AccessKey when bucket prefix is public-read.
 DEFAULT_OSS_BUCKET = "watermarking-benchmark"
@@ -69,6 +72,7 @@ class ObjectStorageClient:
         self._settings = settings
         self._client = None
         self._exists_cache: dict[str, tuple[float, bool]] = {}
+        self._public_http: httpx.Client | None = None
 
     @property
     def settings(self) -> ObjectStorageSettings:
@@ -148,40 +152,104 @@ class ObjectStorageClient:
             return False
         now = time.monotonic()
         cached = self._exists_cache.get(key)
-        if cached is not None and now - cached[0] < _EXISTS_CACHE_TTL_SECONDS:
-            return cached[1]
+        if cached is not None:
+            ttl = _EXISTS_CACHE_TTL_SECONDS if cached[1] else _EXISTS_NEGATIVE_CACHE_TTL_SECONDS
+            if now - cached[0] < ttl:
+                return cached[1]
 
-        if self._settings.public_read:
-            result = self._exists_public(key)
-        else:
-            result = self._exists_private(key)
-
-        self._exists_cache[key] = (now, result)
+        result, cacheable = self._probe_exists(key)
+        if cacheable or result:
+            self._exists_cache[key] = (time.monotonic(), result)
         return result
 
-    def _exists_public(self, key: str) -> bool:
+    def exists_many(self, keys: Iterable[str]) -> dict[str, bool]:
+        unique_keys = list(dict.fromkeys(keys))
+        if not self.enabled or not unique_keys:
+            return {key: False for key in unique_keys}
+
+        now = time.monotonic()
+        results: dict[str, bool] = {}
+        pending: list[str] = []
+        for key in unique_keys:
+            cached = self._exists_cache.get(key)
+            if cached is not None:
+                ttl = _EXISTS_CACHE_TTL_SECONDS if cached[1] else _EXISTS_NEGATIVE_CACHE_TTL_SECONDS
+                if now - cached[0] < ttl:
+                    results[key] = cached[1]
+                    continue
+            pending.append(key)
+
+        if pending:
+            workers = min(24, max(1, len(pending)))
+
+            def probe(key: str) -> tuple[str, bool, bool]:
+                value, cacheable = self._probe_exists(key)
+                return key, value, cacheable
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(probe, key) for key in pending]
+                for future in as_completed(futures):
+                    key, value, cacheable = future.result()
+                    results[key] = value
+                    if cacheable or value:
+                        self._exists_cache[key] = (time.monotonic(), value)
+
+        return results
+
+    def _get_public_http(self) -> httpx.Client:
+        if self._public_http is None:
+            self._public_http = httpx.Client(
+                timeout=_EXISTS_HTTP_TIMEOUT,
+                follow_redirects=True,
+                limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
+            )
+        return self._public_http
+
+    def _reset_public_http(self) -> None:
+        if self._public_http is not None:
+            try:
+                self._public_http.close()
+            except Exception:
+                pass
+        self._public_http = None
+
+    def _probe_exists(self, key: str) -> tuple[bool, bool]:
+        if self._settings.public_read:
+            return self._exists_public(key)
+        return self._exists_private(key)
+
+    def _exists_public(self, key: str) -> tuple[bool, bool]:
         url = self.public_object_url(key)
-        try:
-            with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+        for attempt in range(2):
+            try:
+                client = self._get_public_http()
                 response = client.head(url)
                 if response.status_code == 405:
                     response = client.get(url, headers={"Range": "bytes=0-0"})
-                return response.status_code in {200, 206}
-        except httpx.HTTPError:
-            return False
+                if response.status_code in {200, 206}:
+                    return True, True
+                if response.status_code == 404:
+                    return False, True
+                return False, False
+            except httpx.HTTPError:
+                self._reset_public_http()
+                if attempt == 0:
+                    continue
+                return False, False
+        return False, False
 
-    def _exists_private(self, key: str) -> bool:
+    def _exists_private(self, key: str) -> tuple[bool, bool]:
         try:
             self._get_client().head_object(Bucket=self._settings.bucket, Key=key)
-            return True
+            return True, True
         except Exception as exc:
             from botocore.exceptions import ClientError
 
             if isinstance(exc, ClientError):
                 code = exc.response.get("Error", {}).get("Code", "")
                 if code in {"404", "NoSuchKey", "NotFound"}:
-                    return False
-            return False
+                    return False, True
+            return False, False
 
     def presign_get_url(self, key: str, *, expires: int | None = None) -> str:
         client = self._get_client()

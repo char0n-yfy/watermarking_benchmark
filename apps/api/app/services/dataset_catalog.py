@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -73,7 +72,7 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         name="DiffusionDB",
         name_zh="DiffusionDB",
         category="aigc",
-        category_zh="AIGC 图像",
+        category_zh="AIGC图像",
         description="DiffusionDB archives Stable Diffusion outputs paired with user prompts for studying text-to-image generation.",
         description_zh="DiffusionDB 收录 Stable Diffusion 生成图像及对应提示词，用于研究生成式 AIGC 内容。",
         source_url="https://poloclub.github.io/diffusiondb/",
@@ -84,23 +83,22 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         name="W-Bench",
         name_zh="W-Bench",
         category="aigc",
-        category_zh="AIGC 图像",
+        category_zh="AIGC图像",
         description="W-Bench (VINE, ICLR 2025) evaluates watermark robustness under regeneration, editing, and traditional distortions.",
         description_zh="W-Bench（VINE, ICLR 2025）系统评测水印在再生成、图像编辑与传统失真下的鲁棒性。",
         source_url="https://huggingface.co/datasets/Shilin-LU/W-Bench",
         official_total_images=100_000,
     ),
     DatasetCatalogEntry(
-        id="clic",
-        name="CLIC",
-        name_zh="CLIC",
+        id="4k-benchmark",
+        name="4K Benchmark Images",
+        name_zh="4K Benchmark Images",
         category="hd-copyright",
         category_zh="高清版权图",
-        description="CLIC provides high-quality photographic images for learned image compression and high-fidelity restoration research.",
-        description_zh="CLIC 提供高质量摄影图像，常用于学习式图像压缩与高保真图像恢复研究。",
+        description="4K Benchmark Images provides high-quality photographic images for learned image compression and high-fidelity restoration research.",
+        description_zh="4K Benchmark Images 提供高质量摄影图像，常用于学习式图像压缩与高保真图像恢复研究。",
         source_url="https://clic.compression.cc/",
         official_total_images=1_633,
-        aliases=("4k-benchmark", "4K Benchmark Images", "4KLSDB"),
     ),
     DatasetCatalogEntry(
         id="flickr2k",
@@ -158,16 +156,15 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         official_total_images=360_000,
     ),
     DatasetCatalogEntry(
-        id="abo",
-        name="ABO (Amazon Berkeley Objects)",
-        name_zh="ABO (Amazon Berkeley Objects)",
+        id="shopee-product-matching",
+        name="shopee-product-matching",
+        name_zh="shopee-product-matching",
         category="ecommerce",
         category_zh="电商版权保护",
-        description="ABO contains Amazon product listings, catalog images, and object metadata for e-commerce recognition and protection.",
-        description_zh="ABO 收录 Amazon 商品条目、目录图像和物体元数据，面向电商识别与版权保护场景。",
+        description="Shopee Product Matching provides e-commerce product images for catalog matching and copyright protection experiments.",
+        description_zh="Shopee Product Matching 提供电商商品图像，用于商品匹配与版权保护实验。",
         source_url="https://amazon-berkeley-objects.s3.amazonaws.com/index.html",
         official_total_images=398_212,
-        aliases=("shopee-product-matching", "Shopee Product Matching", "Amazon Berkeley Objects"),
     ),
     DatasetCatalogEntry(
         id="products-10k",
@@ -185,23 +182,22 @@ DATASET_CATALOG: tuple[DatasetCatalogEntry, ...] = (
         name="RICO",
         name_zh="RICO",
         category="mobile-ui",
-        category_zh="移动端截图和 UI 内容保护",
+        category_zh="移动端截图和UI内容保护",
         description="RICO (Google) collects Android app screenshots with view hierarchies and UI element annotations.",
         description_zh="RICO（Google）收录 Android 应用截图及视图层级与 UI 元素标注。",
         source_url="http://www.interactionmining.org/rico",
         official_total_images=66_000,
     ),
     DatasetCatalogEntry(
-        id="amex",
-        name="AMEX",
-        name_zh="AMEX",
+        id="mobileviews",
+        name="MobileViews",
+        name_zh="MobileViews",
         category="mobile-ui",
-        category_zh="移动端截图和 UI 内容保护",
-        description="AMEX is used here as a mobile screenshot and UI-content dataset for mobile interface protection experiments.",
-        description_zh="AMEX 在本基准中作为移动端截图和 UI 内容数据集，用于移动界面内容保护实验。",
+        category_zh="移动端截图和UI内容保护",
+        description="MobileViews provides mobile screenshots and UI content for mobile interface protection experiments.",
+        description_zh="MobileViews 提供移动端截图和 UI 内容，用于移动界面内容保护实验。",
         source_url="",
         official_total_images=None,
-        aliases=("mobileviews", "MobileViews"),
     ),
 )
 
@@ -220,6 +216,44 @@ def dataset_aliases(entry: DatasetCatalogEntry) -> set[str]:
         entry.id.replace("-", "_"),
     }
     return {normalize_dataset_key(alias) for alias in aliases if alias}
+
+
+def dataset_storage_folder_names(entry: DatasetCatalogEntry) -> tuple[str, ...]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in (entry.id, *entry.aliases):
+        name = raw.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return tuple(names)
+
+
+def dataset_compact_object_keys(oss: ObjectStorageClient, entry: DatasetCatalogEntry) -> list[str]:
+    return [oss.dataset_compact_key(name) for name in dataset_storage_folder_names(entry)]
+
+
+def dataset_manifest_object_keys(oss: ObjectStorageClient, entry: DatasetCatalogEntry) -> list[str]:
+    return [oss.dataset_manifest_key(name) for name in dataset_storage_folder_names(entry)]
+
+
+def first_existing_object_key(oss: ObjectStorageClient, keys: list[str]) -> str | None:
+    if not oss.enabled or not keys:
+        return None
+    found = oss.exists_many(keys)
+    for key in keys:
+        if found.get(key):
+            return key
+    return None
+
+
+def remote_compact_object_key(oss: ObjectStorageClient, entry: DatasetCatalogEntry) -> str | None:
+    return first_existing_object_key(oss, dataset_compact_object_keys(oss, entry))
+
+
+def remote_manifest_object_key(oss: ObjectStorageClient, entry: DatasetCatalogEntry) -> str | None:
+    return first_existing_object_key(oss, dataset_manifest_object_keys(oss, entry))
 
 
 def get_catalog_entry(dataset_id: str) -> DatasetCatalogEntry:
@@ -329,22 +363,49 @@ def resolve_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dic
 def _probe_remote_availability(
     oss: ObjectStorageClient | None,
     entries: tuple[DatasetCatalogEntry, ...],
+    *,
+    resources_root: Path | None = None,
 ) -> dict[str, tuple[bool, bool]]:
     if not oss or not oss.enabled or not entries:
         return {}
 
-    def probe(entry_id: str) -> tuple[str, bool, bool]:
-        compact = oss.exists(oss.dataset_compact_key(entry_id))
-        manifest = oss.exists(oss.dataset_manifest_key(entry_id))
-        return entry_id, compact, manifest
+    compact_keys: list[str] = []
+    manifest_keys: list[str] = []
+    entry_compact_keys: dict[str, list[str]] = {}
+    entry_manifest_keys: dict[str, list[str]] = {}
+    local_compact_by_id: dict[str, bool] = {}
+
+    for entry in entries:
+        local_compact = False
+        if resources_root is not None:
+            local_compact = resolve_local_paths(resources_root, entry)["compactAvailable"]
+        local_compact_by_id[entry.id] = local_compact
+        if not local_compact:
+            keys = dataset_compact_object_keys(oss, entry)
+            entry_compact_keys[entry.id] = keys
+            compact_keys.extend(keys)
+        if entry.manifest_url is None:
+            keys = dataset_manifest_object_keys(oss, entry)
+            entry_manifest_keys[entry.id] = keys
+            manifest_keys.extend(keys)
+
+    compact_exists = oss.exists_many(compact_keys)
+    manifest_exists = oss.exists_many(manifest_keys)
 
     results: dict[str, tuple[bool, bool]] = {}
-    workers = min(8, max(1, len(entries)))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(probe, entry.id) for entry in entries]
-        for future in as_completed(futures):
-            entry_id, compact, manifest = future.result()
-            results[entry_id] = (compact, manifest)
+    for entry in entries:
+        local_compact = local_compact_by_id.get(entry.id, False)
+        remote_compact = False
+        if not local_compact:
+            remote_compact = any(
+                compact_exists.get(key, False) for key in entry_compact_keys.get(entry.id, [])
+            )
+        remote_manifest = False
+        if entry.manifest_url is None:
+            remote_manifest = any(
+                manifest_exists.get(key, False) for key in entry_manifest_keys.get(entry.id, [])
+            )
+        results[entry.id] = (remote_compact, remote_manifest)
     return results
 
 
@@ -359,8 +420,14 @@ def build_catalog_item(
     if remote_availability is not None:
         remote_compact, remote_manifest = remote_availability
     elif oss and oss.enabled:
-        remote_compact = oss.exists(oss.dataset_compact_key(entry.id))
-        remote_manifest = oss.exists(oss.dataset_manifest_key(entry.id))
+        if local["compactAvailable"]:
+            remote_compact = False
+        else:
+            remote_compact = remote_compact_object_key(oss, entry) is not None
+        if entry.manifest_url is not None or local["customPoolCount"] > 0:
+            remote_manifest = False
+        else:
+            remote_manifest = remote_manifest_object_key(oss, entry) is not None
     else:
         remote_compact = False
         remote_manifest = False
@@ -390,7 +457,7 @@ def list_dataset_catalog(
     probe_remote: bool = False,
 ) -> list[dict[str, Any]]:
     if probe_remote:
-        remote = _probe_remote_availability(oss, DATASET_CATALOG)
+        remote = _probe_remote_availability(oss, DATASET_CATALOG, resources_root=resources_root)
     else:
         remote = {entry.id: (False, False) for entry in DATASET_CATALOG}
     items = [
