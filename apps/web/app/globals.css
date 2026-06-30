@@ -204,6 +204,16 @@ button {
   opacity: 0.48;
 }
 
+.loading-spinner {
+  animation: loading-spin 0.8s linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .button.compact {
   min-height: 28px;
   border-radius: 7px;

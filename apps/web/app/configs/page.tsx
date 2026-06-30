@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Archive, Braces, Check, Database, Edit3, Gauge, Plus, Save, Search, Shield, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive, Braces, Check, Database, Edit3, Gauge, Loader2, Plus, Save, Search, Shield, Trash2, X } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
@@ -1020,6 +1020,8 @@ export default function ConfigsPage() {
   const [renameTarget, setRenameTarget] = useState<SavedExperimentConfig | null>(null);
   const [renameName, setRenameName] = useState("");
   const [message, setMessage] = useState("");
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const isSavingConfigRef = useRef(false);
 
   const configurableAttacks = useMemo(() => attacks.filter((attack) => !isHiddenIdentityAttack(attack)), [attacks]);
   const effectiveSelection = useMemo(() => withHiddenIdentityAttack(selection, attacks), [selection, attacks]);
@@ -1159,6 +1161,7 @@ export default function ConfigsPage() {
           renameConfig: "重命名",
           renameTitle: "重命名配置",
           save: "保存配置",
+          saving: "保存中",
           modalHint: "保存后，该配置会进入运行页，可提交给 worker 执行。"
         }
       : {
@@ -1177,6 +1180,7 @@ export default function ConfigsPage() {
           renameConfig: "Rename",
           renameTitle: "Rename config",
           save: "Save config",
+          saving: "Saving",
           modalHint: "After saving, launch this config from the Runs page."
         };
 
@@ -1222,17 +1226,25 @@ export default function ConfigsPage() {
   };
 
   const saveConfig = async () => {
+    if (isSavingConfigRef.current) {
+      return;
+    }
     if (!canSave) {
       setMessage("请至少选择一个数据集、一个水印算法，并填写配置名称。");
       return;
     }
+    isSavingConfigRef.current = true;
+    setIsSavingConfig(true);
     try {
       const config = await createSavedConfig(configName.trim(), effectiveSelection);
-      setSavedConfigs([config, ...savedConfigs]);
+      setSavedConfigs((current) => [config, ...current]);
       setIsCreateOpen(false);
       setMessage(t.configs.savedToast);
     } catch {
       setMessage("API 保存失败，请先启动 FastAPI 服务后再保存。");
+    } finally {
+      isSavingConfigRef.current = false;
+      setIsSavingConfig(false);
     }
   };
 
@@ -2445,9 +2457,9 @@ export default function ConfigsPage() {
                 <button className="button" onClick={() => setIsCreateOpen(false)} type="button">
                   {copy.cancel}
                 </button>
-                <button className="button primary" disabled={!canSave} onClick={saveConfig} type="button">
-                  <Save size={16} />
-                  {copy.save}
+                <button className="button primary" disabled={!canSave || isSavingConfig} onClick={saveConfig} type="button">
+                  {isSavingConfig ? <Loader2 className="loading-spinner" size={16} /> : <Save size={16} />}
+                  {isSavingConfig ? copy.saving : copy.save}
                 </button>
               </div>
             </div>
