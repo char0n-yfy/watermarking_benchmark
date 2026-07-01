@@ -200,6 +200,38 @@ class SSLWatermark(BaseWatermark):
             return self._data_augmentation.DifferentiableDataAugmentation()
         return self._data_augmentation.All()
 
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._decode is not None
+        assert self._model is not None
+        assert self._carrier is not None
+
+        images = [Image.open(input_path).convert("RGB") for input_path, _context in jobs]
+        decoded_data = self._decode.decode_multibit(images, self._carrier, self._model)
+        results: list[Mapping[str, Any]] = []
+        for decoded_item, (_input_path, context) in zip(decoded_data, jobs):
+            decoded_tensor = decoded_item["msg"]
+            decoded_bits = [int(bit) for bit in decoded_tensor.type(self._torch.int).tolist()]
+            metadata: dict[str, Any] = {
+                "bits": bits_to_string(decoded_bits),
+                "payload_bits": len(decoded_bits),
+                "model_path": str(self.model_path),
+                "normlayer_path": str(self.normlayer_path),
+                "carrier_path": str(self.carrier_path),
+            }
+            if context.message is not None:
+                expected = bits_from_message(context.message, len(decoded_bits), seed=context.seed)
+                metadata["expected_bits"] = bits_to_string(expected)
+                metadata["bit_accuracy"] = bit_accuracy(expected, decoded_bits)
+            results.append(metadata)
+        return results
+
     def embed_impl(
         self,
         input_path: Path,

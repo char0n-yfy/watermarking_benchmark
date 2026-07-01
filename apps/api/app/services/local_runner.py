@@ -12,12 +12,13 @@ from typing import Any, Callable
 
 from PIL import Image
 
-from evaluator.attacks.runner import AttackJob, run_attack_dir
+from evaluator.attacks.runner import AttackJob, get_cached_attack, run_attack_dir_with_attack
 from evaluator.watermarking.runner import (
     WatermarkEmbedJob,
     WatermarkExtractJob,
-    run_watermark_embed_dir,
-    run_watermark_extract_dir,
+    get_cached_watermark,
+    run_watermark_embed_dir_with_method,
+    run_watermark_extract_dir_with_method,
 )
 
 from app.core.storage import safe_segment
@@ -28,7 +29,7 @@ from app.services.resources import (
     iter_image_paths,
     scan_dataset_resources,
 )
-from app.services.scoring import compute_image_quality_pair
+from app.services.scoring import compute_image_quality_pairs
 
 
 JsonDict = dict[str, Any]
@@ -391,9 +392,43 @@ def _record_quality_pairs(
     seed: int,
     reference_dir: Path,
     target_dir: Path,
+    device: str = "cpu",
 ) -> None:
-    for reference_path, target_path in _pair_images(reference_dir, target_dir):
-        metrics = compute_image_quality_pair(reference_path, target_path)
+    pairs = _pair_images(reference_dir, target_dir)
+    started = time.perf_counter()
+    target_paths = [target_path for _reference_path, target_path in pairs]
+    try:
+        metrics_by_pair = compute_image_quality_pairs(pairs)
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        _record_runtime_profile(
+            paths,
+            run_id=run_id,
+            cell_key=cell_key,
+            stage="quality",
+            method="image_quality",
+            device=device,
+            elapsed_ms=elapsed_ms,
+            image_paths=target_paths,
+            status="failed",
+            error=f"{type(exc).__name__}: {exc}",
+            metadata={"scope": scope},
+        )
+        raise
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    _record_runtime_profile(
+        paths,
+        run_id=run_id,
+        cell_key=cell_key,
+        stage="quality",
+        method="image_quality",
+        device=device,
+        elapsed_ms=elapsed_ms,
+        image_paths=target_paths,
+        status="succeeded",
+        metadata={"scope": scope},
+    )
+    for (reference_path, _target_path), metrics in zip(pairs, metrics_by_pair):
         _append_jsonl(
             paths["imageQuality"],
             {
@@ -715,6 +750,7 @@ def run_local_experiment(
     expected_cells = int(estimate["cellCount"])
     cancelled = False
     skipped_cells = 0
+    negative_attack_cache: dict[str, dict[str, Any]] = {}
 
     attack_plan: list[JsonDict] = []
     for attack_id in selection["attackPresetIds"]:
@@ -829,6 +865,7 @@ def run_local_experiment(
                 if cancelled:
                     break
                 algorithm = get_watermark_catalog_item(algorithm_id)
+                algorithm_params = dict(algorithm.get("params") or {})
                 for seed in selection["seeds"]:
                     if should_cancel is not None and should_cancel():
                         cancelled = True
@@ -904,17 +941,23 @@ def run_local_experiment(
                         )
                         _reset_gpu_peak(request.device)
                         embed_started = time.perf_counter()
-                        embed_results = run_watermark_embed_dir(
+                        watermark_method = get_cached_watermark(
+                            algorithm["method"],
+                            algorithm_params,
+                            request.device,
+                        )
+                        embed_results = run_watermark_embed_dir_with_method(
                             WatermarkEmbedJob(
                                 run_id=request.run_id,
                                 method_name=algorithm["method"],
-                                params=dict(algorithm.get("params") or {}),
+                                params=algorithm_params,
                                 input_dir=cell_input_dir,
                                 output_dir=watermarked_dir,
                                 message=request.message,
                                 device=request.device,
                                 seed=int(seed),
-                            )
+                            ),
+                            watermark_method,
                         )
                         embed_elapsed_ms = (time.perf_counter() - embed_started) * 1000
                         embed_errors = [result.error for result in embed_results if getattr(result, "error", None)]
@@ -947,6 +990,7 @@ def run_local_experiment(
                             seed=int(seed),
                             reference_dir=cell_input_dir,
                             target_dir=watermarked_dir,
+                            device=request.device,
                         )
                         _stage_event(
                             paths,
@@ -1020,7 +1064,21 @@ def run_local_experiment(
                             cell_root = run_root / "cells" / cell_key
                             attacked_dir = cell_root / "attacked"
                             extracted_dir = cell_root / "extracted"
-                            negative_attacked_dir = cell_root / "negative_attacked"
+                            negative_attack_key = _cell_key(
+                                dataset_id,
+                                "negative_control",
+                                attack_id,
+                                strength,
+                                int(seed),
+                                str(variant.get("variantKey") or ""),
+                            )
+                            negative_attacked_dir = (
+                                run_root
+                                / "staging"
+                                / "negative_attacked"
+                                / safe_segment(dataset_id)
+                                / safe_segment(negative_attack_key)
+                            )
                             negative_extracted_dir = cell_root / "negative_extracted"
                             cell_detection_manifest_path = cell_root / "cell_detection_manifest.json"
                             detection_records: list[JsonDict] = []
@@ -1043,9 +1101,11 @@ def run_local_experiment(
                             )
 
                             try:
+                                attack_instance = get_cached_attack(attack["method"], attack_params, request.device)
+
                                 _reset_gpu_peak(request.device)
                                 attack_started = time.perf_counter()
-                                attack_results = run_attack_dir(
+                                attack_results = run_attack_dir_with_attack(
                                     AttackJob(
                                         run_id=request.run_id,
                                         attack_name=attack["method"],
@@ -1054,7 +1114,8 @@ def run_local_experiment(
                                         output_dir=attacked_dir,
                                         device=request.device,
                                         seed=int(seed),
-                                    )
+                                    ),
+                                    attack_instance,
                                 )
                                 attack_elapsed_ms = (time.perf_counter() - attack_started) * 1000
                                 attack_error = "; ".join(
@@ -1076,17 +1137,18 @@ def run_local_experiment(
 
                                 _reset_gpu_peak(request.device)
                                 extract_started = time.perf_counter()
-                                extract_results = run_watermark_extract_dir(
+                                extract_results = run_watermark_extract_dir_with_method(
                                     WatermarkExtractJob(
                                         run_id=request.run_id,
                                         method_name=algorithm["method"],
-                                        params=dict(algorithm.get("params") or {}),
+                                        params=algorithm_params,
                                         input_dir=attacked_dir,
                                         output_dir=extracted_dir,
                                         message=request.message,
                                         device=request.device,
                                         seed=int(seed),
-                                    )
+                                    ),
+                                    watermark_method,
                                 )
                                 extract_elapsed_ms = (time.perf_counter() - extract_started) * 1000
                                 extract_error = "; ".join(
@@ -1105,52 +1167,87 @@ def run_local_experiment(
                                     error=extract_error or None,
                                 )
 
-                                _reset_gpu_peak(request.device)
-                                negative_attack_started = time.perf_counter()
-                                negative_attack_results = run_attack_dir(
-                                    AttackJob(
+                                cached_negative_attack = negative_attack_cache.get(negative_attack_key)
+                                if cached_negative_attack is not None:
+                                    negative_attack_results = cached_negative_attack["results"]
+                                    negative_attack_elapsed_ms = 0.0
+                                    negative_attack_error = cached_negative_attack.get("error")
+                                    _record_runtime_profile(
+                                        paths,
                                         run_id=request.run_id,
-                                        attack_name=attack["method"],
-                                        params=attack_params,
-                                        input_dir=cell_input_dir,
-                                        output_dir=negative_attacked_dir,
+                                        cell_key=cell_key,
+                                        stage="attack_negative_control",
+                                        method=attack["method"],
                                         device=request.device,
-                                        seed=int(seed),
+                                        elapsed_ms=negative_attack_elapsed_ms,
+                                        image_paths=copied_samples,
+                                        status="reused" if not negative_attack_error else "failed",
+                                        error=negative_attack_error or None,
+                                        metadata={
+                                            "attackParams": attack_params,
+                                            "cacheKey": negative_attack_key,
+                                            "cacheHit": True,
+                                        },
                                     )
-                                )
-                                negative_attack_elapsed_ms = (time.perf_counter() - negative_attack_started) * 1000
-                                negative_attack_error = "; ".join(
-                                    result.error
-                                    for result in negative_attack_results
-                                    if getattr(result, "error", None)
-                                )
-                                _record_runtime_profile(
-                                    paths,
-                                    run_id=request.run_id,
-                                    cell_key=cell_key,
-                                    stage="attack_negative_control",
-                                    method=attack["method"],
-                                    device=request.device,
-                                    elapsed_ms=negative_attack_elapsed_ms,
-                                    image_paths=copied_samples,
-                                    status="failed" if negative_attack_error else "succeeded",
-                                    error=negative_attack_error or None,
-                                    metadata={"attackParams": attack_params},
-                                )
+                                else:
+                                    _reset_gpu_peak(request.device)
+                                    negative_attack_started = time.perf_counter()
+                                    negative_attack_results = run_attack_dir_with_attack(
+                                        AttackJob(
+                                            run_id=request.run_id,
+                                            attack_name=attack["method"],
+                                            params=attack_params,
+                                            input_dir=cell_input_dir,
+                                            output_dir=negative_attacked_dir,
+                                            device=request.device,
+                                            seed=int(seed),
+                                        ),
+                                        attack_instance,
+                                    )
+                                    negative_attack_elapsed_ms = (time.perf_counter() - negative_attack_started) * 1000
+                                    negative_attack_error = "; ".join(
+                                        result.error
+                                        for result in negative_attack_results
+                                        if getattr(result, "error", None)
+                                    )
+                                    if not negative_attack_error:
+                                        negative_attack_cache[negative_attack_key] = {
+                                            "outputDir": negative_attacked_dir,
+                                            "results": negative_attack_results,
+                                            "error": None,
+                                        }
+                                    _record_runtime_profile(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        stage="attack_negative_control",
+                                        method=attack["method"],
+                                        device=request.device,
+                                        elapsed_ms=negative_attack_elapsed_ms,
+                                        image_paths=copied_samples,
+                                        status="failed" if negative_attack_error else "succeeded",
+                                        error=negative_attack_error or None,
+                                        metadata={
+                                            "attackParams": attack_params,
+                                            "cacheKey": negative_attack_key,
+                                            "cacheHit": False,
+                                        },
+                                    )
 
                                 _reset_gpu_peak(request.device)
                                 negative_extract_started = time.perf_counter()
-                                negative_extract_results = run_watermark_extract_dir(
+                                negative_extract_results = run_watermark_extract_dir_with_method(
                                     WatermarkExtractJob(
                                         run_id=request.run_id,
                                         method_name=algorithm["method"],
-                                        params=dict(algorithm.get("params") or {}),
+                                        params=algorithm_params,
                                         input_dir=negative_attacked_dir,
                                         output_dir=negative_extracted_dir,
                                         message=request.message,
                                         device=request.device,
                                         seed=int(seed),
-                                    )
+                                    ),
+                                    watermark_method,
                                 )
                                 negative_extract_elapsed_ms = (time.perf_counter() - negative_extract_started) * 1000
                                 negative_extract_error = "; ".join(
@@ -1199,6 +1296,7 @@ def run_local_experiment(
                                     seed=int(seed),
                                     reference_dir=cell_input_dir,
                                     target_dir=attacked_dir,
+                                    device=request.device,
                                 )
                                 _record_quality_pairs(
                                     paths,
@@ -1213,6 +1311,7 @@ def run_local_experiment(
                                     seed=int(seed),
                                     reference_dir=watermarked_dir,
                                     target_dir=attacked_dir,
+                                    device=request.device,
                                 )
 
                                 for result in extract_results:
@@ -1262,7 +1361,6 @@ def run_local_experiment(
                             finally:
                                 shutil.rmtree(attacked_dir, ignore_errors=True)
                                 shutil.rmtree(extracted_dir, ignore_errors=True)
-                                shutil.rmtree(negative_attacked_dir, ignore_errors=True)
                                 shutil.rmtree(negative_extracted_dir, ignore_errors=True)
                                 _write_json(cell_detection_manifest_path, detection_records)
 
@@ -1306,6 +1404,11 @@ def run_local_experiment(
                     break
         finally:
             shutil.rmtree(cell_input_dir, ignore_errors=True)
+            shutil.rmtree(
+                run_root / "staging" / "negative_attacked" / safe_segment(dataset_id),
+                ignore_errors=True,
+            )
+            negative_attack_cache.clear()
             _stage_event(paths, request.run_id, "dataset", "finished", datasetId=dataset_id)
 
     failed = sum(1 for cell in cells if cell["status"] != "succeeded")

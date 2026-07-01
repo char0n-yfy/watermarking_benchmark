@@ -121,7 +121,7 @@ class ConsumerEnhancementAttackTest(unittest.TestCase):
                 )
             )[0]
             self.assertTrue(edit_result.ok, edit_result.error)
-            self.assertEqual(edit_result.metadata["strength"], "strong")
+            self.assertEqual(edit_result.metadata["strength"], 1.0)
 
             sr_result = run_attack_dir(
                 AttackJob(

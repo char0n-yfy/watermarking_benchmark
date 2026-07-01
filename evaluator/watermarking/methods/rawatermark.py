@@ -85,6 +85,57 @@ class RAWatermark(BaseWatermark):
         transform = self._tf.Compose([self._tf.Resize((512, 512)), self._tf.ToTensor()])
         return transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(self._model.spa_watermark.device)
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._to_pil_image is not None
+        assert self._model is not None
+
+        images = self._torch.cat([self._image_tensor(input_path) for input_path, _output_path, _context in jobs], dim=0)
+        with self._torch.no_grad():
+            watermarked = self._model.encode_img(images)
+        for index, (_input_path, output_path, _context) in enumerate(jobs):
+            self._to_pil_image(watermarked[index].detach().cpu().clamp(0, 1)).save(output_path)
+        return [
+            {
+                "payload_type": "zero-bit",
+                "wm_index": self.wm_index,
+                "weights_dir": str(self.weights_dir),
+                "image_size": [512, 512],
+            }
+            for _job in jobs
+        ]
+
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._model is not None
+
+        images = self._torch.cat([self._image_tensor(input_path) for input_path, _context in jobs], dim=0)
+        with self._torch.no_grad():
+            pred, _ = self._model.classifier(images)
+            probs = self._torch.softmax(pred, dim=1)[:, 1].detach().cpu().tolist()
+        return [
+            {
+                "present": float(prob) > 0.5,
+                "watermark_probability": float(prob),
+                "payload_type": "zero-bit",
+                "wm_index": self.wm_index,
+                "weights_dir": str(self.weights_dir),
+            }
+            for prob in probs
+        ]
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load(context.device)
         assert self._torch is not None

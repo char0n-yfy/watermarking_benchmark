@@ -121,6 +121,71 @@ class MaskWMD32Watermark(BaseWatermark):
         assert self._model is not None
         return self._transform()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(next(self._model.parameters()).device)
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._F is not None
+        assert self._TF is not None
+        assert self._model is not None
+
+        image = self._torch.cat([self._image_tensor(input_path) for input_path, _output_path, _context in jobs], dim=0)
+        image_256 = self._F.interpolate(image, size=[256, 256], mode="bilinear")
+        bits_list = [bits_from_message(context.message, self.payload_bits, seed=context.seed) for _input_path, _output_path, context in jobs]
+        message = self._torch.tensor(bits_list, dtype=self._torch.float32, device=image.device)
+        with self._torch.no_grad():
+            wm_image_256 = self._model.encoder(image_256, message, use_jnd=True, jnd_factor=1.3, blue=True)
+            wm_image = (self._F.interpolate((wm_image_256 - image_256), size=[512, 512], mode="bilinear") + image).clamp_(-1, 1)
+
+        for index, (_input_path, output_path, _context) in enumerate(jobs):
+            self._TF.to_pil_image((wm_image[index].detach().cpu() + 1) / 2).save(output_path)
+
+        return [
+            {
+                "bits": bits_to_string(bits),
+                "payload_bits": self.payload_bits,
+                "checkpoint_file": str(self.checkpoint_path),
+                "image_size": [512, 512],
+            }
+            for bits in bits_list
+        ]
+
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._F is not None
+        assert self._model is not None
+
+        image = self._torch.cat([self._image_tensor(input_path) for input_path, _context in jobs], dim=0)
+        image_256 = self._F.interpolate(image, size=[256, 256], mode="bilinear")
+        with self._torch.no_grad():
+            decoded, _ = self._model.decoder(image_256)
+        decoded_batch = decoded.gt(0.5).int().detach().cpu().tolist()
+
+        results: list[Mapping[str, Any]] = []
+        for decoded_bits, (_input_path, context) in zip(decoded_batch, jobs):
+            metadata: dict[str, Any] = {
+                "bits": bits_to_string(decoded_bits),
+                "payload_bits": len(decoded_bits),
+                "checkpoint_file": str(self.checkpoint_path),
+                "image_size": [512, 512],
+            }
+            if context.message is not None:
+                expected = bits_from_message(context.message, len(decoded_bits), seed=context.seed)
+                metadata["expected_bits"] = bits_to_string(expected)
+                metadata["bit_accuracy"] = bit_accuracy(expected, decoded_bits)
+            results.append(metadata)
+        return results
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load(context.device)
         assert self._torch is not None

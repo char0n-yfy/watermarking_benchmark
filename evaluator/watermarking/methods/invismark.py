@@ -123,6 +123,87 @@ class InvisMarkWatermark(BaseWatermark):
         assert self._tf is not None
         return self._tf.Resize(size)(tensor)
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._tf is not None
+        assert self._config is not None
+        assert self._encoder is not None
+
+        images = [self._image_tensor(input_path) for input_path, _output_path, _context in jobs]
+        small_batch = self._torch.cat([self._resize(image, tuple(self._config.image_shape)) for image in images], dim=0)
+        payloads = [self._payload(context) for _input_path, _output_path, context in jobs]
+        bits_list = [payload[0] for payload in payloads]
+        payload_modes = [payload[1] for payload in payloads]
+        secret = self._torch.tensor(bits_list, dtype=self._torch.float32, device=small_batch.device)
+
+        with self._torch.inference_mode():
+            encoded_small = self._encoder(small_batch, secret)
+
+        results: list[Mapping[str, Any]] = []
+        for index, ((_input_path, output_path, _context), image, bits, payload_mode) in enumerate(
+            zip(jobs, images, bits_list, payload_modes)
+        ):
+            with self._torch.inference_mode():
+                diff = self._resize(
+                    encoded_small[index : index + 1] - small_batch[index : index + 1],
+                    tuple(image.shape[-2:]),
+                )
+                watermarked = self._torch.clamp(image + diff, min=-1.0, max=1.0)
+            self._tf.ToPILImage()(((watermarked[0].detach().cpu() + 1.0) / 2.0).clamp(0, 1)).save(output_path)
+            results.append(
+                {
+                    "bits": bits_to_string(bits),
+                    "payload_bits": self.payload_bits,
+                    "payload_mode": payload_mode,
+                    "checkpoint_file": str(self.checkpoint_path),
+                    "weights_dir": str(self.weights_dir),
+                    "image_size": list(self._config.image_shape),
+                }
+            )
+        return results
+
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._config is not None
+        assert self._decoder is not None
+
+        image_batch = self._torch.cat(
+            [self._resize(self._image_tensor(input_path), tuple(self._config.image_shape)) for input_path, _context in jobs],
+            dim=0,
+        )
+        with self._torch.inference_mode():
+            pred = self._decoder(image_batch)
+        decoded_batch = (pred >= 0.5).int().detach().cpu().tolist()
+
+        results: list[Mapping[str, Any]] = []
+        for decoded_bits, (_input_path, context) in zip(decoded_batch, jobs):
+            metadata: dict[str, Any] = {
+                "bits": bits_to_string(decoded_bits),
+                "payload_bits": len(decoded_bits),
+                "checkpoint_file": str(self.checkpoint_path),
+                "weights_dir": str(self.weights_dir),
+                "image_size": list(self._config.image_shape),
+            }
+            if context.message is not None or context.seed is not None:
+                expected, payload_mode = self._payload(context)
+                metadata["expected_bits"] = bits_to_string(expected)
+                metadata["payload_mode"] = payload_mode
+                metadata["bit_accuracy"] = bit_accuracy(expected, decoded_bits)
+            results.append(metadata)
+        return results
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load(context.device)
         assert self._torch is not None

@@ -118,6 +118,86 @@ class HiDDeNWatermark(BaseWatermark):
         tensor = tensor * 2 - 1
         return tensor.unsqueeze(0), original_size
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._np is not None
+        assert self._hidden_utils is not None
+        assert self._model is not None
+        assert self._hidden_config is not None
+
+        prepared = [self._prepare_tensor(input_path) for input_path, _output_path, _context in jobs]
+        image_batch = self._torch.cat([item[0] for item in prepared], dim=0)
+        original_sizes = [item[1] for item in prepared]
+        nbits = int(self._hidden_config.message_length)
+        bits_list = [bits_from_message(context.message, nbits, seed=context.seed) for _input_path, _output_path, context in jobs]
+        message_batch = self._torch.tensor(bits_list, dtype=self._torch.float32, device=self._model.device)
+
+        with self._torch.no_grad():
+            encoded = self._model.encoder_decoder.encoder(image_batch, message_batch)
+            decoded = self._model.encoder_decoder.decoder(encoded)
+
+        decoded_batch = decoded.detach().cpu().numpy().round().clip(0, 1).astype(int).tolist()
+        encoded_np = self._hidden_utils.tensor_to_image(encoded.detach().cpu())
+        results: list[Mapping[str, Any]] = []
+        for index, ((_input_path, output_path, _context), bits, decoded_bits, original_size) in enumerate(
+            zip(jobs, bits_list, decoded_batch, original_sizes)
+        ):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(encoded_np[index]).save(output_path, format="PNG")
+            results.append(
+                {
+                    "bits": bits_to_string(bits),
+                    "decoded_bits": bits_to_string(decoded_bits),
+                    "bit_accuracy_self_check": bit_accuracy(bits, decoded_bits),
+                    "payload_bits": nbits,
+                    "image_size": [int(self._hidden_config.W), int(self._hidden_config.H)],
+                    "original_size": list(original_size),
+                    "checkpoint_file": str(self.checkpoint_file),
+                }
+            )
+        return results
+
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._model is not None
+        assert self._hidden_config is not None
+
+        prepared = [self._prepare_tensor(input_path) for input_path, _context in jobs]
+        image_batch = self._torch.cat([item[0] for item in prepared], dim=0)
+        original_sizes = [item[1] for item in prepared]
+        with self._torch.no_grad():
+            decoded = self._model.encoder_decoder.decoder(image_batch)
+        decoded_batch = decoded.detach().cpu().numpy().round().clip(0, 1).astype(int).tolist()
+
+        results: list[Mapping[str, Any]] = []
+        nbits = int(self._hidden_config.message_length)
+        for decoded_bits, original_size, (_input_path, context) in zip(decoded_batch, original_sizes, jobs):
+            metadata: dict[str, Any] = {
+                "bits": bits_to_string(decoded_bits),
+                "payload_bits": nbits,
+                "image_size": [int(self._hidden_config.W), int(self._hidden_config.H)],
+                "original_size": list(original_size),
+                "checkpoint_file": str(self.checkpoint_file),
+            }
+            if context.message is not None:
+                expected = bits_from_message(context.message, nbits, seed=context.seed)
+                metadata["expected_bits"] = bits_to_string(expected)
+                metadata["bit_accuracy"] = bit_accuracy(expected, decoded_bits)
+            results.append(metadata)
+        return results
+
     def embed_impl(
         self,
         input_path: Path,

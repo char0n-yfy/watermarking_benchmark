@@ -1,15 +1,40 @@
 from __future__ import annotations
 
+import gc
+import json
+import os
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 from . import methods  # noqa: F401 - import registers default watermark methods
-from .base import WatermarkContext, WatermarkEmbedResult, WatermarkExtractResult
+from .base import BaseWatermark, WatermarkContext, WatermarkEmbedResult, WatermarkExtractResult
 from .registry import build_watermark
 
 
 INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
+_WATERMARK_INSTANCE_CACHE: OrderedDict[str, BaseWatermark] = OrderedDict()
+
+
+def _cache_max_entries() -> int:
+    raw = os.getenv("WM_BENCH_WATERMARK_CACHE_MAX_ENTRIES", "2")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _release_watermark_instance(method: BaseWatermark) -> None:
+    del method
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -38,6 +63,40 @@ class WatermarkExtractJob:
     image_exts: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
 
+def _cache_key(name: str, params: dict[str, Any], device: str) -> str:
+    payload = {
+        "name": str(name).lower(),
+        "params": params,
+        "device": str(device),
+    }
+    return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def get_cached_watermark(name: str, params: dict[str, Any], device: str = "cpu") -> BaseWatermark:
+    key = _cache_key(name, params, device)
+    max_entries = _cache_max_entries()
+    if max_entries == 0:
+        return build_watermark(name, **params)
+
+    method = _WATERMARK_INSTANCE_CACHE.get(key)
+    if method is not None:
+        _WATERMARK_INSTANCE_CACHE.move_to_end(key)
+        return method
+
+    method = build_watermark(name, **params)
+    _WATERMARK_INSTANCE_CACHE[key] = method
+    while len(_WATERMARK_INSTANCE_CACHE) > max_entries:
+        _old_key, old_method = _WATERMARK_INSTANCE_CACHE.popitem(last=False)
+        _release_watermark_instance(old_method)
+    return method
+
+
+def clear_watermark_cache() -> None:
+    while _WATERMARK_INSTANCE_CACHE:
+        _old_key, old_method = _WATERMARK_INSTANCE_CACHE.popitem(last=False)
+        _release_watermark_instance(old_method)
+
+
 def iter_image_paths(input_dir: Path, image_exts: Iterable[str]) -> list[Path]:
     normalized_exts = {ext.lower() for ext in image_exts}
     return sorted(
@@ -51,10 +110,9 @@ def iter_image_paths(input_dir: Path, image_exts: Iterable[str]) -> list[Path]:
     )
 
 
-def run_watermark_embed_dir(job: WatermarkEmbedJob) -> list[WatermarkEmbedResult]:
-    method = build_watermark(job.method_name, **job.params)
+def run_watermark_embed_dir_with_method(job: WatermarkEmbedJob, method: BaseWatermark) -> list[WatermarkEmbedResult]:
     image_paths = iter_image_paths(job.input_dir, job.image_exts)
-    results: list[WatermarkEmbedResult] = []
+    jobs: list[tuple[Path, Path, WatermarkContext]] = []
 
     for index, input_path in enumerate(image_paths):
         relative = input_path.relative_to(job.input_dir)
@@ -69,16 +127,21 @@ def run_watermark_embed_dir(job: WatermarkEmbedJob) -> list[WatermarkEmbedResult
             seed=None if job.seed is None else job.seed + index,
             message=job.message,
         )
-        results.append(method.embed(input_path, output_path, context))
+        jobs.append((input_path, output_path, context))
 
+    results = method.embed_many(jobs)
     method.write_embed_manifest(job.output_dir / "watermark_embed_manifest.json", results)
     return results
 
 
-def run_watermark_extract_dir(job: WatermarkExtractJob) -> list[WatermarkExtractResult]:
-    method = build_watermark(job.method_name, **job.params)
+def run_watermark_embed_dir(job: WatermarkEmbedJob) -> list[WatermarkEmbedResult]:
+    method = get_cached_watermark(job.method_name, job.params, job.device)
+    return run_watermark_embed_dir_with_method(job, method)
+
+
+def run_watermark_extract_dir_with_method(job: WatermarkExtractJob, method: BaseWatermark) -> list[WatermarkExtractResult]:
     image_paths = iter_image_paths(job.input_dir, job.image_exts)
-    results: list[WatermarkExtractResult] = []
+    jobs: list[tuple[Path, WatermarkContext]] = []
 
     for index, input_path in enumerate(image_paths):
         relative = input_path.relative_to(job.input_dir)
@@ -92,7 +155,13 @@ def run_watermark_extract_dir(job: WatermarkExtractJob) -> list[WatermarkExtract
             seed=None if job.seed is None else job.seed + index,
             message=job.message,
         )
-        results.append(method.extract(input_path, context))
+        jobs.append((input_path, context))
 
+    results = method.extract_many(jobs)
     method.write_extract_manifest(job.output_dir / "watermark_extract_manifest.json", results)
     return results
+
+
+def run_watermark_extract_dir(job: WatermarkExtractJob) -> list[WatermarkExtractResult]:
+    method = get_cached_watermark(job.method_name, job.params, job.device)
+    return run_watermark_extract_dir_with_method(job, method)

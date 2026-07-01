@@ -78,6 +78,103 @@ class VideoSealWatermark(BaseWatermark):
         tensor = self._torch.tensor(bits, dtype=self._torch.float32, device=next(self._model.parameters()).device).unsqueeze(0)
         return bits, tensor
 
+    def _embed_kwargs(self, messages):
+        assert self._model is not None
+        kwargs: dict[str, Any] = {}
+        signature = inspect.signature(self._model.embed)
+        if "msgs" in signature.parameters:
+            kwargs["msgs"] = messages
+        if "is_video" in signature.parameters:
+            kwargs["is_video"] = False
+        return kwargs
+
+    def _detect_kwargs(self) -> dict[str, Any]:
+        assert self._model is not None
+        kwargs: dict[str, Any] = {}
+        if "is_video" in inspect.signature(self._model.detect).parameters:
+            kwargs["is_video"] = False
+        return kwargs
+
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._tf is not None
+        assert self._model is not None
+
+        device = next(self._model.parameters()).device
+        loaded: list[tuple[int, Path, list[int], Any, Any]] = []
+        for index, (input_path, output_path, context) in enumerate(jobs):
+            bits = bits_from_message(context.message, self.payload_bits, seed=context.seed)
+            message = self._torch.tensor(bits, dtype=self._torch.float32, device=device).unsqueeze(0)
+            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            loaded.append((index, output_path, bits, tensor, message))
+
+        results: list[Mapping[str, Any] | None] = [None] * len(jobs)
+        grouped: dict[tuple[int, int], list[tuple[int, Path, list[int], Any, Any]]] = {}
+        for item in loaded:
+            grouped.setdefault(tuple(item[3].shape[-2:]), []).append(item)
+
+        to_pil = self._tf.ToPILImage()
+        with self._torch.no_grad():
+            for items in grouped.values():
+                tensors = self._torch.cat([item[3] for item in items], dim=0)
+                messages = self._torch.cat([item[4] for item in items], dim=0)
+                outputs = self._model.embed(tensors, **self._embed_kwargs(messages))
+                watermarked = outputs["imgs_w"].detach().cpu().clamp(0, 1)
+                for batch_index, (result_index, output_path, bits, _tensor, _message) in enumerate(items):
+                    to_pil(watermarked[batch_index]).save(output_path)
+                    results[result_index] = {
+                        "bits": bits_to_string(bits),
+                        "payload_bits": self.payload_bits,
+                        "checkpoint_file": str(self.checkpoint_path),
+                    }
+        return [dict(result or {}) for result in results]
+
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._tf is not None
+        assert self._model is not None
+
+        device = next(self._model.parameters()).device
+        loaded: list[tuple[int, WatermarkContext, Any]] = []
+        for index, (input_path, context) in enumerate(jobs):
+            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            loaded.append((index, context, tensor))
+
+        results: list[Mapping[str, Any] | None] = [None] * len(jobs)
+        grouped: dict[tuple[int, int], list[tuple[int, WatermarkContext, Any]]] = {}
+        for item in loaded:
+            grouped.setdefault(tuple(item[2].shape[-2:]), []).append(item)
+
+        with self._torch.no_grad():
+            for items in grouped.values():
+                tensors = self._torch.cat([item[2] for item in items], dim=0)
+                detected = self._model.detect(tensors, **self._detect_kwargs())
+                decoded_batch = (detected["preds"][:, 1:] > 0).int().detach().cpu().tolist()
+                for (result_index, context, _tensor), decoded_bits in zip(items, decoded_batch):
+                    metadata: dict[str, Any] = {
+                        "bits": bits_to_string(decoded_bits),
+                        "payload_bits": len(decoded_bits),
+                        "checkpoint_file": str(self.checkpoint_path),
+                    }
+                    if context.message is not None:
+                        expected = bits_from_message(context.message, len(decoded_bits), seed=context.seed)
+                        metadata["expected_bits"] = bits_to_string(expected)
+                        metadata["bit_accuracy"] = bit_accuracy(expected, decoded_bits)
+                    results[result_index] = metadata
+        return [dict(result or {}) for result in results]
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load(context.device)
         assert self._torch is not None
@@ -86,14 +183,8 @@ class VideoSealWatermark(BaseWatermark):
 
         bits, msg = self._message_tensor(context)
         tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(msg.device)
-        kwargs: dict[str, Any] = {}
-        signature = inspect.signature(self._model.embed)
-        if "msgs" in signature.parameters:
-            kwargs["msgs"] = msg
-        if "is_video" in signature.parameters:
-            kwargs["is_video"] = False
         with self._torch.no_grad():
-            outputs = self._model.embed(tensor, **kwargs)
+            outputs = self._model.embed(tensor, **self._embed_kwargs(msg))
         watermarked = outputs["imgs_w"][0].detach().cpu().clamp(0, 1)
         self._tf.ToPILImage()(watermarked).save(output_path)
         return {
@@ -109,11 +200,8 @@ class VideoSealWatermark(BaseWatermark):
         assert self._model is not None
 
         tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(next(self._model.parameters()).device)
-        kwargs: dict[str, Any] = {}
-        if "is_video" in inspect.signature(self._model.detect).parameters:
-            kwargs["is_video"] = False
         with self._torch.no_grad():
-            detected = self._model.detect(tensor, **kwargs)
+            detected = self._model.detect(tensor, **self._detect_kwargs())
         decoded_bits = (detected["preds"][0, 1:] > 0).int().detach().cpu().tolist()
         metadata: dict[str, Any] = {
             "bits": bits_to_string(decoded_bits),

@@ -127,6 +127,93 @@ class WAMWatermark(BaseWatermark):
         tensor = self._torch.tensor(bits, dtype=self._torch.float32, device=next(self._model.parameters()).device).unsqueeze(0)
         return bits, tensor
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._default_transform is not None
+        assert self._unnormalize_img is not None
+        assert self._save_image is not None
+        assert self._model is not None
+
+        device = next(self._model.parameters()).device
+        loaded: list[tuple[int, Path, list[int], Any, Any]] = []
+        for index, (input_path, output_path, context) in enumerate(jobs):
+            bits = bits_from_message(context.message, self.payload_bits, seed=context.seed)
+            msg = self._torch.tensor(bits, dtype=self._torch.float32, device=device).unsqueeze(0)
+            tensor = self._default_transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            loaded.append((index, output_path, bits, tensor, msg))
+
+        results: list[Mapping[str, Any] | None] = [None] * len(jobs)
+        grouped: dict[tuple[int, int], list[tuple[int, Path, list[int], Any, Any]]] = {}
+        for item in loaded:
+            grouped.setdefault(tuple(item[3].shape[-2:]), []).append(item)
+
+        with self._torch.no_grad():
+            for items in grouped.values():
+                tensors = self._torch.cat([item[3] for item in items], dim=0)
+                messages = self._torch.cat([item[4] for item in items], dim=0)
+                outputs = self._model.embed(tensors, messages)
+                watermarked = self._unnormalize_img(outputs["imgs_w"]).detach().cpu().clamp(0, 1)
+                for batch_index, (result_index, output_path, bits, _tensor, _msg) in enumerate(items):
+                    self._save_image(watermarked[batch_index], output_path)
+                    results[result_index] = {
+                        "bits": bits_to_string(bits),
+                        "payload_bits": self.payload_bits,
+                        "checkpoint_file": str(self.checkpoint_path),
+                        "weights_dir": str(self.weights_dir),
+                    }
+        return [dict(result or {}) for result in results]
+
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._F is not None
+        assert self._default_transform is not None
+        assert self._msg_predict_inference is not None
+        assert self._model is not None
+
+        device = next(self._model.parameters()).device
+        loaded: list[tuple[int, WatermarkContext, Any]] = []
+        for index, (input_path, context) in enumerate(jobs):
+            tensor = self._default_transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            loaded.append((index, context, tensor))
+
+        results: list[Mapping[str, Any] | None] = [None] * len(jobs)
+        grouped: dict[tuple[int, int], list[tuple[int, WatermarkContext, Any]]] = {}
+        for item in loaded:
+            grouped.setdefault(tuple(item[2].shape[-2:]), []).append(item)
+
+        with self._torch.no_grad():
+            for items in grouped.values():
+                tensors = self._torch.cat([item[2] for item in items], dim=0)
+                preds = self._model.detect(tensors)["preds"]
+                mask_preds = self._F.sigmoid(preds[:, 0, :, :])
+                bit_preds = preds[:, 1:, :, :]
+                decoded_batch = self._msg_predict_inference(bit_preds, mask_preds).cpu().float().int().tolist()
+                for (result_index, context, _tensor), decoded in zip(items, decoded_batch):
+                    metadata: dict[str, Any] = {
+                        "bits": bits_to_string(decoded),
+                        "payload_bits": len(decoded),
+                        "checkpoint_file": str(self.checkpoint_path),
+                        "weights_dir": str(self.weights_dir),
+                    }
+                    if context.message is not None:
+                        expected = bits_from_message(context.message, len(decoded), seed=context.seed)
+                        metadata["expected_bits"] = bits_to_string(expected)
+                        metadata["bit_accuracy"] = bit_accuracy(expected, decoded)
+                    results[result_index] = metadata
+        return [dict(result or {}) for result in results]
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load(context.device)
         assert self._torch is not None

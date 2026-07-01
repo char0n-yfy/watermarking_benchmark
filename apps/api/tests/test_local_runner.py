@@ -105,6 +105,57 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertEqual(resumed["cellCount"], 1)
             self.assertEqual(resumed["skippedCells"], 1)
 
+    def test_negative_attack_outputs_are_reused_across_algorithms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            runs_root = root / "runs"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (90, 140, 210)).save(dataset_dir / "sample.png")
+
+            summary = run_local_experiment(
+                LocalRunRequest(
+                    run_id="run_negative_reuse",
+                    selection={
+                        "datasetIds": ["smoke"],
+                        "algorithmIds": [
+                            "alg-invisible-watermark-dwtdct",
+                            "alg-invisible-watermark-dwtdctsvd",
+                        ],
+                        "attackPresetIds": ["atk-identity"],
+                        "seeds": [42],
+                        "maxSamples": 1,
+                    },
+                    resources_root=root / "resources",
+                    runs_root=runs_root,
+                )
+            )
+
+            self.assertEqual(summary["status"], "succeeded")
+            self.assertEqual(summary["cellCount"], 2)
+
+            run_root = runs_root / "run_negative_reuse"
+            profiles = [
+                json.loads(line)
+                for line in (run_root / "runtime_profile.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            negative_profiles = [
+                record
+                for record in profiles
+                if record["stage"] == "attack_negative_control"
+            ]
+            self.assertEqual(len(negative_profiles), 2)
+            self.assertEqual(
+                sum(1 for record in negative_profiles if record.get("metadata", {}).get("cacheHit") is True),
+                1,
+            )
+            self.assertEqual(
+                sum(1 for record in negative_profiles if record.get("status") == "reused"),
+                1,
+            )
+            self.assertFalse((run_root / "staging" / "negative_attacked" / "smoke").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

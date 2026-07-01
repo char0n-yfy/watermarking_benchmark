@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,26 @@ OFFICIAL_MIN_SAMPLES = 5000
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 PERCEPTUAL_RESIZE_SHORT_SIDE = 256
 
+
+
+
+def _parse_batch_size_overrides(raw: str | None) -> dict[str, int]:
+    if not raw:
+        return {}
+    overrides: dict[str, int] = {}
+    for item in raw.replace(";", ",").split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip().lower()
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            continue
+        if key and parsed > 0:
+            overrides[key] = parsed
+    return overrides
 
 
 @dataclass(frozen=True)
@@ -298,6 +319,12 @@ def build_curve_points(scored_cells: list[JsonDict]) -> list[JsonDict]:
 
 def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
     pairs = _pair_images(reference_dir, target_dir)
+    metrics_by_pair = compute_image_quality_pairs(pairs)
+    return summarize_quality_metrics(metrics_by_pair)
+
+
+def summarize_quality_metrics(metrics_by_pair: Iterable[JsonDict]) -> JsonDict:
+    metrics_list = list(metrics_by_pair)
     metric_values: dict[str, list[float]] = {
         "psnr": [],
         "ssim": [],
@@ -310,8 +337,7 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
         "ms_ssim_degradation": [],
         "nmi_degradation": [],
     }
-    for reference_path, target_path in pairs:
-        metrics = compute_image_quality_pair(reference_path, target_path)
+    for metrics in metrics_list:
         psnr = metrics["psnr"]
         ssim = metrics["ssim"]
         ms_ssim = metrics["msSsim"]
@@ -341,7 +367,7 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
     }
     nqd = _mean([value for value in normalized.values() if value is not None])
     return {
-        "sampleCount": len(pairs),
+        "sampleCount": len(metrics_list),
         "metrics": {
             "psnr": _mean(metric_values["psnr"]),
             "ssim": _mean(metric_values["ssim"]),
@@ -360,20 +386,51 @@ def compute_quality_summary(reference_dir: Path, target_dir: Path) -> JsonDict:
         "qualityCompleteness": {
             "availableMetrics": len([value for value in normalized.values() if value is not None]),
             "targetMetrics": 6,
-            "mode": "local-lightweight",
+            "mode": "local-lightweight-batched",
         },
     }
 
 
 def compute_image_quality_pair(reference_path: Path, target_path: Path) -> JsonDict:
+    return compute_image_quality_pairs([(reference_path, target_path)])[0]
+
+
+def compute_image_quality_pairs(pairs: Iterable[tuple[Path, Path]]) -> list[JsonDict]:
+    pair_list = [(Path(reference), Path(target)) for reference, target in pairs]
+    if not pair_list:
+        return []
+    cpu_metrics = _compute_cpu_quality_metrics_batch(pair_list)
+    perceptual_metrics = _compute_perceptual_metrics_batch(pair_list)
+    return [{**cpu, **perceptual} for cpu, perceptual in zip(cpu_metrics, perceptual_metrics)]
+
+
+def _quality_cpu_worker_count(pair_count: int) -> int:
+    configured = os.getenv("WM_BENCH_QUALITY_CPU_WORKERS")
+    if configured:
+        try:
+            value = int(configured)
+            if value > 0:
+                return min(value, max(1, pair_count))
+        except ValueError:
+            pass
+    return min(max(1, pair_count), max(1, min(32, os.cpu_count() or 1)))
+
+
+def _compute_cpu_quality_metrics_batch(pairs: list[tuple[Path, Path]]) -> list[JsonDict]:
+    workers = _quality_cpu_worker_count(len(pairs))
+    if workers <= 1 or len(pairs) <= 1:
+        return [_compute_cpu_quality_metrics(reference, target) for reference, target in pairs]
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(executor.map(lambda pair: _compute_cpu_quality_metrics(*pair), pairs))
+
+
+def _compute_cpu_quality_metrics(reference_path: Path, target_path: Path) -> JsonDict:
     ref, target = _load_pair(reference_path, target_path)
-    perceptual = _compute_perceptual_metrics(reference_path, target_path)
     return {
         "psnr": _psnr(ref, target),
         "ssim": _ssim(ref, target),
         "msSsim": _ms_ssim(ref, target),
         "nmi": _nmi(ref, target),
-        **perceptual,
     }
 
 
@@ -470,30 +527,66 @@ def _load_perceptual_pair(reference_path: Path, target_path: Path, device: Any) 
     return ref_tensor, target_tensor
 
 
-def _compute_perceptual_metrics(reference_path: Path, target_path: Path) -> JsonDict:
+def _perceptual_batch_size(metric: str | None = None) -> int:
+    overrides = _parse_batch_size_overrides(os.getenv("WM_BENCH_PERCEPTUAL_BATCH_SIZES"))
+    raw: Any = None
+    if metric:
+        raw = overrides.get(metric.lower())
+    if raw is None:
+        raw = os.getenv("WM_BENCH_PERCEPTUAL_BATCH_SIZE", "4")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _compute_perceptual_metrics_batch(pairs: list[tuple[Path, Path]]) -> list[JsonDict]:
     backend = _perceptual_backend()
     models = backend.get("models") or {}
-    result: JsonDict = {
-        "lpips": None,
-        "dists": None,
-    }
-    if not models:
-        return result
+    results: list[JsonDict] = [{"lpips": None, "dists": None} for _pair in pairs]
+    if not pairs or not models:
+        return results
 
     try:
         import torch
 
-        ref_tensor, target_tensor = _load_perceptual_pair(reference_path, target_path, backend.get("device", "cpu"))
+        grouped: dict[tuple[int, int], list[tuple[int, Any, Any]]] = {}
+        for index, (reference_path, target_path) in enumerate(pairs):
+            ref_tensor, target_tensor = _load_perceptual_pair(reference_path, target_path, backend.get("device", "cpu"))
+            shape = tuple(ref_tensor.shape[-2:])
+            grouped.setdefault(shape, []).append((index, ref_tensor, target_tensor))
+
+        lpips_model = models.get("lpips")
+        dists_model = models.get("dists")
         with torch.no_grad():
-            lpips_model = models.get("lpips")
-            if lpips_model is not None:
-                result["lpips"] = float(lpips_model(ref_tensor, target_tensor, normalize=True).reshape(-1).mean().item())
-            dists_model = models.get("dists")
-            if dists_model is not None:
-                result["dists"] = float(dists_model(ref_tensor, target_tensor).reshape(-1).mean().item())
+            for items in grouped.values():
+                if lpips_model is not None:
+                    batch_size = _perceptual_batch_size("lpips")
+                    for offset in range(0, len(items), batch_size):
+                        chunk = items[offset : offset + batch_size]
+                        indexes = [item[0] for item in chunk]
+                        ref_batch = torch.cat([item[1] for item in chunk], dim=0)
+                        target_batch = torch.cat([item[2] for item in chunk], dim=0)
+                        values = lpips_model(ref_batch, target_batch, normalize=True).reshape(len(chunk), -1).mean(dim=1)
+                        for result_index, value in zip(indexes, values.detach().cpu().tolist()):
+                            results[result_index]["lpips"] = float(value)
+                if dists_model is not None:
+                    batch_size = _perceptual_batch_size("dists")
+                    for offset in range(0, len(items), batch_size):
+                        chunk = items[offset : offset + batch_size]
+                        indexes = [item[0] for item in chunk]
+                        ref_batch = torch.cat([item[1] for item in chunk], dim=0)
+                        target_batch = torch.cat([item[2] for item in chunk], dim=0)
+                        values = dists_model(ref_batch, target_batch).reshape(len(chunk), -1).mean(dim=1)
+                        for result_index, value in zip(indexes, values.detach().cpu().tolist()):
+                            results[result_index]["dists"] = float(value)
     except Exception:
-        pass
-    return result
+        return results
+    return results
+
+
+def _compute_perceptual_metrics(reference_path: Path, target_path: Path) -> JsonDict:
+    return _compute_perceptual_metrics_batch([(reference_path, target_path)])[0]
 
 
 def _detection_score(result: Any) -> float | None:

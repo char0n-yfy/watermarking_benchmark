@@ -179,6 +179,48 @@ class VineWatermark(BaseWatermark):
     def _payload(self, context: WatermarkContext) -> list[int]:
         return bits_from_message(context.message, self.payload_bits, seed=context.seed)
 
+    def extract_batch_impl(
+        self,
+        jobs: list[tuple[Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load_decoder(jobs[0][1].device)
+        assert self._torch is not None
+        assert self._tf is not None
+        assert self._decoder is not None
+
+        transform = self._tf.Compose(
+            [
+                self._tf.Resize(256, interpolation=self._tf.InterpolationMode.BICUBIC),
+                self._tf.ToTensor(),
+            ]
+        )
+        tensor = self._torch.cat(
+            [transform(Image.open(input_path).convert("RGB")).unsqueeze(0) for input_path, _context in jobs],
+            dim=0,
+        ).to(next(self._decoder.parameters()).device)
+
+        with self._runtime_paths(purge_modules=False), self._torch.inference_mode():
+            pred = self._decoder(tensor)
+        decoded_batch = (pred >= 0.5).int().detach().cpu().tolist()
+
+        results: list[Mapping[str, Any]] = []
+        for decoded, (_input_path, context) in zip(decoded_batch, jobs):
+            metadata: dict[str, Any] = {
+                "bits": bits_to_string(decoded),
+                "payload_bits": len(decoded),
+                "weights_dir": str(self.weights_dir),
+                "decoder_dir": str(self.decoder_dir),
+                "image_size": [256, 256],
+            }
+            if context.message is not None or context.seed is not None:
+                expected = self._payload(context)
+                metadata["expected_bits"] = bits_to_string(expected)
+                metadata["bit_accuracy"] = bit_accuracy(expected, decoded)
+            results.append(metadata)
+        return results
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load_encoder(context.device)
         assert self._torch is not None
