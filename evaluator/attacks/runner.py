@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -17,10 +18,30 @@ from . import (  # noqa: F401 - import registers default attacks
 )
 from .base import AttackContext, AttackResult, BaseAttack
 from .registry import build_attack
+from evaluator.execution import ExecutionProfile, replace_result_execution, resolve_named_cpu_workers
 
 
 INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
 _ATTACK_INSTANCE_CACHE: OrderedDict[str, BaseAttack] = OrderedDict()
+THREAD_SAFE_ATTACK_METHODS = {
+    "identity",
+    "rotation",
+    "resized_crop",
+    "erasing",
+    "brightness",
+    "contrast",
+    "gaussian_blur",
+    "gaussian_noise",
+    "jpeg",
+    "resize",
+    "cew_e1",
+    "cew_e2",
+    "cew_e3",
+    "cew_e4",
+    "screen_shoot",
+    "print_camera",
+    "combined_physical",
+}
 
 
 def _cache_max_entries() -> int:
@@ -126,7 +147,7 @@ def iter_image_paths(input_dir: Path, image_exts: Iterable[str]) -> list[Path]:
 
 def run_attack_dir_with_attack(job: AttackJob, attack: BaseAttack) -> list[AttackResult]:
     image_paths = iter_image_paths(job.input_dir, job.image_exts)
-    results: list[AttackResult] = []
+    tasks: list[tuple[Path, Path, AttackContext]] = []
 
     for index, input_path in enumerate(image_paths):
         relative = input_path.relative_to(job.input_dir)
@@ -140,7 +161,37 @@ def run_attack_dir_with_attack(job: AttackJob, attack: BaseAttack) -> list[Attac
             device=job.device,
             seed=None if job.seed is None else job.seed + index,
         )
-        results.append(attack.attack(input_path, output_path, context))
+        tasks.append((input_path, output_path, context))
+
+    def run_one(task: tuple[Path, Path, AttackContext]) -> AttackResult:
+        input_path, output_path, context = task
+        return attack.attack(input_path, output_path, context)
+
+    thread_safe_parallel = str(attack.name).lower() in THREAD_SAFE_ATTACK_METHODS
+    worker_config = resolve_named_cpu_workers(
+        str(attack.name),
+        overrides_env="WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD",
+        global_env="WM_BENCH_ATTACK_CPU_WORKERS",
+        job_count=len(tasks),
+        enabled=thread_safe_parallel,
+        default_cap=8,
+    )
+    workers = worker_config.value
+    execution = ExecutionProfile(
+        stage="attack",
+        method=str(attack.name),
+        mode="threadpool" if workers > 1 else "serial",
+        job_count=len(tasks),
+        device=job.device,
+        cpu_workers=workers,
+        thread_safe_parallel=thread_safe_parallel,
+        config={"cpuWorkers": worker_config.to_json()},
+    )
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            results = [replace_result_execution(result, execution) for result in executor.map(run_one, tasks)]
+    else:
+        results = [replace_result_execution(run_one(task), execution) for task in tasks]
 
     attack.write_manifest(job.output_dir / "attack_manifest.json", results)
     return results

@@ -19,6 +19,7 @@ from evaluator.image_protocol import (
     canonical_preprocess_image,
     quality_alignment_metadata,
 )
+from evaluator.execution import ExecutionProfile, execution_environment_snapshot, summarize_execution_profiles
 from evaluator.attacks.runner import AttackJob, get_cached_attack, run_attack_dir_with_attack
 from evaluator.watermarking.runner import (
     WatermarkEmbedJob,
@@ -36,7 +37,7 @@ from app.services.resources import (
     iter_image_paths,
     scan_dataset_resources,
 )
-from app.services.scoring import compute_image_quality_pairs
+from app.services.scoring import compute_image_quality_pairs_with_profile
 
 
 JsonDict = dict[str, Any]
@@ -414,7 +415,7 @@ def _record_quality_pairs(
     started = time.perf_counter()
     target_paths = [target_path for _reference_path, target_path in pairs]
     try:
-        metrics_by_pair = compute_image_quality_pairs(pairs)
+        metrics_by_pair, execution_profile = compute_image_quality_pairs_with_profile(pairs)
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
         _record_runtime_profile(
@@ -442,7 +443,7 @@ def _record_quality_pairs(
         elapsed_ms=elapsed_ms,
         image_paths=target_paths,
         status="succeeded",
-        metadata={"scope": scope},
+        metadata={"scope": scope, "execution": execution_profile},
     )
     records = [
         _quality_record(
@@ -565,6 +566,14 @@ def _record_reused_quality_records(
     reuse_policy: str = "identity_attack",
 ) -> list[JsonDict]:
     started = time.perf_counter()
+    execution_profile = ExecutionProfile(
+        stage="quality",
+        method="image_quality",
+        mode="reused",
+        job_count=len(source_records),
+        device=device,
+        details={"sourceScope": source_scope, "reusePolicy": reuse_policy},
+    ).to_json()
     records = _retarget_quality_records(
         source_records,
         run_id=run_id,
@@ -590,7 +599,12 @@ def _record_reused_quality_records(
         elapsed_ms=(time.perf_counter() - started) * 1000,
         image_paths=_list_image_files(target_dir),
         status="reused",
-        metadata={"scope": scope, "sourceScope": source_scope, "reusePolicy": reuse_policy},
+        metadata={
+            "scope": scope,
+            "sourceScope": source_scope,
+            "reusePolicy": reuse_policy,
+            "execution": execution_profile,
+        },
     )
     return records
 
@@ -625,6 +639,14 @@ def _record_identity_quality_pairs(
     started = time.perf_counter()
     metrics = _identity_quality_metrics()
     pairs = _pair_images(reference_dir, target_dir)
+    execution_profile = ExecutionProfile(
+        stage="quality",
+        method="image_quality",
+        mode="reused",
+        job_count=len(pairs),
+        device=device,
+        details={"sourceScope": "identity_noop", "reusePolicy": "identity_noop_perfect"},
+    ).to_json()
     records = [
         {
             **_quality_record(
@@ -659,7 +681,12 @@ def _record_identity_quality_pairs(
         elapsed_ms=(time.perf_counter() - started) * 1000,
         image_paths=[target_path for _reference_path, target_path in pairs],
         status="reused",
-        metadata={"scope": scope, "sourceScope": "identity_noop", "reusePolicy": "identity_noop_perfect"},
+        metadata={
+            "scope": scope,
+            "sourceScope": "identity_noop",
+            "reusePolicy": "identity_noop_perfect",
+            "execution": execution_profile,
+        },
     )
     return records
 
@@ -1108,6 +1135,7 @@ def run_local_experiment(
                 "watermarkOutputPolicy": CANONICAL_OUTPUT_POLICY,
                 "qualityAlignmentPolicy": "resize target to reference only when sizes differ",
             },
+            "executionPolicy": execution_environment_snapshot(),
             "resume": request.resume,
             "createdAt": _utc_timestamp(),
         },
@@ -1328,6 +1356,7 @@ def run_local_experiment(
                             image_paths=copied_samples,
                             status="failed" if embed_error else "succeeded",
                             error=embed_error,
+                            metadata={"execution": summarize_execution_profiles(embed_results)},
                         )
                         if embed_error:
                             raise RuntimeError(embed_error)
@@ -1502,7 +1531,10 @@ def run_local_experiment(
                                     image_paths=_list_image_files(watermarked_dir),
                                     status="failed" if attack_error else "succeeded",
                                     error=attack_error or None,
-                                    metadata={"attackParams": attack_params},
+                                    metadata={
+                                        "attackParams": attack_params,
+                                        "execution": summarize_execution_profiles(attack_results),
+                                    },
                                 )
 
                                 _reset_gpu_peak(request.device)
@@ -1535,6 +1567,7 @@ def run_local_experiment(
                                     image_paths=_list_image_files(attacked_dir),
                                     status="failed" if extract_error else "succeeded",
                                     error=extract_error or None,
+                                    metadata={"execution": summarize_execution_profiles(extract_results)},
                                 )
 
                                 cached_negative_attack = negative_attack_cache.get(negative_attack_key)
@@ -1574,6 +1607,7 @@ def run_local_experiment(
                                             "attackParams": attack_params,
                                             "cacheKey": negative_attack_key,
                                             "cacheHit": True,
+                                            "execution": summarize_execution_profiles(negative_attack_results),
                                         },
                                     )
                                 else:
@@ -1635,6 +1669,7 @@ def run_local_experiment(
                                             "attackParams": attack_params,
                                             "cacheKey": negative_attack_key,
                                             "cacheHit": False,
+                                            "execution": summarize_execution_profiles(negative_attack_results),
                                         },
                                     )
 
@@ -1670,6 +1705,7 @@ def run_local_experiment(
                                     image_paths=_list_image_files(negative_attacked_dir),
                                     status="failed" if negative_extract_error else "succeeded",
                                     error=negative_extract_error or None,
+                                    metadata={"execution": summarize_execution_profiles(negative_extract_results)},
                                 )
 
                                 operation_results = [

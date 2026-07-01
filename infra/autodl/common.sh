@@ -6,7 +6,7 @@ autodl_cd_repo() {
   cd "${AUTODL_REPO_ROOT}"
 }
 
-autodl_load_env_file_defaults() {
+autodl_load_env_file() {
   local env_file="$1"
   local line key value
 
@@ -16,14 +16,13 @@ autodl_load_env_file_defaults() {
     line="${line%$'\r'}"
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "${line}" || "${line}" == \#* || "${line}" != *= ]] && continue
+    [[ -z "${line}" || "${line}" == \#* || "${line}" != *"="* ]] && continue
 
     key="${line%%=*}"
     value="${line#*=}"
     key="${key#"${key%%[![:space:]]*}"}"
     key="${key%"${key##*[![:space:]]}"}"
     [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    [[ -n "${!key+x}" ]] && continue
 
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
@@ -43,7 +42,7 @@ autodl_load_env() {
     cp .env.autodl.example .env.autodl
   fi
 
-  autodl_load_env_file_defaults "${AUTODL_REPO_ROOT}/.env.autodl"
+  autodl_load_env_file "${AUTODL_REPO_ROOT}/.env.autodl"
 
   export WM_BENCH_DOTENV_PATH="${AUTODL_REPO_ROOT}/.env.autodl"
   export APP_ENV="${APP_ENV:-autodl}"

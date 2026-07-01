@@ -23,7 +23,10 @@ from evaluator.watermarking.methods.mbrs import MBRSWatermark
 from evaluator.watermarking.methods.pimog import PIMoGWatermark
 from evaluator.watermarking.methods.pixelseal import PixelSealWatermark
 from evaluator.watermarking.methods.rawatermark import RAWatermark
+from evaluator.watermarking.methods.invisible_watermark import InvisibleWatermarkRivaGan
 from evaluator.watermarking.methods.ssl_watermarking import SSLWatermark
+from evaluator.watermarking.methods.stegastamp import StegaStampWatermark
+from evaluator.watermarking.methods.trustmark import TrustMarkCWatermark, TrustMarkQWatermark
 from evaluator.watermarking.methods.videoseal import VideoSealWatermark
 from evaluator.watermarking.methods.vine import VineWatermark
 from evaluator.watermarking.methods.wam import WAMWatermark
@@ -53,6 +56,23 @@ class DummyBatchWatermark(BaseWatermark):
     def extract_batch_impl(self, jobs):
         self.extract_batches.append(len(jobs))
         return [{"bits": "10", "message": "decoded", "mode": "batch"} for _job in jobs]
+
+
+class FailingBatchWatermark(BaseWatermark):
+    name = "failing-batch"
+
+    def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext):
+        output_path.write_text("single", encoding="utf-8")
+        return {"mode": "single"}
+
+    def extract_impl(self, input_path: Path, context: WatermarkContext):
+        return {"bits": "1", "mode": "single"}
+
+    def embed_batch_impl(self, jobs):
+        raise RuntimeError("batch unavailable")
+
+    def extract_batch_impl(self, jobs):
+        raise RuntimeError("batch unavailable")
 
 
 class SmallOutputWatermark(BaseWatermark):
@@ -100,6 +120,83 @@ class WatermarkBatchingTest(unittest.TestCase):
                 self.assertTrue(all(result.ok for result in extract_results))
                 self.assertTrue(all(result.metadata["mode"] == "batch" for result in embed_results))
                 self.assertTrue(all(result.bits == "10" for result in extract_results))
+                self.assertTrue(all(result.metadata["executionMode"] == "batch" for result in embed_results))
+                self.assertEqual(embed_results[0].metadata["execution"]["configuredBatchSize"], 2)
+                self.assertEqual(embed_results[-1].metadata["execution"]["actualBatchSize"], 1)
+        finally:
+            if previous is None:
+                os.environ.pop("WM_BENCH_WATERMARK_BATCH_SIZE", None)
+            else:
+                os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = previous
+
+    def test_base_watermark_uses_stage_specific_batch_sizes(self) -> None:
+        previous = {
+            key: os.environ.get(key)
+            for key in (
+                "WM_BENCH_WATERMARK_BATCH_SIZE",
+                "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
+                "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES",
+            )
+        }
+        os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = "2"
+        os.environ["WM_BENCH_WATERMARK_EMBED_BATCH_SIZES"] = "dummy-batch=3"
+        os.environ["WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES"] = "dummy-batch=4"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                method = DummyBatchWatermark()
+                contexts = [
+                    WatermarkContext(run_id="run", sample_id=f"sample-{index}", method_name=method.name)
+                    for index in range(7)
+                ]
+                embed_jobs = []
+                extract_jobs = []
+                for index, context in enumerate(contexts):
+                    input_path = root / f"input-{index}.txt"
+                    output_path = root / f"output-{index}.txt"
+                    input_path.write_text("input", encoding="utf-8")
+                    embed_jobs.append((input_path, output_path, context))
+                    extract_jobs.append((output_path, context))
+
+                embed_results = method.embed_many(embed_jobs)
+                extract_results = method.extract_many(extract_jobs)
+
+                self.assertEqual(method.embed_batches, [3, 3, 1])
+                self.assertEqual(method.extract_batches, [4, 3])
+                self.assertEqual(embed_results[0].metadata["execution"]["configuredBatchSize"], 3)
+                self.assertEqual(extract_results[0].metadata["execution"]["configuredBatchSize"], 4)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_base_watermark_records_batch_fallback(self) -> None:
+        previous = os.environ.get("WM_BENCH_WATERMARK_BATCH_SIZE")
+        os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = "2"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                method = FailingBatchWatermark()
+                context = WatermarkContext(run_id="run", sample_id="sample", method_name=method.name)
+                embed_jobs = []
+                extract_jobs = []
+                for index in range(3):
+                    input_path = root / f"input-{index}.txt"
+                    output_path = root / f"output-{index}.txt"
+                    input_path.write_text("input", encoding="utf-8")
+                    embed_jobs.append((input_path, output_path, context))
+                    extract_jobs.append((output_path, context))
+
+                embed_results = method.embed_many(embed_jobs)
+                extract_results = method.extract_many(extract_jobs)
+
+                self.assertTrue(all(result.ok for result in embed_results))
+                self.assertTrue(all(result.ok for result in extract_results))
+                self.assertTrue(all(result.metadata["executionMode"] == "batch_fallback_serial" for result in embed_results))
+                self.assertTrue(all(result.metadata["execution"]["fallback"] for result in extract_results))
+                self.assertIn("RuntimeError", embed_results[0].metadata["execution"]["fallbackReason"])
         finally:
             if previous is None:
                 os.environ.pop("WM_BENCH_WATERMARK_BATCH_SIZE", None)
@@ -144,6 +241,12 @@ class WatermarkBatchingTest(unittest.TestCase):
             InvisMarkWatermark,
             WAMWatermark,
             RAWatermark,
+            SSLWatermark,
+            VineWatermark,
+            InvisibleWatermarkRivaGan,
+            StegaStampWatermark,
+            TrustMarkCWatermark,
+            TrustMarkQWatermark,
         ]
         extract_batch_classes = [
             *embed_batch_classes,

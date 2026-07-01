@@ -10,6 +10,8 @@ from typing import Any, Iterable
 
 from PIL import Image
 
+from evaluator.execution import ExecutionProfile, resolve_cpu_workers, resolve_named_batch_size
+
 
 JsonDict = dict[str, Any]
 
@@ -20,27 +22,6 @@ PRACTICAL_NQD_THRESHOLD = 0.8
 OFFICIAL_MIN_SAMPLES = 5000
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 PERCEPTUAL_RESIZE_SHORT_SIDE = 256
-
-
-
-
-def _parse_batch_size_overrides(raw: str | None) -> dict[str, int]:
-    if not raw:
-        return {}
-    overrides: dict[str, int] = {}
-    for item in raw.replace(";", ",").split(","):
-        item = item.strip()
-        if not item or "=" not in item:
-            continue
-        key, value = item.split("=", 1)
-        key = key.strip().lower()
-        try:
-            parsed = int(value.strip())
-        except ValueError:
-            continue
-        if key and parsed > 0:
-            overrides[key] = parsed
-    return overrides
 
 
 @dataclass(frozen=True)
@@ -396,32 +377,58 @@ def compute_image_quality_pair(reference_path: Path, target_path: Path) -> JsonD
 
 
 def compute_image_quality_pairs(pairs: Iterable[tuple[Path, Path]]) -> list[JsonDict]:
+    metrics, _profile = compute_image_quality_pairs_with_profile(pairs)
+    return metrics
+
+
+def compute_image_quality_pairs_with_profile(pairs: Iterable[tuple[Path, Path]]) -> tuple[list[JsonDict], JsonDict]:
     pair_list = [(Path(reference), Path(target)) for reference, target in pairs]
     if not pair_list:
-        return []
-    cpu_metrics = _compute_cpu_quality_metrics_batch(pair_list)
-    perceptual_metrics = _compute_perceptual_metrics_batch(pair_list)
-    return [{**cpu, **perceptual} for cpu, perceptual in zip(cpu_metrics, perceptual_metrics)]
-
-
-def _quality_cpu_worker_count(pair_count: int) -> int:
-    configured = os.getenv("WM_BENCH_QUALITY_CPU_WORKERS")
-    if configured:
-        try:
-            value = int(configured)
-            if value > 0:
-                return min(value, max(1, pair_count))
-        except ValueError:
-            pass
-    return min(max(1, pair_count), max(1, min(32, os.cpu_count() or 1)))
+        profile = ExecutionProfile(
+            stage="quality",
+            method="image_quality",
+            mode="empty",
+            job_count=0,
+        ).to_json()
+        return [], profile
+    cpu_metrics, cpu_profile = _compute_cpu_quality_metrics_batch_with_profile(pair_list)
+    perceptual_metrics, perceptual_profile = _compute_perceptual_metrics_batch_with_profile(pair_list)
+    profile = {
+        "stage": "quality",
+        "method": "image_quality",
+        "mode": "hybrid",
+        "jobCount": len(pair_list),
+        "cpu": cpu_profile,
+        "perceptual": perceptual_profile,
+    }
+    return [{**cpu, **perceptual} for cpu, perceptual in zip(cpu_metrics, perceptual_metrics)], profile
 
 
 def _compute_cpu_quality_metrics_batch(pairs: list[tuple[Path, Path]]) -> list[JsonDict]:
-    workers = _quality_cpu_worker_count(len(pairs))
+    metrics, _profile = _compute_cpu_quality_metrics_batch_with_profile(pairs)
+    return metrics
+
+
+def _compute_cpu_quality_metrics_batch_with_profile(pairs: list[tuple[Path, Path]]) -> tuple[list[JsonDict], JsonDict]:
+    worker_config = resolve_cpu_workers(
+        "WM_BENCH_QUALITY_CPU_WORKERS",
+        len(pairs),
+        enabled=True,
+        default_cap=32,
+    )
+    workers = worker_config.value
+    profile = ExecutionProfile(
+        stage="quality_cpu",
+        method="psnr_ssim_ms_ssim_nmi",
+        mode="threadpool" if workers > 1 else "serial",
+        job_count=len(pairs),
+        cpu_workers=workers,
+        config={"cpuWorkers": worker_config.to_json()},
+    ).to_json()
     if workers <= 1 or len(pairs) <= 1:
-        return [_compute_cpu_quality_metrics(reference, target) for reference, target in pairs]
+        return [_compute_cpu_quality_metrics(reference, target) for reference, target in pairs], profile
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        return list(executor.map(lambda pair: _compute_cpu_quality_metrics(*pair), pairs))
+        return list(executor.map(lambda pair: _compute_cpu_quality_metrics(*pair), pairs)), profile
 
 
 def _compute_cpu_quality_metrics(reference_path: Path, target_path: Path) -> JsonDict:
@@ -516,75 +523,155 @@ def _resize_for_perceptual(image: Image.Image) -> Image.Image:
     return image.resize(size, Image.Resampling.BICUBIC)
 
 
-def _load_perceptual_pair(reference_path: Path, target_path: Path, device: Any) -> tuple[Any, Any]:
-    import torch
+def _load_perceptual_pair(reference_path: Path, target_path: Path) -> tuple[Any, Any]:
     from torchvision.transforms import functional as TF
 
     reference = Image.open(reference_path).convert("RGB")
     target = Image.open(target_path).convert("RGB").resize(reference.size, Image.Resampling.BICUBIC)
     reference = _resize_for_perceptual(reference)
     target = target.resize(reference.size, Image.Resampling.BICUBIC)
-    ref_tensor = TF.to_tensor(reference).unsqueeze(0).to(device)
-    target_tensor = TF.to_tensor(target).unsqueeze(0).to(device)
+    ref_tensor = TF.to_tensor(reference).unsqueeze(0)
+    target_tensor = TF.to_tensor(target).unsqueeze(0)
     return ref_tensor, target_tensor
 
 
+def _move_perceptual_batch(batch: Any, device: Any) -> Any:
+    import torch
+
+    device_text = str(device)
+    non_blocking = False
+    if device_text.startswith("cuda") and torch.cuda.is_available():
+        try:
+            batch = batch.pin_memory()
+            non_blocking = True
+        except Exception:
+            non_blocking = False
+    return batch.to(device, non_blocking=non_blocking)
+
+
+def _perceptual_batch_config(metric: str | None = None):
+    return resolve_named_batch_size(
+        metric or "default",
+        overrides_env="WM_BENCH_PERCEPTUAL_BATCH_SIZES",
+        global_env="WM_BENCH_PERCEPTUAL_BATCH_SIZE",
+        default=4,
+    )
+
+
 def _perceptual_batch_size(metric: str | None = None) -> int:
-    overrides = _parse_batch_size_overrides(os.getenv("WM_BENCH_PERCEPTUAL_BATCH_SIZES"))
-    raw: Any = None
-    if metric:
-        raw = overrides.get(metric.lower())
-    if raw is None:
-        raw = os.getenv("WM_BENCH_PERCEPTUAL_BATCH_SIZE", "4")
-    try:
-        return max(1, int(raw))
-    except (TypeError, ValueError):
-        return 4
+    return _perceptual_batch_config(metric).value
 
 
 def _compute_perceptual_metrics_batch(pairs: list[tuple[Path, Path]]) -> list[JsonDict]:
+    metrics, _profile = _compute_perceptual_metrics_batch_with_profile(pairs)
+    return metrics
+
+
+def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]]) -> tuple[list[JsonDict], JsonDict]:
     backend = _perceptual_backend()
     models = backend.get("models") or {}
     results: list[JsonDict] = [{"lpips": None, "dists": None} for _pair in pairs]
-    if not pairs or not models:
-        return results
+    base_details = {
+        "models": sorted(str(name) for name in models.keys()),
+        "errors": dict(backend.get("errors") or {}),
+    }
+    if not pairs:
+        return results, ExecutionProfile(
+            stage="quality_perceptual",
+            method="lpips_dists",
+            mode="empty",
+            job_count=0,
+            device=str(backend.get("device") or "cpu"),
+            details=base_details,
+        ).to_json()
+    if not models:
+        return results, ExecutionProfile(
+            stage="quality_perceptual",
+            method="lpips_dists",
+            mode="unavailable",
+            job_count=len(pairs),
+            device=str(backend.get("device") or "cpu"),
+            details=base_details,
+        ).to_json()
 
     try:
         import torch
 
+        device = backend.get("device", "cpu")
         grouped: dict[tuple[int, int], list[tuple[int, Any, Any]]] = {}
         for index, (reference_path, target_path) in enumerate(pairs):
-            ref_tensor, target_tensor = _load_perceptual_pair(reference_path, target_path, backend.get("device", "cpu"))
+            ref_tensor, target_tensor = _load_perceptual_pair(reference_path, target_path)
             shape = tuple(ref_tensor.shape[-2:])
             grouped.setdefault(shape, []).append((index, ref_tensor, target_tensor))
 
         lpips_model = models.get("lpips")
         dists_model = models.get("dists")
+        batch_configs: dict[str, JsonDict] = {}
+        actual_batches: dict[str, list[int]] = {"lpips": [], "dists": []}
         with torch.no_grad():
             for items in grouped.values():
                 if lpips_model is not None:
-                    batch_size = _perceptual_batch_size("lpips")
+                    batch_config = _perceptual_batch_config("lpips")
+                    batch_configs["lpips"] = batch_config.to_json()
+                    batch_size = batch_config.value
                     for offset in range(0, len(items), batch_size):
                         chunk = items[offset : offset + batch_size]
+                        actual_batches["lpips"].append(len(chunk))
                         indexes = [item[0] for item in chunk]
-                        ref_batch = torch.cat([item[1] for item in chunk], dim=0)
-                        target_batch = torch.cat([item[2] for item in chunk], dim=0)
+                        ref_batch = _move_perceptual_batch(torch.cat([item[1] for item in chunk], dim=0), device)
+                        target_batch = _move_perceptual_batch(torch.cat([item[2] for item in chunk], dim=0), device)
                         values = lpips_model(ref_batch, target_batch, normalize=True).reshape(len(chunk), -1).mean(dim=1)
                         for result_index, value in zip(indexes, values.detach().cpu().tolist()):
                             results[result_index]["lpips"] = float(value)
                 if dists_model is not None:
-                    batch_size = _perceptual_batch_size("dists")
+                    batch_config = _perceptual_batch_config("dists")
+                    batch_configs["dists"] = batch_config.to_json()
+                    batch_size = batch_config.value
                     for offset in range(0, len(items), batch_size):
                         chunk = items[offset : offset + batch_size]
+                        actual_batches["dists"].append(len(chunk))
                         indexes = [item[0] for item in chunk]
-                        ref_batch = torch.cat([item[1] for item in chunk], dim=0)
-                        target_batch = torch.cat([item[2] for item in chunk], dim=0)
+                        ref_batch = _move_perceptual_batch(torch.cat([item[1] for item in chunk], dim=0), device)
+                        target_batch = _move_perceptual_batch(torch.cat([item[2] for item in chunk], dim=0), device)
                         values = dists_model(ref_batch, target_batch).reshape(len(chunk), -1).mean(dim=1)
                         for result_index, value in zip(indexes, values.detach().cpu().tolist()):
                             results[result_index]["dists"] = float(value)
-    except Exception:
-        return results
-    return results
+        actual_batch_values = [size for sizes in actual_batches.values() for size in sizes]
+        max_actual_batch = max(actual_batch_values) if actual_batch_values else None
+        max_configured_batch = max(
+            (int(config["value"]) for config in batch_configs.values() if isinstance(config.get("value"), int)),
+            default=None,
+        )
+        profile = ExecutionProfile(
+            stage="quality_perceptual",
+            method="lpips_dists",
+            mode="batch" if max_actual_batch and max_actual_batch > 1 else "serial",
+            job_count=len(pairs),
+            device=str(backend.get("device") or "cpu"),
+            configured_batch_size=max_configured_batch,
+            actual_batch_size=max_actual_batch,
+            supports_batch=True,
+            details={
+                **base_details,
+                "groupCount": len(grouped),
+                "batchConfigs": batch_configs,
+                "actualBatches": {key: value for key, value in actual_batches.items() if value},
+                "transferPolicy": "cpu_stack_then_batch_to_device",
+            },
+        ).to_json()
+    except Exception as exc:
+        profile = ExecutionProfile(
+            stage="quality_perceptual",
+            method="lpips_dists",
+            mode="failed_fallback_none",
+            job_count=len(pairs),
+            device=str(backend.get("device") or "cpu"),
+            supports_batch=True,
+            fallback=True,
+            fallback_reason=f"{type(exc).__name__}: {exc}",
+            details=base_details,
+        ).to_json()
+    return results, profile
 
 
 def _compute_perceptual_metrics(reference_path: Path, target_path: Path) -> JsonDict:
