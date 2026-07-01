@@ -76,6 +76,7 @@ export interface WeightDownloadJob {
   id: string;
   method: string;
   weightsDir: string;
+  weightsPackId?: string;
   status: WeightDownloadStatus;
   progress: number;
   totalItems: number;
@@ -85,6 +86,7 @@ export interface WeightDownloadJob {
   outputDir?: string | null;
   archivePath?: string | null;
   bytesDownloaded?: number;
+  totalBytes?: number;
 }
 
 export interface ResourceInstallationResult {
@@ -113,6 +115,7 @@ export interface AlgorithmVersion {
   available?: boolean;
   params?: Record<string, unknown>;
   weightsDir?: string | null;
+  weightsPackId?: string | null;
   weightsPath?: string | null;
   weightsInstalled?: boolean;
   weightsDownloadReady?: boolean;
@@ -141,6 +144,7 @@ export interface AttackPreset {
   available?: boolean;
   params?: Record<string, unknown>;
   weightsDir?: string | null;
+  weightsPackId?: string | null;
   weightsPath?: string | null;
   weightsInstalled?: boolean;
   weightsDownloadReady?: boolean;

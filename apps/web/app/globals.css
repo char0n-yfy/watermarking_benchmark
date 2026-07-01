@@ -1685,6 +1685,7 @@ a.button {
 .resource-detail-browser-panel .panel-body {
   overflow-x: visible;
   max-height: none;
+  overflow-anchor: none;
 }
 
 .resource-filter-stack {
@@ -2093,6 +2094,13 @@ a.button {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-soft);
+}
+
+.dataset-download-panel.is-download-active {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
 .download-action-row {

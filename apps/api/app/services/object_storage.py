@@ -118,8 +118,11 @@ class ObjectStorageClient:
     def watermark_weights_key(self, weights_dir: str) -> str:
         return self.object_key("weights", "watermarking", weights_dir, "weights.zip")
 
-    def attack_weights_key(self, weights_dir: str) -> str:
-        return self.object_key("weights", "attacks", weights_dir, "weights.zip")
+    def attack_weights_key(self, pack_id: str) -> str:
+        return self.object_key("weights", "attacks", "methods", pack_id, "weights.zip")
+
+    def attack_weights_legacy_key(self, storage_dir: str) -> str:
+        return self.object_key("weights", "attacks", storage_dir, "weights.zip")
 
     def dataset_compact_key(self, dataset_id: str) -> str:
         return self.object_key("datasets", dataset_id, "compact-1000.zip")

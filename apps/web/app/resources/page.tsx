@@ -357,6 +357,16 @@ export default function ResourcesPage() {
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [pageSize, setPageSize, responsivePageSize] = useResponsiveResourcePageSize();
   const pageListRef = useRef<HTMLDivElement | null>(null);
+  const detailPanelBodyRef = useRef<HTMLDivElement | null>(null);
+  const preservedDetailScrollRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const panel = detailPanelBodyRef.current;
+    if (panel && preservedDetailScrollRef.current != null) {
+      panel.scrollTop = preservedDetailScrollRef.current;
+      preservedDetailScrollRef.current = null;
+    }
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -598,6 +608,10 @@ export default function ResourcesPage() {
   }, []);
 
   async function refreshAlgorithms() {
+    const panel = detailPanelBodyRef.current;
+    if (panel) {
+      preservedDetailScrollRef.current = panel.scrollTop;
+    }
     const remoteAlgorithms = await fetchAlgorithms({ remote: true });
     if (remoteAlgorithms.length > 0) {
       setAlgorithms(remoteAlgorithms);
@@ -605,6 +619,10 @@ export default function ResourcesPage() {
   }
 
   async function refreshAttacks() {
+    const panel = detailPanelBodyRef.current;
+    if (panel) {
+      preservedDetailScrollRef.current = panel.scrollTop;
+    }
     const remoteAttacks = await fetchAttacks({ remote: true });
     if (remoteAttacks.length > 0) {
       setAttacks(remoteAttacks);
@@ -764,7 +782,7 @@ export default function ResourcesPage() {
             <h2>{t.resources.resourceDetails}</h2>
             <PackageCheck size={16} />
           </div>
-          <div className="panel-body">
+          <div className="panel-body" ref={detailPanelBodyRef}>
             {selectedResource ? (
               <ResourceDetail
                 language={language}
@@ -828,6 +846,49 @@ function shouldShowLongDescription(resource: BrowserResource, summary: string) {
   return description.length > summary.length + 12;
 }
 
+function formatByteCount(value: number) {
+  if (value >= 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${value} B`;
+}
+
+function attackPresetForResource(resource: BrowserResource): AttackPreset | undefined {
+  if (resource.type !== "attacks") {
+    return undefined;
+  }
+  if (resource.attack) {
+    return resource.attack;
+  }
+  const candidates = resource.attacks ?? [];
+  const weighted = candidates.filter((item) => item.weightsPackRequired === true);
+  if (weighted.length === 0) {
+    return undefined;
+  }
+  if (resource.category === "3d_viewpoint_rerendering") {
+    return (
+      weighted.find(
+        (item) => item.viewpointMotion === resource.method || item.displayMethod === resource.method
+      ) ?? weighted[0]
+    );
+  }
+  return (
+    weighted.find((item) => item.method === resource.method || item.displayMethod === resource.method) ??
+    weighted[0]
+  );
+}
+
+function attackPackInstalledForResource(resource: BrowserResource): boolean {
+  const preset = attackPresetForResource(resource);
+  return preset?.weightsInstalled === true;
+}
+
 function ResourceDetail({
   resource,
   language,
@@ -846,14 +907,9 @@ function ResourceDetail({
   onAttackInstalled: () => void;
 }) {
   const attackDetail = resource.type === "attacks" ? resource.attackDetail : undefined;
-  const attackWeightTarget =
-    resource.type === "attacks"
-      ? resource.attack ?? resource.attacks?.find((item) => item.weightsPackRequired === true)
-      : undefined;
-  const attackGroupWeightsInstalled =
-    resource.type === "attacks" && resource.attacks
-      ? resource.attacks.every((item) => item.weightsPackRequired !== true || item.weightsInstalled === true)
-      : attackWeightTarget?.weightsInstalled === true;
+  const attackWeightTarget = resource.type === "attacks" ? attackPresetForResource(resource) : undefined;
+  const attackPackInstalled =
+    resource.type === "attacks" ? attackPackInstalledForResource(resource) : false;
   const reference = useMemo(() => {
     if (resource.type === "watermarks") {
       return getWatermarkReference(resource.method);
@@ -945,6 +1001,37 @@ function ResourceDetail({
         </div>
       ) : null}
 
+      {resource.type === "datasets" && resource.catalog ? (
+        <DatasetDownloadPanel
+          catalog={resource.catalog}
+          language={language}
+          onCatalogUpdate={onCatalogItemUpdate}
+          onInstalled={onDatasetInstalled}
+          t={t}
+        />
+      ) : null}
+
+      {resource.type === "watermarks" && resource.algorithm?.weightsPackRequired ? (
+        <WeightDownloadPanel
+          algorithm={resource.algorithm}
+          key={`watermark-${resource.id}`}
+          onInstalled={onAlgorithmInstalled}
+          t={t}
+          variant="watermark"
+        />
+      ) : null}
+
+      {resource.type === "attacks" && attackWeightTarget?.weightsPackRequired ? (
+        <WeightDownloadPanel
+          attack={attackWeightTarget}
+          packInstalled={attackPackInstalled}
+          key={`attack-${resource.id}-${attackWeightTarget.id}`}
+          onInstalled={onAttackInstalled}
+          t={t}
+          variant="attack"
+        />
+      ) : null}
+
       {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
 
       {resource.strengths && resource.type !== "attacks" ? (
@@ -980,37 +1067,6 @@ function ResourceDetail({
           language={language}
           labels={referenceLabels}
           reference={reference}
-        />
-      ) : null}
-
-      {resource.type === "datasets" && resource.catalog ? (
-        <DatasetDownloadPanel
-          catalog={resource.catalog}
-          language={language}
-          onCatalogUpdate={onCatalogItemUpdate}
-          onInstalled={onDatasetInstalled}
-          t={t}
-        />
-      ) : null}
-
-      {resource.type === "watermarks" && resource.algorithm?.weightsPackRequired ? (
-        <WeightDownloadPanel
-          algorithm={resource.algorithm}
-          key={`watermark-${resource.id}`}
-          onInstalled={onAlgorithmInstalled}
-          t={t}
-          variant="watermark"
-        />
-      ) : null}
-
-      {resource.type === "attacks" && attackWeightTarget?.weightsPackRequired ? (
-        <WeightDownloadPanel
-          attack={attackWeightTarget}
-          groupWeightsInstalled={attackGroupWeightsInstalled}
-          key={`attack-${resource.id}-${attackWeightTarget.id}`}
-          onInstalled={onAttackInstalled}
-          t={t}
-          variant="attack"
         />
       ) : null}
 
@@ -1156,14 +1212,14 @@ function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): Bro
 function WeightDownloadPanel({
   algorithm,
   attack,
-  groupWeightsInstalled,
+  packInstalled,
   onInstalled,
   t,
   variant
 }: {
   algorithm?: AlgorithmVersion;
   attack?: AttackPreset;
-  groupWeightsInstalled?: boolean;
+  packInstalled?: boolean;
   onInstalled: () => void;
   t: ReturnType<typeof useLanguage>["t"];
   variant: "watermark" | "attack";
@@ -1205,14 +1261,19 @@ function WeightDownloadPanel({
       return;
     }
     installedJobRef.current = job.id;
-    void onInstalled();
+    const timer = window.setTimeout(() => {
+      void onInstalled();
+    }, 1200);
+    return () => window.clearTimeout(timer);
   }, [job, onInstalled]);
 
   useEffect(() => {
-    if (resource?.weightsInstalled === true) {
-      setJob(null);
+    const inFlight = job?.status === "queued" || job?.status === "running";
+    if (resource?.weightsInstalled !== true || inFlight || job?.status === "succeeded") {
+      return;
     }
-  }, [resource?.weightsInstalled, resource?.id]);
+    setJob(null);
+  }, [resource?.weightsInstalled, resource?.id, job?.status]);
 
   useEffect(() => {
     setUninstallError(null);
@@ -1224,11 +1285,16 @@ function WeightDownloadPanel({
   }
 
   const installed =
-    (variant === "attack" ? groupWeightsInstalled : resource.weightsInstalled === true) || job?.status === "succeeded";
+    (variant === "attack" ? packInstalled === true : resource.weightsInstalled === true) ||
+    job?.status === "succeeded";
   const jobInFlight = job?.status === "queued" || job?.status === "running";
   const canStart = resource.weightsDownloadReady === true && !installed && !jobInFlight;
   const progressPercent =
-    job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
+    job && job.totalBytes && job.totalBytes > 0
+      ? Math.round(((job.bytesDownloaded ?? 0) / job.totalBytes) * 100)
+      : job && job.totalItems > 0
+        ? Math.round((job.completedItems / job.totalItems) * 100)
+        : job?.progress ?? 0;
   const panelTitle = variant === "watermark" ? t.resources.weightDownloadPanel : t.resources.attackWeightDownloadPanel;
   const alreadyInstalled =
     variant === "watermark" ? t.resources.weightsAlreadyInstalled : t.resources.attackWeightsAlreadyInstalled;
@@ -1275,7 +1341,13 @@ function WeightDownloadPanel({
   }
 
   return (
-    <div className="detail-section dataset-download-panel">
+    <div
+      className={
+        jobInFlight
+          ? "detail-section dataset-download-panel is-download-active"
+          : "detail-section dataset-download-panel"
+      }
+    >
       <strong>{panelTitle}</strong>
       {!showUninstallOnly && installed ? <div className="risk ok">{alreadyInstalled}</div> : null}
       {!showUninstallOnly && !canStart && !installed && !jobInFlight ? <div className="risk warn">{unavailable}</div> : null}
@@ -1318,9 +1390,13 @@ function WeightDownloadPanel({
           </div>
           <small>
             {job.completedItems}/{job.totalItems} · {job.status}
+            {job.totalBytes && job.totalBytes > 0
+              ? ` · ${formatByteCount(job.bytesDownloaded ?? 0)} / ${formatByteCount(job.totalBytes)}`
+              : null}
           </small>
+          {job.message && !(variant === "attack" && job.status === "succeeded") ? <small>{job.message}</small> : null}
           {job.status === "failed" && job.error ? <div className="risk error">{t.resources.downloadFailed}: {job.error}</div> : null}
-          {job.status === "succeeded" ? (
+          {job.status === "succeeded" && variant !== "attack" ? (
             <div className="dataset-download-success">
               <div className="badge ok">{readyLabel}</div>
             </div>
@@ -1497,7 +1573,13 @@ function DatasetDownloadPanel({
   }
 
   return (
-    <div className="detail-section dataset-download-panel">
+    <div
+      className={
+        jobInFlight
+          ? "detail-section dataset-download-panel is-download-active"
+          : "detail-section dataset-download-panel"
+      }
+    >
       <strong>{t.resources.downloadPanel}</strong>
       <div className="dataset-download-choice-grid" aria-label={t.resources.downloadChoice}>
         <button
@@ -1810,8 +1892,8 @@ function attackMethodToResource(
   const available = methodAttacks.some((attack) => attack.available !== false);
   const requiresGpu = methodAttacks.some((attack) => attack.requiresGpu);
   const needsWeights = methodAttacks.some((attack) => attack.weightsPackRequired === true);
-  const weightsReady =
-    !needsWeights || methodAttacks.every((attack) => attack.weightsPackRequired !== true || attack.weightsInstalled === true);
+  const packPreset = methodAttacks.find((attack) => attack.weightsPackRequired === true);
+  const weightsReady = !needsWeights || packPreset?.weightsInstalled === true;
   const name = attackResourceDisplayName(category, method, methodAttacks, language);
   const englishName = attackResourceEnglishName(category, method, methodAttacks);
   const singleAttack = methodAttacks.length === 1 ? methodAttacks[0] : undefined;
@@ -2103,7 +2185,7 @@ function attackResourceWeights(
   attacks: AttackPreset[],
   language: "zh" | "en"
 ): AttackResourceWeight[] {
-  const rows = weightRowsFromAttacks(attacks, language);
+  const rows = weightRowsFromAttacks(attacks, language, category, method);
   if (method === REGENERATION_VAE_METHOD) {
     rows.push(
       {
@@ -2173,23 +2255,32 @@ function attackResourceNotes(category: string, method: string, language: "zh" | 
   return [];
 }
 
-function weightRowsFromAttacks(attacks: AttackPreset[], language: "zh" | "en"): AttackResourceWeight[] {
+function weightRowsFromAttacks(
+  attacks: AttackPreset[],
+  language: "zh" | "en",
+  category?: string,
+  method?: string
+): AttackResourceWeight[] {
   const rows = new Map<string, AttackResourceWeight>();
   for (const attack of attacks) {
-    if (attack.weightsPackRequired !== true || !attack.weightsDir) {
+    if (attack.weightsPackRequired !== true) {
       continue;
     }
-    const id = attack.weightsDir;
-    const current = rows.get(id);
+    const id = attack.weightsPackId ?? attack.method;
     const tone: BrowserResource["statusTone"] = attack.weightsInstalled === true ? "ok" : attack.weightsDownloadReady ? "warn" : "error";
+    const current = rows.get(id);
     if (current) {
       current.tone = current.tone === "ok" && tone !== "ok" ? tone : current.tone;
       continue;
     }
+    const label =
+      category === "3d_viewpoint_rerendering" && method
+        ? `${viewpointMotionLabel(method, language)} (${id})`
+        : attackDisplayName(attack, language);
     rows.set(id, {
       id,
-      label: language === "zh" ? "攻击权重包" : "Attack weight pack",
-      value: "",
+      label,
+      value: attack.weightsPackId ?? attack.method,
       tone
     });
   }
