@@ -24,6 +24,7 @@ WEIGHT_FILE_SUFFIXES = {
 WATERMARK_WEIGHT_DIRS: dict[str, str] = {
     "chunkyseal": "chunkyseal",
     "cin": "cin",
+    "dwsf": "dwsf",
     "hidden": "hidden",
     "invismark": "invismark",
     "invisible-watermark-rivagan": "rivaGan",

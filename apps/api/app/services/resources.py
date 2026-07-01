@@ -117,6 +117,7 @@ def get_dataset_by_id(resources_root: Path, dataset_id: str) -> DatasetResource:
 WATERMARK_DISPLAY_NAMES = {
     "chunkyseal": "ChunkySeal",
     "cin": "CIN",
+    "dwsf": "DWSF",
     "hidden": "HiDDeN",
     "invismark": "InvisMark",
     "invisible-watermark-dwtdct": "Invisible Watermark DWT-DCT",

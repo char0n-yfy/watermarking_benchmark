@@ -171,6 +171,7 @@ const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
   rawatermark: { en: "RAWatermark", rank: 40, zh: "RAWatermark" },
   "maskwm-d32": { en: "MaskWM-D32", rank: 41, zh: "MaskWM-D32" },
   wam: { en: "WAM", rank: 42, zh: "WAM" },
+  dwsf: { en: "DWSF", rank: 43, zh: "DWSF" },
   videoseal: { en: "VideoSeal", rank: 60, zh: "VideoSeal" },
   pixelseal: { en: "PixelSeal", rank: 61, zh: "PixelSeal" },
   chunkyseal: { en: "ChunkySeal", rank: 62, zh: "ChunkySeal" },

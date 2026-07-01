@@ -2,6 +2,7 @@ from .base import BaseWatermark, WatermarkContext, WatermarkEmbedResult, Waterma
 from .methods import (
     ChunkySealWatermark,
     CINWatermark,
+    DWSFWatermark,
     HiDDeNWatermark,
     InvisMarkWatermark,
     InvisibleWatermarkDwtDct,
@@ -27,6 +28,7 @@ __all__ = [
     "BaseWatermark",
     "ChunkySealWatermark",
     "CINWatermark",
+    "DWSFWatermark",
     "HiDDeNWatermark",
     "InvisMarkWatermark",
     "InvisibleWatermarkDwtDct",
