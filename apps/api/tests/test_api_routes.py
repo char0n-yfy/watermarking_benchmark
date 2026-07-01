@@ -52,6 +52,7 @@ class ApiRoutesTest(unittest.TestCase):
                 },
             )
             self.assertEqual(config_response.status_code, 200)
+            self.assertIn("charset=utf-8", config_response.headers.get("content-type", "").lower())
             config_id = config_response.json()["id"]
 
             rename_response = client.patch(
@@ -66,10 +67,17 @@ class ApiRoutesTest(unittest.TestCase):
                 json={"configId": config_id},
             )
             self.assertEqual(run_response.status_code, 200)
+            self.assertIn("charset=utf-8", run_response.headers.get("content-type", "").lower())
             self.assertEqual(run_response.json()["status"], "queued")
+
+            if (Path(__file__).resolve().parents[3] / "apps" / "web" / "out").exists():
+                runs_page_response = client.get("/runs", headers={"accept": "text/html"})
+                self.assertEqual(runs_page_response.status_code, 200)
+                self.assertIn("text/html", runs_page_response.headers.get("content-type", "").lower())
 
             runtime_response = client.get("/system/runtime")
             self.assertEqual(runtime_response.status_code, 200)
+            self.assertIn("charset=utf-8", runtime_response.headers.get("content-type", "").lower())
             self.assertEqual(runtime_response.json()["device"], "cpu")
 
             readiness_response = client.get("/system/readiness")

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +20,7 @@ from .services.experiment_service import ExperimentService
 from .services.object_storage import get_object_storage_client
 from .services.attack_weight_download import AttackWeightDownloadService
 from .services.parallel_tuning import ParallelTuningService
-from .services.readiness import collect_readiness
+from .services.readiness import collect_readiness, is_fresh_worker
 from .services.resources import (
     get_attack_catalog_item,
     get_watermark_catalog_item,
@@ -56,6 +56,10 @@ def create_app() -> FastAPI:
             return path if path.is_absolute() else settings.project_root / path
         return Path(settings.project_root) / ".env.autodl"
 
+    def accepts_html_page(request: Request) -> bool:
+        accept = request.headers.get("accept", "").lower()
+        return "text/html" in accept and "application/json" not in accept
+
     app = FastAPI(
         title="Watermark Benchmark API",
         version="0.1.0",
@@ -70,6 +74,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def ensure_json_utf8_charset(request, call_next):
+        response = await call_next(request)
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("application/json") and "charset=" not in content_type.lower():
+            response.headers["content-type"] = "application/json; charset=utf-8"
+        return response
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {
@@ -83,6 +95,7 @@ def create_app() -> FastAPI:
 
     @app.get("/system/runtime")
     def runtime() -> dict[str, object]:
+        workers = service.list_worker_heartbeats()
         return {
             "environment": settings.environment,
             "device": settings.device,
@@ -93,7 +106,8 @@ def create_app() -> FastAPI:
             "apiHost": settings.api_host,
             "apiPort": settings.api_port,
             "workerPollSeconds": settings.worker_poll_seconds,
-            "workers": service.list_worker_heartbeats(),
+            "workers": [worker for worker in workers if is_fresh_worker(worker, settings.worker_poll_seconds)],
+            "knownWorkerCount": len(workers),
         }
 
     @app.get("/system/readiness")
@@ -392,8 +406,10 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.get("/runs")
-    def list_runs(scope: Optional[str] = Query(default=None)) -> list[dict[str, object]]:
+    @app.get("/runs", response_model=None)
+    def list_runs(request: Request, scope: Optional[str] = Query(default=None)) -> list[dict[str, object]] | FileResponse:
+        if scope is None and accepts_html_page(request) and web_out.exists():
+            return exported_page_response("runs")
         if scope not in {None, "active", "unfinished"}:
             raise HTTPException(status_code=400, detail="Unsupported runs scope")
         return service.list_runs(scope=scope)
