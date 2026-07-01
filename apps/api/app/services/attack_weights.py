@@ -11,7 +11,7 @@ from app.services.watermark_weights import iter_weight_files
 
 
 VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
-    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase\d+_(point|ahead)"
+    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
 )
 
 DIFFUSION_WEIGHT_MARKER = "diffusion/sd2-1-base"

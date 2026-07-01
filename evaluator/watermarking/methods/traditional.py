@@ -107,6 +107,7 @@ class TraditionalDctWatermark(_TraditionalWatermark):
 class TraditionalSpreadDctWatermark(_TraditionalWatermark):
     name = "traditional-spread-dct"
     description = "Internal two-coefficient spread-spectrum DCT image watermark."
+    thread_safe_parallel = True
 
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         import numpy as np

@@ -5,7 +5,7 @@ import random
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
 import numpy as np
 
@@ -101,6 +101,17 @@ def bit_accuracy(expected: Iterable[int], decoded: Iterable[int]) -> float:
 
 def bits_to_numpy(bits: Iterable[int]) -> np.ndarray:
     return np.asarray([int(bit) for bit in bits], dtype=np.uint8)
+
+
+def move_tensor_to_device(tensor: Any, device: Any) -> Any:
+    non_blocking = False
+    if str(device).startswith("cuda"):
+        try:
+            tensor = tensor.pin_memory()
+            non_blocking = True
+        except Exception:
+            non_blocking = False
+    return tensor.to(device, non_blocking=non_blocking)
 
 
 @contextmanager

@@ -7,6 +7,8 @@ from typing import Literal
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
+from evaluator.image_io import save_png_image
+
 try:
     import cv2
 except Exception:  # pragma: no cover - optional dependency
@@ -22,8 +24,7 @@ def load_rgb(path: Path) -> Image.Image:
 
 
 def save_png(image: Image.Image, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.convert("RGB").save(path, format="PNG")
+    save_png_image(image, path)
 
 
 def to_uint8(image: Image.Image) -> np.ndarray:
@@ -31,7 +32,7 @@ def to_uint8(image: Image.Image) -> np.ndarray:
 
 
 def from_uint8(array: np.ndarray) -> Image.Image:
-    return Image.fromarray(np.clip(array, 0, 255).astype(np.uint8), mode="RGB")
+    return Image.fromarray(np.clip(array, 0, 255).astype(np.uint8)).convert("RGB")
 
 
 def resize_max_side(image: Image.Image, max_side: int, method: int = Image.Resampling.LANCZOS) -> Image.Image:

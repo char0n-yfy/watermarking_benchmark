@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import tempfile
@@ -112,6 +113,8 @@ class ConsumerEnhancementAttackTest(unittest.TestCase):
                     self.assertTrue(manifest[0]["ok"])
                     self.assertEqual(manifest[0]["metadata"]["inputSize"], [40, 32])
                     self.assertEqual(manifest[0]["metadata"]["outputSize"], list(expected_size))
+                    self.assertEqual(manifest[0]["metadata"]["execution"]["stage"], "attack")
+                    self.assertIn(manifest[0]["metadata"]["execution"]["mode"], {"serial", "threadpool", "batch"})
 
     def test_edit_strength_and_sr_scale_are_runtime_params(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,6 +171,8 @@ class ConsumerEnhancementAttackTest(unittest.TestCase):
         ]
         if not all(path.exists() for path in required):
             self.skipTest("downloaded CEW-D2/D3 checkpoints are not present")
+        if importlib.util.find_spec("einops") is None:
+            self.skipTest("einops is required for downloaded CEW-D2/D3 torch backends")
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

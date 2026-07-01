@@ -151,9 +151,9 @@ class ResourceCatalogTest(unittest.TestCase):
         viewpoint_resources = [
             item for item in resources if item["category"] == "3d_viewpoint_rerendering"
         ]
-        attack = get_attack_catalog_item("3d_viewpoint_rerendering_rotate_phase0_point")
+        attack = get_attack_catalog_item("3d_viewpoint_rerendering_rotate_point")
 
-        self.assertEqual(len(viewpoint_resources), 64)
+        self.assertEqual(len(viewpoint_resources), 8)
         self.assertNotIn("3d_viewpoint_rerendering", {item["method"] for item in resources})
         self.assertEqual(attack["category"], "3d_viewpoint_rerendering")
         self.assertTrue(all(item["category"] == "3d_viewpoint_rerendering" for item in viewpoint_resources))
@@ -162,20 +162,111 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(attack["strengths"], [0.0, 0.5, 1.0])
         self.assertTrue(attack["requiresGpu"])
         self.assertEqual(attack["viewpointMotion"], "rotate")
-        self.assertEqual(attack["viewpointPhase"], 0)
+        self.assertEqual(attack["viewpointPhasePolicy"], "random_per_sample")
+        self.assertEqual(attack["viewpointPhaseChoices"], list(range(8)))
         self.assertEqual(attack["viewpointLookatMode"], "point")
         self.assertEqual(
             Counter(item["viewpointMotion"] for item in viewpoint_resources),
-            Counter({"swipe": 16, "shake": 16, "rotate": 16, "rotate_forward": 16}),
+            Counter({"swipe": 2, "shake": 2, "rotate": 2, "rotate_forward": 2}),
+        )
+        self.assertEqual(
+            Counter(item["viewpointLookatMode"] for item in viewpoint_resources),
+            Counter({"point": 4, "ahead": 4}),
         )
         self.assertEqual(
             get_attack_catalog_item("3d_viewpoint_rerendering_phase7_ahead")["method"],
-            "3d_viewpoint_rerendering_rotate_phase7_ahead",
+            "3d_viewpoint_rerendering_rotate_ahead",
         )
         self.assertEqual(
-            get_attack_catalog_item("3d_viewpoint_rerendering_rotate_forward_phase7_ahead")["strengthParam"],
+            get_attack_catalog_item("3d_viewpoint_rerendering_rotate_forward_phase7_ahead")["method"],
+            "3d_viewpoint_rerendering_rotate_forward_ahead",
+        )
+        self.assertEqual(
+            get_attack_catalog_item("3d_viewpoint_rerendering_rotate_forward_ahead")["strengthParam"],
             "strength",
         )
+
+    def test_sharp_viewpoint_rerendering_renders_one_random_phase_per_image(self) -> None:
+        import numpy as np
+
+        cls = ATTACK_REGISTRY["3d_viewpoint_rerendering_rotate_point"]
+        attack = cls(allow_download=False, save_intermediates=False)
+
+        class FakeGaussians:
+            def to(self, _device):
+                return self
+
+        class FakeIO:
+            @staticmethod
+            def load_rgb(_path):
+                return np.zeros((4, 4, 3), dtype=np.uint8), None, 1.0
+
+        class FakeSceneMetaData:
+            def __init__(self, focal_length_px, resolution_px, color_space):
+                self.focal_length_px = focal_length_px
+                self.resolution_px = resolution_px
+                self.color_space = color_space
+
+        class FakeGSplat:
+            class GSplatRenderer:
+                def __init__(self, color_space):
+                    self.color_space = color_space
+
+        selected_sample_ids: list[str] = []
+        rendered_phases: list[float] = []
+
+        def select_phase(context):
+            selected_sample_ids.append(context.sample_id)
+            return 3
+
+        def render_variant(_gaussians, _metadata, *, phase, **_kwargs):
+            rendered_phases.append(phase)
+            return Image.new("RGB", (4, 4), (10, 20, 30))
+
+        attack._ensure_predictor = lambda _device: None
+        attack._predictor = object()
+        attack._predictor_device = "cpu"
+        attack._checkpoint_path = Path("sharp.pt")
+        attack._checkpoint_url = "local"
+        attack._source_root = Path("ml_sharp")
+        attack._sharp_modules = {
+            "io": FakeIO,
+            "predict_image": lambda *_args, **_kwargs: FakeGaussians(),
+            "SceneMetaData": FakeSceneMetaData,
+            "save_ply": lambda *_args, **_kwargs: None,
+            "gsplat": FakeGSplat,
+        }
+        attack._select_phase_index = select_phase
+        attack._render_variant = render_variant
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = Path(tmpdir) / "input.png"
+            output_path = Path(tmpdir) / "output.png"
+            Image.new("RGB", (4, 4), (80, 120, 160)).save(input_path)
+            metadata = attack.apply(
+                input_path,
+                output_path,
+                context=type(
+                    "Context",
+                    (),
+                    {
+                        "run_id": "run",
+                        "sample_id": "sample",
+                        "attack_name": attack.name,
+                        "params": attack.params,
+                        "workspace_dir": Path(tmpdir),
+                        "device": "cpu",
+                        "seed": 42,
+                    },
+                )(),
+            )
+
+            self.assertEqual(selected_sample_ids, ["sample"])
+            self.assertEqual(rendered_phases, [3 / 8])
+            self.assertEqual(metadata["phase_index"], 3)
+            self.assertEqual(metadata["variant_count"], 1)
+            self.assertEqual(metadata["variant_output_path"], None)
+            self.assertTrue(output_path.exists())
 
     def test_physical_channel_attacks_are_strength_mapped_without_level_variants(self) -> None:
         resources = list_attack_resources()
@@ -230,12 +321,12 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(_attack_params(get_attack_catalog_item("screen_shoot"), 0.5), {"strength": 0.5})
         self.assertEqual(_attack_params(get_attack_catalog_item("combined_physical"), 1.0), {"strength": 1.0})
         self.assertEqual(
-            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering_rotate_phase0_point"), 1.0),
+            _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering_rotate_point"), 1.0),
             {"strength": 1.0},
         )
 
     def test_attack_strength_overrides_are_used_by_runner(self) -> None:
-        attack_id = "atk-3d-viewpoint-rerendering-rotate-phase0-point"
+        attack_id = "atk-3d-viewpoint-rerendering-rotate-point"
         with tempfile.TemporaryDirectory() as tmpdir:
             normalized = normalize_selection(
                 {
@@ -261,7 +352,7 @@ class ResourceCatalogTest(unittest.TestCase):
         )
 
     def test_attack_strength_overrides_are_used_by_estimator(self) -> None:
-        attack_id = "atk-3d-viewpoint-rerendering-rotate-phase0-point"
+        attack_id = "atk-3d-viewpoint-rerendering-rotate-point"
         with tempfile.TemporaryDirectory() as tmpdir:
             resources_root = Path(tmpdir)
             dataset_dir = resources_root / "datasets" / "demo"

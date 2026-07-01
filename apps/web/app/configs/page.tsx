@@ -127,10 +127,9 @@ const REGENERATION_VAE_MODEL_NAMES = Object.keys(REGENERATION_VAE_QUALITY_BY_MOD
 const CONSUMER_STRENGTH_METHODS = ["cew_e1", "cew_e2", "cew_e3", "cew_e4"] as const;
 const CONSUMER_SUPER_RESOLUTION_METHODS = ["cew_s1", "cew_s2", "cew_s3"] as const;
 const CONSUMER_SUPER_RESOLUTION_SCALES = [2, 4];
-const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase(\d+)_(point|ahead)$/;
+const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)$/;
 const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
 const VIEWPOINT_LOOKAT_MODES = ["point", "ahead"] as const;
-const VIEWPOINT_PHASES = [0, 1, 2, 3, 4, 5, 6, 7];
 
 type DisplayMeta = {
   en: string;
@@ -276,7 +275,6 @@ type ViewpointSettings = StrengthRangeSettings & {
   enabled: boolean;
   motions: ViewpointMotion[];
   lookatModes: ViewpointLookatMode[];
-  phases: number[];
 };
 type DistortionSettings = StrengthRangeSettings;
 type PhysicalSettings = StrengthRangeSettings & {
@@ -295,7 +293,6 @@ const defaultViewpointSettings: ViewpointSettings = {
   enabled: false,
   motions: [],
   lookatModes: ["point", "ahead"],
-  phases: VIEWPOINT_PHASES,
   strengthMin: 0,
   strengthMax: 1,
   strengthLevelCount: 5
@@ -328,7 +325,6 @@ const defaultConsumerEnhancementSettings: ConsumerEnhancementSettings = {
 
 function parseViewpointMethod(method: string):
   | {
-      phaseIndex: number;
       motion: ViewpointMotion;
       lookatMode: ViewpointLookatMode;
     }
@@ -338,9 +334,8 @@ function parseViewpointMethod(method: string):
     return null;
   }
   return {
-    phaseIndex: Number(match[2]),
     motion: match[1] as ViewpointMotion,
-    lookatMode: match[3] as ViewpointLookatMode
+    lookatMode: match[2] as ViewpointLookatMode
   };
 }
 
@@ -489,9 +484,7 @@ function attackRank(attack: AttackPreset) {
   const categoryRank = ATTACK_CATEGORY_ORDER[attackCategory(attack)] ?? 90;
   const parsed = parseViewpointMethod(attack.method);
   const methodRank = parsed
-    ? VIEWPOINT_MOTION_ORDER.indexOf(parsed.motion) * 16 +
-      parsed.phaseIndex * 2 +
-      (parsed.lookatMode === "point" ? 0 : 1)
+    ? VIEWPOINT_MOTION_ORDER.indexOf(parsed.motion) * 2 + (parsed.lookatMode === "point" ? 0 : 1)
     : ATTACK_DISPLAY[attack.method]?.rank ?? 99;
   return categoryRank * 100 + methodRank;
 }
@@ -654,22 +647,19 @@ function viewpointAttackIdsForSettings(attacks: AttackPreset[], settings: Viewpo
   if (
     !settings.enabled ||
     settings.motions.length === 0 ||
-    settings.lookatModes.length === 0 ||
-    settings.phases.length === 0
+    settings.lookatModes.length === 0
   ) {
     return [];
   }
   const motions = new Set(settings.motions);
   const lookatModes = new Set(settings.lookatModes);
-  const phases = new Set(settings.phases);
   return attacks
     .filter((attack) => {
       const parsed = parseViewpointMethod(attack.method);
       return (
         parsed !== null &&
         motions.has(parsed.motion) &&
-        lookatModes.has(parsed.lookatMode) &&
-        phases.has(parsed.phaseIndex)
+        lookatModes.has(parsed.lookatMode)
       );
     })
     .map((attack) => attack.id);
@@ -1591,11 +1581,7 @@ export default function ConfigsPage() {
                                 lookatModes:
                                   viewpointSettings.lookatModes.length > 0
                                     ? viewpointSettings.lookatModes
-                                    : [...VIEWPOINT_LOOKAT_MODES],
-                                phases:
-                                  viewpointSettings.phases.length > 0
-                                    ? viewpointSettings.phases
-                                    : [...VIEWPOINT_PHASES]
+                                    : [...VIEWPOINT_LOOKAT_MODES]
                               }
                             : viewpointSettings;
                         if (visibleViewpointAttacks.length > 0) {
@@ -1713,9 +1699,6 @@ export default function ConfigsPage() {
                     const inferredViewpointLookatModes = VIEWPOINT_LOOKAT_MODES.filter((lookatMode) =>
                       selectedViewpointAttacks.some((attack) => parseViewpointMethod(attack.method)?.lookatMode === lookatMode)
                     );
-                    const inferredViewpointPhases = VIEWPOINT_PHASES.filter((phase) =>
-                      selectedViewpointAttacks.some((attack) => parseViewpointMethod(attack.method)?.phaseIndex === phase)
-                    );
                     const renderedViewpointSettings =
                       isViewpointCategory && selectedViewpointIds.length > 0 && !viewpointSettings.enabled
                         ? {
@@ -1725,8 +1708,7 @@ export default function ConfigsPage() {
                             lookatModes:
                               inferredViewpointLookatModes.length > 0
                                 ? inferredViewpointLookatModes
-                                : [...VIEWPOINT_LOOKAT_MODES],
-                            phases: inferredViewpointPhases.length > 0 ? inferredViewpointPhases : [...VIEWPOINT_PHASES]
+                                : [...VIEWPOINT_LOOKAT_MODES]
                           }
                         : viewpointSettings;
                     const displayedCategoryTotal = isViewpointCategory ? VIEWPOINT_MOTION_ORDER.length : categoryAttacks.length;
@@ -1875,12 +1857,6 @@ export default function ConfigsPage() {
                         : [...renderedViewpointSettings.lookatModes, lookatMode];
                       updateViewpointSettings({ ...renderedViewpointSettings, lookatModes });
                     };
-                    const toggleViewpointPhase = (phase: number) => {
-                      const phases = renderedViewpointSettings.phases.includes(phase)
-                        ? renderedViewpointSettings.phases.filter((value) => value !== phase)
-                        : sortStrengths([...renderedViewpointSettings.phases, phase]);
-                      updateViewpointSettings({ ...renderedViewpointSettings, phases });
-                    };
 
                     return (
                       <div className="attack-group" key={category}>
@@ -1898,8 +1874,7 @@ export default function ConfigsPage() {
                                     ...renderedViewpointSettings,
                                     enabled: true,
                                     motions: [...VIEWPOINT_MOTION_ORDER],
-                                    lookatModes: [...VIEWPOINT_LOOKAT_MODES],
-                                    phases: [...VIEWPOINT_PHASES]
+                                    lookatModes: [...VIEWPOINT_LOOKAT_MODES]
                                   };
                                   updateViewpointSettings(nextSettings);
                                   return;
@@ -2109,24 +2084,6 @@ export default function ConfigsPage() {
                                         type="checkbox"
                                       />
                                       <span>{viewpointLookatLabel(language, lookatMode)}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
-
-                              <div className="viewpoint-settings-row">
-                                <span className="viewpoint-settings-label">
-                                  {language === "zh" ? "相位" : "Phase"}
-                                </span>
-                                <div className="viewpoint-toggle-grid phase-options">
-                                  {VIEWPOINT_PHASES.map((phase) => (
-                                    <label className="viewpoint-toggle" key={phase}>
-                                      <input
-                                        checked={renderedViewpointSettings.phases.includes(phase)}
-                                        onChange={() => toggleViewpointPhase(phase)}
-                                        type="checkbox"
-                                      />
-                                      <span>{phase}</span>
                                     </label>
                                   ))}
                                 </div>

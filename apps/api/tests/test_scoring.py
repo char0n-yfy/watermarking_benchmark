@@ -16,6 +16,7 @@ from app.services.scoring import (
     PROTOCOL_ID,
     aggregate_benchmark_score,
     attack_category,
+    compute_image_quality_pairs_with_profile,
     compute_quality_summary,
     score_cell,
 )
@@ -25,7 +26,7 @@ class ScoringTest(unittest.TestCase):
     def test_ctrlregen_and_nfpa_are_regeneration_scoring_categories(self) -> None:
         self.assertEqual(attack_category("noise_to_image"), "regeneration-single")
         self.assertEqual(attack_category("image_to_vedio"), "regeneration-single")
-        self.assertEqual(attack_category("3d_viewpoint_rerendering_rotate_phase0_point"), "regeneration-single")
+        self.assertEqual(attack_category("3d_viewpoint_rerendering_rotate_point"), "regeneration-single")
 
     def test_score_cell_uses_negative_quantile_for_low_fpr_threshold(self) -> None:
         scoring = score_cell(
@@ -92,6 +93,23 @@ class ScoringTest(unittest.TestCase):
             self.assertEqual(summary["sampleCount"], 1)
             self.assertIsNotNone(summary["metrics"]["psnr"])
             self.assertIsNotNone(summary["normalizedQualityDegradation"])
+
+    def test_quality_pairs_report_execution_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference = root / "reference.png"
+            target = root / "target.png"
+            Image.new("RGB", (32, 32), (120, 160, 200)).save(reference)
+            Image.new("RGB", (32, 32), (122, 158, 198)).save(target)
+
+            metrics, profile = compute_image_quality_pairs_with_profile([(reference, target)])
+
+            self.assertEqual(len(metrics), 1)
+            self.assertEqual(profile["mode"], "hybrid")
+            self.assertEqual(profile["jobCount"], 1)
+            self.assertIn("cpu", profile)
+            self.assertIn("perceptual", profile)
+            self.assertIn(profile["cpu"]["mode"], {"serial", "threadpool"})
 
 
 if __name__ == "__main__":

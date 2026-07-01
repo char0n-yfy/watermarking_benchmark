@@ -179,6 +179,19 @@ class VineWatermark(BaseWatermark):
     def _payload(self, context: WatermarkContext) -> list[int]:
         return bits_from_message(context.message, self.payload_bits, seed=context.seed)
 
+    def _embed_metadata(self, bits: list[int], original_size: list[int], output_size: tuple[int, int]) -> dict[str, Any]:
+        return {
+            "bits": bits_to_string(bits),
+            "payload_bits": self.payload_bits,
+            "weights_dir": str(self.weights_dir),
+            "encoder_dir": str(self.encoder_dir),
+            "decoder_dir": str(self.decoder_dir),
+            "sd_turbo_dir": str(self.sd_turbo_dir),
+            "image_size": [256, 256],
+            "original_size": original_size,
+            "output_size": list(output_size),
+        }
+
     def extract_batch_impl(
         self,
         jobs: list[tuple[Path, WatermarkContext]],
@@ -221,6 +234,94 @@ class VineWatermark(BaseWatermark):
             results.append(metadata)
         return results
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load_encoder(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._tf is not None
+        assert self._encoder is not None
+
+        resize_to_256 = self._tf.Compose(
+            [
+                self._tf.Resize(256, interpolation=self._tf.InterpolationMode.BICUBIC),
+                self._tf.ToTensor(),
+            ]
+        )
+        to_tensor = self._tf.ToTensor()
+        to_pil = self._tf.ToPILImage()
+        device = next(self._encoder.parameters()).device
+
+        prepared: list[dict[str, Any]] = []
+        groups: dict[tuple[int, int], list[int]] = {}
+        for index, (input_path, output_path, context) in enumerate(jobs):
+            image_pil = Image.open(input_path).convert("RGB")
+            original_size = list(image_pil.size)
+            if image_pil.size[0] != image_pil.size[1]:
+                image_pil = self._crop_to_square(image_pil)
+            output_size = image_pil.size
+            bits = self._payload(context)
+            prepared.append(
+                {
+                    "image": image_pil,
+                    "outputPath": output_path,
+                    "originalSize": original_size,
+                    "outputSize": output_size,
+                    "bits": bits,
+                }
+            )
+            groups.setdefault(output_size, []).append(index)
+
+        results: list[dict[str, Any] | None] = [None] * len(jobs)
+        with self._runtime_paths(purge_modules=False), self._torch.inference_mode():
+            for output_size, indexes in groups.items():
+                small = self._torch.cat(
+                    [
+                        (2.0 * resize_to_256(prepared[index]["image"]) - 1.0).unsqueeze(0)
+                        for index in indexes
+                    ],
+                    dim=0,
+                ).to(device)
+                original = self._torch.cat(
+                    [
+                        (2.0 * to_tensor(prepared[index]["image"]) - 1.0).unsqueeze(0)
+                        for index in indexes
+                    ],
+                    dim=0,
+                ).to(device)
+                secret = self._torch.tensor(
+                    [prepared[index]["bits"] for index in indexes],
+                    dtype=self._torch.float32,
+                    device=device,
+                )
+
+                encoded_small = self._encoder(small, secret)
+                residual = self._torch.nn.functional.interpolate(
+                    encoded_small - small,
+                    size=(output_size[1], output_size[0]),
+                    mode="bicubic",
+                    align_corners=False,
+                )
+                encoded = self._torch.clamp(original + residual, min=-1.0, max=1.0)
+                encoded = (encoded * 0.5 + 0.5).clamp(0.0, 1.0)
+
+                for batch_index, prepared_index in enumerate(indexes):
+                    output_path = prepared[prepared_index]["outputPath"]
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    to_pil(encoded[batch_index].detach().cpu()).save(output_path)
+                    metadata = self._embed_metadata(
+                        prepared[prepared_index]["bits"],
+                        prepared[prepared_index]["originalSize"],
+                        prepared[prepared_index]["outputSize"],
+                    )
+                    metadata["batchOptimized"] = True
+                    results[prepared_index] = metadata
+
+        return [result or {} for result in results]
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load_encoder(context.device)
         assert self._torch is not None
@@ -254,17 +355,7 @@ class VineWatermark(BaseWatermark):
             encoded = (encoded * 0.5 + 0.5).clamp(0.0, 1.0)
 
         self._tf.ToPILImage()(encoded[0].detach().cpu()).save(output_path)
-        return {
-            "bits": bits_to_string(bits),
-            "payload_bits": self.payload_bits,
-            "weights_dir": str(self.weights_dir),
-            "encoder_dir": str(self.encoder_dir),
-            "decoder_dir": str(self.decoder_dir),
-            "sd_turbo_dir": str(self.sd_turbo_dir),
-            "image_size": [256, 256],
-            "original_size": original_size,
-            "output_size": list(output_size),
-        }
+        return self._embed_metadata(bits, original_size, output_size)
 
     def extract_impl(self, input_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         self._load_decoder(context.device)

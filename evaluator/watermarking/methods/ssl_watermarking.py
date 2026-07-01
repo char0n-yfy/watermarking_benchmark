@@ -31,18 +31,16 @@ SSL_MODULES = [
 ]
 
 
-class _SingleImageDataset:
-    def __init__(self, tensor, label: int = 0) -> None:
-        self.tensor = tensor
+class _TensorImageDataset:
+    def __init__(self, tensors, label: int = 0) -> None:
+        self.tensors = list(tensors)
         self.label = label
 
     def __len__(self) -> int:
-        return 1
+        return len(self.tensors)
 
     def __getitem__(self, index: int):
-        if index != 0:
-            raise IndexError(index)
-        return self.tensor, self.label
+        return self.tensors[index], self.label
 
 
 @register_watermark
@@ -181,9 +179,9 @@ class SSLWatermark(BaseWatermark):
         self._loaded = True
         self._loaded_device = device_name
 
-    def _params(self) -> SimpleNamespace:
+    def _params(self, batch_size: int | None = None) -> SimpleNamespace:
         return SimpleNamespace(
-            batch_size=self.batch_size,
+            batch_size=int(batch_size or self.batch_size),
             optimizer=self.optimizer,
             scheduler=self.scheduler,
             epochs=self.epochs,
@@ -232,6 +230,78 @@ class SSLWatermark(BaseWatermark):
             results.append(metadata)
         return results
 
+    def embed_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, WatermarkContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+        self._load(jobs[0][2].device)
+        assert self._torch is not None
+        assert self._to_pil_image is not None
+        assert self._utils_img is not None
+        assert self._encode is not None
+        assert self._model is not None
+        assert self._carrier is not None
+
+        seed = next((context.seed for _input_path, _output_path, context in jobs if context.seed is not None), None)
+        if seed is not None:
+            self._torch.manual_seed(seed)
+
+        payload_bits = self.payload_bits
+        if payload_bits != int(self._carrier.shape[0]):
+            raise ValueError(
+                f"Configured payload_bits={payload_bits} but carrier has {self._carrier.shape[0]} rows"
+            )
+
+        bits_by_job = [
+            bits_from_message(context.message, payload_bits, seed=context.seed)
+            for _input_path, _output_path, context in jobs
+        ]
+        message_tensor = self._torch.tensor(bits_by_job, dtype=self._torch.bool)
+        tensors = [
+            self._utils_img.default_transform(Image.open(input_path).convert("RGB"))
+            for input_path, _output_path, _context in jobs
+        ]
+        dataset = _TensorImageDataset(tensors)
+        batch_size = len(jobs)
+        dataloader = self._torch.utils.data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+
+        pt_imgs_out = self._encode.watermark_multibit(
+            dataloader,
+            message_tensor,
+            self._carrier,
+            self._model,
+            self._data_aug(),
+            self._params(batch_size=batch_size),
+        )
+        if len(pt_imgs_out) != len(jobs):
+            raise RuntimeError(f"SSL watermarking returned {len(pt_imgs_out)} images for {len(jobs)} jobs")
+
+        results: list[Mapping[str, Any]] = []
+        for output_tensor, (_input_path, output_path, _context), bits in zip(pt_imgs_out, jobs, bits_by_job):
+            output = self._utils_img.unnormalize_img(output_tensor).detach().cpu().clamp(0, 1)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._to_pil_image()(output).save(output_path, format="PNG")
+            results.append(
+                {
+                    "bits": bits_to_string(bits),
+                    "payload_bits": payload_bits,
+                    "model_path": str(self.model_path),
+                    "normlayer_path": str(self.normlayer_path),
+                    "carrier_path": str(self.carrier_path),
+                    "epochs": self.epochs,
+                    "target_psnr": self.target_psnr,
+                    "batchOptimized": True,
+                }
+            )
+        return results
+
     def embed_impl(
         self,
         input_path: Path,
@@ -259,7 +329,7 @@ class SSLWatermark(BaseWatermark):
 
         image = Image.open(input_path).convert("RGB")
         image_tensor = self._utils_img.default_transform(image)
-        dataset = _SingleImageDataset(image_tensor)
+        dataset = _TensorImageDataset([image_tensor])
         dataloader = self._torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
         pt_imgs_out = self._encode.watermark_multibit(

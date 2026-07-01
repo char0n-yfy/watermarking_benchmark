@@ -12,6 +12,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from evaluator.attacks.base import AttackContext, BaseAttack
 from evaluator.attacks.registry import register_attack
+from evaluator.image_io import save_png_image
 
 
 DEFAULT_STRENGTH_RANGES: dict[str, tuple[float, float]] = {
@@ -32,8 +33,7 @@ def _load_rgb(path: Path) -> Image.Image:
 
 
 def _save_png(image: Image.Image, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path, format="PNG")
+    save_png_image(image, path)
 
 
 def _rng(context: AttackContext) -> random.Random:
@@ -70,8 +70,13 @@ def _normalize_ratio(value: float, field_name: str) -> float:
     return value
 
 
+class _DistortionAttack(BaseAttack):
+    thread_safe_parallel = True
+    batch_capability = False
+
+
 @register_attack
-class IdentityAttack(BaseAttack):
+class IdentityAttack(_DistortionAttack):
     name = "identity"
     description = "No-op distortion. Copies the watermarked image unchanged."
 
@@ -104,7 +109,7 @@ class IdentityAttack(BaseAttack):
 
 
 @register_attack
-class RotationAttack(BaseAttack):
+class RotationAttack(_DistortionAttack):
     name = "rotation"
     description = "Rotate image by a fixed or relative angle."
 
@@ -138,7 +143,7 @@ class RotationAttack(BaseAttack):
 
 
 @register_attack
-class ResizedCropAttack(BaseAttack):
+class ResizedCropAttack(_DistortionAttack):
     name = "resized_crop"
     description = "Crop a square region and resize it back to the original image size."
 
@@ -174,7 +179,7 @@ class ResizedCropAttack(BaseAttack):
 
 
 @register_attack
-class ErasingAttack(BaseAttack):
+class ErasingAttack(_DistortionAttack):
     name = "erasing"
     description = "Randomly erase a square area and keep the original image size."
 
@@ -218,7 +223,7 @@ class ErasingAttack(BaseAttack):
 
 
 @register_attack
-class BrightnessAttack(BaseAttack):
+class BrightnessAttack(_DistortionAttack):
     name = "brightness"
     description = "Brightness scaling distortion."
 
@@ -247,7 +252,7 @@ class BrightnessAttack(BaseAttack):
 
 
 @register_attack
-class ContrastAttack(BaseAttack):
+class ContrastAttack(_DistortionAttack):
     name = "contrast"
     description = "Contrast scaling distortion."
 
@@ -276,7 +281,7 @@ class ContrastAttack(BaseAttack):
 
 
 @register_attack
-class GaussianBlurAttack(BaseAttack):
+class GaussianBlurAttack(_DistortionAttack):
     name = "gaussian_blur"
     description = "Gaussian blur distortion."
 
@@ -305,7 +310,7 @@ class GaussianBlurAttack(BaseAttack):
 
 
 @register_attack
-class GaussianNoiseAttack(BaseAttack):
+class GaussianNoiseAttack(_DistortionAttack):
     name = "gaussian_noise"
     description = "Add zero-mean Gaussian pixel noise."
 
@@ -338,7 +343,7 @@ class GaussianNoiseAttack(BaseAttack):
 
 
 @register_attack
-class JPEGCompressionAttack(BaseAttack):
+class JPEGCompressionAttack(_DistortionAttack):
     name = "jpeg"
     description = "JPEG compression distortion, saved back as PNG."
 
@@ -371,7 +376,7 @@ class JPEGCompressionAttack(BaseAttack):
 
 
 @register_attack
-class ResizeAttack(BaseAttack):
+class ResizeAttack(_DistortionAttack):
     name = "resize"
     description = "Resize by a scale factor and resize back to original dimensions."
 
