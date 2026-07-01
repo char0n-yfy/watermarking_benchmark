@@ -203,7 +203,7 @@ export function deleteSavedConfig(configId: string): Promise<{ id: string; statu
   });
 }
 
-export function fetchRuns(options?: { scope?: "active" }): Promise<DemoRunRecord[]> {
+export function fetchRuns(options?: { scope?: "active" | "unfinished" }): Promise<DemoRunRecord[]> {
   const query = options?.scope ? `?scope=${encodeURIComponent(options.scope)}` : "";
   return requestJson<DemoRunRecord[]>(`/runs${query}`);
 }
@@ -233,6 +233,12 @@ export function fetchBenchmarkProtocols(): Promise<BenchmarkProtocol[]> {
 
 export function fetchLeaderboard(protocolId = "waves-official-detection-v1"): Promise<LeaderboardResponse> {
   return requestJson<LeaderboardResponse>(`/leaderboard?protocol_id=${encodeURIComponent(protocolId)}`);
+}
+
+export function pauseRun(runId: string): Promise<DemoRunRecord> {
+  return requestJson<DemoRunRecord>(`/runs/${runId}/pause`, {
+    method: "POST"
+  });
 }
 
 export function cancelRun(runId: string): Promise<DemoRunRecord> {

@@ -12,6 +12,7 @@ import type {
 export const terminalRunStatuses = new Set<RunStatus>([
   "succeeded",
   "failed",
+  "paused",
   "cancelled",
   "partially_failed"
 ]);

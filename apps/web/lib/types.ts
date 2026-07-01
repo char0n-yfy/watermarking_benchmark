@@ -4,6 +4,7 @@ export type RunStatus =
   | "running"
   | "succeeded"
   | "failed"
+  | "paused"
   | "cancelled"
   | "partially_failed";
 
@@ -197,6 +198,7 @@ export interface DemoRunRecord {
   logPath?: string | null;
   workerId?: string | null;
   cancelRequested?: boolean;
+  stopIntent?: "pause" | "cancel" | string | null;
   error?: string | null;
   createdAt?: string;
   startedAt?: string | null;

@@ -6,6 +6,7 @@ CREATE TYPE run_status AS ENUM (
   'running',
   'succeeded',
   'failed',
+  'paused',
   'cancelled',
   'partially_failed'
 );
@@ -130,6 +131,7 @@ CREATE TABLE experiment_runs (
   log_path TEXT,
   worker_id TEXT,
   cancel_requested BOOLEAN NOT NULL DEFAULT false,
+  stop_intent TEXT,
   error TEXT,
   queued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   started_at TIMESTAMPTZ,

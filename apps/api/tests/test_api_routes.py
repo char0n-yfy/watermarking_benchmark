@@ -85,9 +85,24 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(leaderboard_response.status_code, 200)
             self.assertEqual(leaderboard_response.json()["protocol"]["id"], "waves-official-detection-v1")
 
-            cancel_response = client.post(f"/runs/{run_response.json()['id']}/cancel")
+            pause_response = client.post(f"/runs/{run_response.json()['id']}/pause")
+            self.assertEqual(pause_response.status_code, 200)
+            self.assertEqual(pause_response.json()["status"], "paused")
+
+            unfinished_response = client.get("/runs?scope=unfinished")
+            self.assertEqual(unfinished_response.status_code, 200)
+            self.assertIn(run_response.json()["id"], [item["id"] for item in unfinished_response.json()])
+
+            cancel_run_response = client.post(
+                "/runs",
+                json={"configId": config_id},
+            )
+            self.assertEqual(cancel_run_response.status_code, 200)
+            cancel_response = client.post(f"/runs/{cancel_run_response.json()['id']}/cancel")
             self.assertEqual(cancel_response.status_code, 200)
             self.assertEqual(cancel_response.json()["status"], "cancelled")
+            resume_cancelled_response = client.post(f"/runs/{cancel_run_response.json()['id']}/resume")
+            self.assertEqual(resume_cancelled_response.status_code, 400)
 
             delete_response = client.delete(f"/experiment-configs/{config_id}")
             self.assertEqual(delete_response.status_code, 200)

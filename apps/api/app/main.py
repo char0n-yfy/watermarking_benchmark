@@ -314,6 +314,13 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/runs/{run_id}/pause")
+    def pause_run(run_id: str) -> dict[str, object]:
+        try:
+            return service.pause_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/runs/{run_id}/cancel")
     def cancel_run(run_id: str) -> dict[str, object]:
         try:
@@ -327,10 +334,12 @@ def create_app() -> FastAPI:
             return service.resume_run(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/runs")
     def list_runs(scope: Optional[str] = Query(default=None)) -> list[dict[str, object]]:
-        if scope not in {None, "active"}:
+        if scope not in {None, "active", "unfinished"}:
             raise HTTPException(status_code=400, detail="Unsupported runs scope")
         return service.list_runs(scope=scope)
 

@@ -3609,7 +3609,11 @@ a.button {
 }
 
 .run-summary-modal {
-  width: min(720px, calc(100vw - 28px));
+  width: min(860px, calc(100vw - 28px));
+}
+
+.run-confirm-modal {
+  width: min(520px, calc(100vw - 28px));
 }
 
 .run-start-modal-body {
@@ -3645,6 +3649,11 @@ a.button {
   border-color: color-mix(in srgb, var(--teal) 58%, var(--line));
   background: var(--teal-soft);
   box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.run-mode-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .run-mode-card svg {
@@ -3743,6 +3752,14 @@ a.button {
   gap: 4px;
 }
 
+.run-monitor-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .run-monitor-toolbar span {
   color: var(--muted);
   font-size: 12px;
@@ -3757,6 +3774,27 @@ a.button {
 .run-monitor-toolbar code {
   color: var(--muted);
   font-size: 12px;
+}
+
+.run-pause-state {
+  width: fit-content;
+  border-radius: 999px;
+  background: #fff7df;
+  color: #8a6325;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.run-confirm-body {
+  display: grid;
+  gap: 12px;
+}
+
+.run-confirm-body code {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .run-monitor-overview {
@@ -4088,6 +4126,48 @@ a.button {
   background: var(--panel-soft);
 }
 
+.run-summary-section {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.run-summary-compact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.summary-event-row {
+  background: #fff;
+}
+
+.run-summary-log-tail {
+  display: grid;
+  gap: 6px;
+}
+
+.run-summary-log-tail span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.run-summary-log-tail pre {
+  max-height: 150px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #10211d;
+  color: #dbf7ec;
+  padding: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .log-panel,
 .results-detail-panel {
   margin-top: 12px;
@@ -4154,6 +4234,15 @@ a.button {
     height: auto;
     min-height: 0;
     max-height: none;
+  }
+
+  .run-monitor-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .run-monitor-actions {
+    justify-content: flex-start;
   }
 
   .resources-browser-grid > .panel {

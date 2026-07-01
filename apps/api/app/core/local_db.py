@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   log_path TEXT,
   worker_id TEXT,
   cancel_requested INTEGER NOT NULL DEFAULT 0,
+  stop_intent TEXT,
   error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -85,6 +86,7 @@ MIGRATION_COLUMNS = {
         "log_path": "TEXT",
         "worker_id": "TEXT",
         "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+        "stop_intent": "TEXT",
     },
     "experiment_cells": {
         "bit_error_rate": "REAL",
@@ -165,6 +167,7 @@ def row_to_run(row: sqlite3.Row) -> JsonDict:
         "logPath": row["log_path"],
         "workerId": row["worker_id"],
         "cancelRequested": bool(row["cancel_requested"]),
+        "stopIntent": row["stop_intent"],
         "error": row["error"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],

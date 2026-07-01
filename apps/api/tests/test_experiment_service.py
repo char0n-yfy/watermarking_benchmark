@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -153,7 +154,43 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(named_run["taskName"], "Task A")
             self.assertEqual(default_run["taskName"], "Smoke Config")
 
-    def test_cancel_queued_run(self) -> None:
+    def test_pause_queued_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
+
+            paused = service.pause_run(run["id"])
+
+            self.assertEqual(paused["status"], "paused")
+            self.assertTrue(paused["cancelRequested"])
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
+            self.assertEqual([item["id"] for item in service.list_runs(scope="unfinished")], [run["id"]])
+
+            resumed = service.resume_run(run["id"])
+
+            self.assertEqual(resumed["status"], "queued")
+            self.assertFalse(resumed["cancelRequested"])
+            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
+
+    def test_cancel_queued_run_is_not_resumable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
@@ -181,12 +218,78 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(cancelled["status"], "cancelled")
             self.assertTrue(cancelled["cancelRequested"])
             self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="unfinished")])
+            with self.assertRaises(ValueError):
+                service.resume_run(run["id"])
 
-            resumed = service.resume_run(run["id"])
+    def test_running_pause_request_finishes_as_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
 
-            self.assertEqual(resumed["status"], "queued")
-            self.assertFalse(resumed["cancelRequested"])
-            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
+            def fake_runner(request, on_cell, should_cancel):
+                service.pause_run(run["id"])
+                self.assertTrue(should_cancel())
+                return {"status": "cancelled", "progress": 0}
+
+            with patch("app.services.experiment_service.run_local_experiment", side_effect=fake_runner):
+                finished = service.execute_run(run["id"])
+
+            self.assertEqual(finished["status"], "paused")
+            self.assertTrue(finished["cancelRequested"])
+
+    def test_running_cancel_request_finishes_as_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
+
+            def fake_runner(request, on_cell, should_cancel):
+                service.cancel_run(run["id"])
+                self.assertTrue(should_cancel())
+                return {"status": "cancelled", "progress": 0}
+
+            with patch("app.services.experiment_service.run_local_experiment", side_effect=fake_runner):
+                finished = service.execute_run(run["id"])
+
+            self.assertEqual(finished["status"], "cancelled")
+            self.assertTrue(finished["cancelRequested"])
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="unfinished")])
 
 
 if __name__ == "__main__":

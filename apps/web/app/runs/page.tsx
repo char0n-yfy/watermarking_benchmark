@@ -5,11 +5,12 @@ import {
   CheckCircle2,
   Clock3,
   FolderOpen,
+  PauseCircle,
   PlayCircle,
   RefreshCw,
   RotateCcw,
-  Square,
-  TerminalSquare
+  TerminalSquare,
+  XCircle
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -24,6 +25,7 @@ import {
   fetchRunLogs,
   fetchRuns,
   fetchSavedConfigs,
+  pauseRun,
   resumeRun
 } from "@/lib/api";
 import { localizedDate } from "@/lib/i18n";
@@ -46,8 +48,38 @@ type ExecutionSummary = {
   status: DemoRunRecord["status"];
   progress: number;
   cells: number;
+  completedCells: number;
+  succeededCells: number;
+  failedCells: number;
+  remainingCells: number;
+  configName: string;
+  workerId?: string | null;
   artifactRoot?: string;
+  createdAt?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
   updatedAt?: string;
+  durationMs: number | null;
+  selection?: {
+    datasets: number;
+    watermarks: number;
+    attacks: number;
+    seeds: number;
+    maxSamples: number;
+    sampleCount: number;
+    imageOperationCount: number;
+  };
+  latestEvent?: {
+    title: string;
+    meta: string;
+    timestamp?: string;
+  } | null;
+  log?: {
+    path: string;
+    lineCount: number;
+    lastLine: string;
+    tailLines: string[];
+  } | null;
   note: string;
 };
 
@@ -74,11 +106,10 @@ type MonitorStats = {
   current: CurrentExecution;
 };
 
-const activeStatuses = new Set(["queued", "running"]);
-const terminalStatuses = new Set(["succeeded", "failed", "cancelled", "partially_failed"]);
-const stoppableStatuses = new Set(["queued", "running"]);
-const finalCellStatuses = new Set(["succeeded", "failed", "skipped", "cancelled"]);
-const finalWatermarkStatuses = new Set(["succeeded", "failed", "skipped", "cancelled"]);
+const terminalStatuses = new Set<DemoRunRecord["status"]>(["succeeded", "failed", "paused", "cancelled", "partially_failed"]);
+const resumableStatuses = new Set<DemoRunRecord["status"]>(["paused", "failed", "partially_failed"]);
+const finalCellStatuses = new Set(["succeeded", "failed", "skipped", "paused", "cancelled"]);
+const finalWatermarkStatuses = new Set(["succeeded", "failed", "skipped", "paused", "cancelled"]);
 const rawArtifactFiles = [
   "run_plan.json",
   "cell_manifest.jsonl",
@@ -97,6 +128,43 @@ function badgeClass(status: DemoRunRecord["status"]) {
     return "badge error";
   }
   return "badge warn";
+}
+
+function isActiveRun(status: DemoRunRecord["status"]) {
+  return status === "queued" || status === "running";
+}
+
+function isResumableRun(status: DemoRunRecord["status"]) {
+  return resumableStatuses.has(status);
+}
+
+function isRestartableTerminalRun(status: DemoRunRecord["status"]) {
+  return isResumableRun(status);
+}
+
+function isTerminalRun(status: DemoRunRecord["status"]) {
+  return terminalStatuses.has(status);
+}
+
+function isPausableRun(run: DemoRunRecord) {
+  return isActiveRun(run.status) && !run.cancelRequested;
+}
+
+function isCancellableRun(run: DemoRunRecord) {
+  return isActiveRun(run.status) && run.stopIntent !== "cancel";
+}
+
+function stopIntentNotice(
+  run: DemoRunRecord,
+  labels: {
+    pauseRequestedNotice: string;
+    cancelRequestedNotice: string;
+  }
+) {
+  if (!run.cancelRequested) {
+    return null;
+  }
+  return run.stopIntent === "cancel" ? labels.cancelRequestedNotice : labels.pauseRequestedNotice;
 }
 
 function taskName(run: DemoRunRecord) {
@@ -154,6 +222,44 @@ function latestMapped<T>(events: RunStageEvent[], mapValue: (event: RunStageEven
 
 function formatNumber(value: number) {
   return Number.isInteger(value) ? value.toString() : Number(value.toFixed(4)).toString();
+}
+
+function durationMsBetween(start?: string | null, end?: string | null) {
+  if (!start || !end) {
+    return null;
+  }
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+    return null;
+  }
+  return Math.max(0, endMs - startMs);
+}
+
+function formatDurationMs(durationMs: number | null, language: "zh" | "en") {
+  if (durationMs === null) {
+    return "n/a";
+  }
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (language === "zh") {
+    if (hours > 0) {
+      return `${hours}小时 ${minutes}分钟 ${seconds}秒`;
+    }
+    if (minutes > 0) {
+      return `${minutes}分钟 ${seconds}秒`;
+    }
+    return `${seconds}秒`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
 }
 
 function formatParamValue(value: unknown): string {
@@ -235,6 +341,51 @@ function variantCountForAttack(config: SavedExperimentConfig | undefined, attack
     return strengths.length;
   }
   return 1;
+}
+
+function selectionSummary(config: SavedExperimentConfig | undefined): ExecutionSummary["selection"] {
+  if (!config) {
+    return undefined;
+  }
+  return {
+    datasets: config.selection.datasetIds.length,
+    watermarks: config.selection.algorithmIds.length,
+    attacks: config.selection.attackPresetIds.length,
+    seeds: config.selection.seeds.length,
+    maxSamples: config.selection.maxSamples,
+    sampleCount: config.sampleCount,
+    imageOperationCount: config.imageOperationCount
+  };
+}
+
+function lastLogLine(logs: RunLogs | null) {
+  if (!logs?.exists) {
+    return "";
+  }
+  for (let index = logs.lines.length - 1; index >= 0; index -= 1) {
+    const line = logs.lines[index]?.trim();
+    if (line) {
+      return line;
+    }
+  }
+  return "";
+}
+
+function logTailLines(logs: RunLogs | null, maxLines = 6) {
+  if (!logs?.exists) {
+    return [];
+  }
+  return logs.lines
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim())
+    .slice(-maxLines);
+}
+
+function completedCellsFromRun(run: DemoRunRecord) {
+  if (run.cells <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(run.cells, Math.round((run.progress / 100) * run.cells)));
 }
 
 function attackIdFromEvent(event: RunStageEvent, attackIds: string[]) {
@@ -419,17 +570,85 @@ function buildProgressSteps(
   ];
 }
 
-function makeSummary(run: DemoRunRecord, note: string, statusOverride?: DemoRunRecord["status"]): ExecutionSummary {
+function makeSummary(
+  run: DemoRunRecord,
+  note: string,
+  options: {
+    statusOverride?: DemoRunRecord["status"];
+    config?: SavedExperimentConfig;
+    events?: RunEvents | null;
+    logs?: RunLogs | null;
+  } = {}
+): ExecutionSummary {
+  const stats = buildMonitorStats(run, options.config, options.events ?? null);
+  const completedCells = Math.max(stats.completedCells, completedCellsFromRun(run));
+  const latest = latestEvent(options.events ?? null);
+  const logLine = lastLogLine(options.logs ?? null);
+  const tailLines = logTailLines(options.logs ?? null);
   return {
     taskName: taskName(run),
     runId: run.id,
-    status: statusOverride ?? run.status,
+    status: options.statusOverride ?? run.status,
     progress: run.progress,
     cells: run.cells,
+    completedCells,
+    succeededCells: stats.succeededCells,
+    failedCells: stats.failedCells,
+    remainingCells: Math.max(0, run.cells - completedCells),
+    configName: run.configName,
+    workerId: run.workerId,
     artifactRoot: run.artifactRoot,
+    createdAt: run.createdAt,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
     updatedAt: run.updatedAt,
+    durationMs: durationMsBetween(run.startedAt, run.finishedAt ?? run.updatedAt),
+    selection: selectionSummary(options.config),
+    latestEvent: latest
+      ? {
+          title: eventTitle(latest),
+          meta: eventMeta(latest),
+          timestamp: latest.timestamp
+        }
+      : null,
+    log: options.logs
+      ? {
+          path: options.logs.logPath,
+          lineCount: options.logs.exists ? options.logs.lines.length : 0,
+          lastLine: logLine,
+          tailLines
+        }
+      : null,
     note
   };
+}
+
+function terminalRunNote(
+  status: DemoRunRecord["status"],
+  labels: {
+    runFinishedNotice: string;
+    stopSavedNotice: string;
+    runCancelledNotice: string;
+    runFailedNotice: string;
+  }
+) {
+  if (status === "succeeded") {
+    return labels.runFinishedNotice;
+  }
+  if (status === "paused") {
+    return labels.stopSavedNotice;
+  }
+  if (status === "cancelled") {
+    return labels.runCancelledNotice;
+  }
+  return labels.runFailedNotice;
+}
+
+function runStatusLabel(
+  status: DemoRunRecord["status"],
+  statusLabels: Record<string, string>
+) {
+  return statusLabels[status] ?? status;
 }
 
 export default function RunsPage() {
@@ -446,6 +665,7 @@ export default function RunsPage() {
   const [logs, setLogs] = useState<RunLogs | null>(null);
   const [events, setEvents] = useState<RunEvents | null>(null);
   const [lastSummary, setLastSummary] = useState<ExecutionSummary | null>(null);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [resourceNames, setResourceNames] = useState<Record<string, string>>({});
@@ -498,9 +718,10 @@ export default function RunsPage() {
   );
 
   const refreshBase = async () => {
-    const [loadedConfigs, loadedRuns] = await Promise.all([fetchSavedConfigs(), fetchRuns({ scope: "active" })]);
+    const [loadedConfigs, loadedRuns] = await Promise.all([fetchSavedConfigs(), fetchRuns({ scope: "unfinished" })]);
+    const manageableRuns = loadedRuns.filter((run) => isActiveRun(run.status) || isResumableRun(run.status));
     setConfigs(loadedConfigs);
-    setActiveRuns(loadedRuns);
+    setActiveRuns(manageableRuns);
     setSelectedConfigId((current) => {
       if (current && loadedConfigs.some((config) => config.id === current)) {
         return current;
@@ -508,11 +729,12 @@ export default function RunsPage() {
       return loadedConfigs[0]?.id ?? "";
     });
     setSelectedResumeRunId((current) => {
-      if (current && loadedRuns.some((run) => run.id === current)) {
+      if (current && manageableRuns.some((run) => run.id === current)) {
         return current;
       }
-      return loadedRuns[0]?.id ?? "";
+      return manageableRuns[0]?.id ?? "";
     });
+    return { loadedConfigs, manageableRuns };
   };
 
   useEffect(() => {
@@ -595,16 +817,13 @@ export default function RunsPage() {
         setMonitorRun(runValue);
         setEvents(eventValue);
         setLogs(logValue);
-        if (terminalStatuses.has(runValue.status)) {
-          const note =
-            runValue.status === "succeeded"
-              ? t.runs.runFinishedNotice
-              : runValue.status === "cancelled"
-                ? t.runs.stopSavedNotice
-                : t.runs.runFailedNotice;
-          setLastSummary(makeSummary(runValue, note));
+        if (isTerminalRun(runValue.status)) {
+          const summaryConfig = configs.find((config) => config.id === runValue.configId);
+          const note = terminalRunNote(runValue.status, t.runs);
+          setLastSummary(makeSummary(runValue, note, { config: summaryConfig, events: eventValue, logs: logValue }));
           setNotice("");
           setMonitorRunId("");
+          setCancelConfirmOpen(false);
           refreshBase().catch(() => undefined);
         }
       } catch {
@@ -619,12 +838,27 @@ export default function RunsPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [monitorRunId, t.runs.apiUnavailable, t.runs.runFailedNotice, t.runs.runFinishedNotice, t.runs.stopSavedNotice]);
+  }, [
+    configs,
+    monitorRunId,
+    t.runs.apiUnavailable,
+    t.runs.runCancelledNotice,
+    t.runs.runFailedNotice,
+    t.runs.runFinishedNotice,
+    t.runs.stopSavedNotice
+  ]);
 
   const openStartDialog = () => {
     setStartDialogOpen(true);
     setNotice("");
     setTaskNameInput((current) => current || `${t.runs.defaultTaskName} ${new Date().toLocaleString()}`);
+    refreshBase()
+      .then(({ manageableRuns }) => {
+        if (!manageableRuns.length) {
+          setStartMode("new");
+        }
+      })
+      .catch(() => undefined);
   };
 
   const submitStartDialog = async () => {
@@ -652,7 +886,7 @@ export default function RunsPage() {
           setNotice(t.runs.resumeTaskRequired);
           return;
         }
-        const updated = activeStatuses.has(selectedResumeRun.status)
+        const updated = isActiveRun(selectedResumeRun.status)
           ? selectedResumeRun
           : await resumeRun(selectedResumeRun.id);
         setMonitorRunId(updated.id);
@@ -669,23 +903,92 @@ export default function RunsPage() {
     }
   };
 
-  const stopCurrentRun = async () => {
+  const pauseCurrentRun = async () => {
+    if (!monitorRun) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const updated = await pauseRun(monitorRun.id);
+      setMonitorRun(updated);
+      if (isTerminalRun(updated.status)) {
+        const summary = makeSummary(updated, terminalRunNote(updated.status, t.runs), {
+          config: monitoredConfig,
+          events,
+          logs
+        });
+        setLastSummary(summary);
+        setNotice("");
+        setMonitorRunId("");
+        setMonitorRun(null);
+        setLogs(null);
+        setEvents(null);
+      } else {
+        setNotice(t.runs.pauseRequestedNotice);
+      }
+      refreshBase().catch(() => undefined);
+    } catch {
+      setNotice(t.runs.stopFailed);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestCancelCurrentRun = () => {
+    if (!monitorRun) {
+      return;
+    }
+    setCancelConfirmOpen(true);
+  };
+
+  const confirmCancelCurrentRun = async () => {
     if (!monitorRun) {
       return;
     }
     setBusy(true);
     try {
       const updated = await cancelRun(monitorRun.id);
-      const summary = makeSummary(updated, t.runs.stopSavedNotice, "cancelled");
-      setLastSummary(summary);
-      setNotice("");
-      setMonitorRunId("");
-      setMonitorRun(null);
-      setLogs(null);
-      setEvents(null);
+      setCancelConfirmOpen(false);
+      setMonitorRun(updated);
+      if (isTerminalRun(updated.status)) {
+        const summary = makeSummary(updated, terminalRunNote(updated.status, t.runs), {
+          config: monitoredConfig,
+          events,
+          logs
+        });
+        setLastSummary(summary);
+        setNotice("");
+        setMonitorRunId("");
+        setMonitorRun(null);
+        setLogs(null);
+        setEvents(null);
+      } else {
+        setNotice(t.runs.cancelRequestedNotice);
+      }
       refreshBase().catch(() => undefined);
     } catch {
-      setNotice(t.runs.stopFailed);
+      setNotice(t.runs.cancelFailed);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resumeSummaryRun = async () => {
+    if (!lastSummary) {
+      return;
+    }
+    setBusy(true);
+    setNotice("");
+    try {
+      const updated = await resumeRun(lastSummary.runId);
+      setMonitorRunId(updated.id);
+      setMonitorRun(updated);
+      setLastSummary(null);
+      setStartDialogOpen(false);
+      setNotice(t.runs.resumedTaskNotice);
+      refreshBase().catch(() => undefined);
+    } catch {
+      setNotice(t.runs.resumeTaskFailed);
     } finally {
       setBusy(false);
     }
@@ -708,6 +1011,12 @@ export default function RunsPage() {
 
   const formatOptionalDate = (value?: string | null) => (value ? localizedDate(language, value) : "n/a");
   const statusLabels = t.common.status as Record<string, string>;
+  const currentStopNotice = monitorRun ? stopIntentNotice(monitorRun, t.runs) : null;
+  const startActionDisabled =
+    busy ||
+    (startMode === "new"
+      ? !selectedConfig || !taskNameInput.trim()
+      : !selectedResumeRun || (!isActiveRun(selectedResumeRun.status) && !isResumableRun(selectedResumeRun.status)));
 
   return (
     <AppShell active="runs">
@@ -730,7 +1039,7 @@ export default function RunsPage() {
               <h2>{t.runs.monitorTitle}</h2>
               <p>{t.runs.monitorSubtitle}</p>
             </div>
-            <span className={badgeClass(monitorRun.status)}>{statusLabels[monitorRun.status] ?? monitorRun.status}</span>
+            <span className={badgeClass(monitorRun.status)}>{runStatusLabel(monitorRun.status, statusLabels)}</span>
           </div>
           <div className="panel-body run-execution-body">
             <div className="run-monitor-toolbar">
@@ -738,13 +1047,22 @@ export default function RunsPage() {
                 <span>{t.runs.selectedTask}</span>
                 <strong>{taskName(monitorRun)}</strong>
                 <code>{monitorRun.id}</code>
+                {currentStopNotice ? <small className="run-pause-state">{currentStopNotice}</small> : null}
               </div>
-              {stoppableStatuses.has(monitorRun.status) ? (
-                <button className="button danger" disabled={busy} onClick={stopCurrentRun} type="button">
-                  <Square size={15} />
-                  {t.runs.stopAndSave}
-                </button>
-              ) : null}
+              <div className="run-monitor-actions">
+                {isPausableRun(monitorRun) ? (
+                  <button className="button" disabled={busy} onClick={pauseCurrentRun} type="button">
+                    <PauseCircle size={15} />
+                    {t.runs.pauseAndSave}
+                  </button>
+                ) : null}
+                {isCancellableRun(monitorRun) ? (
+                  <button className="button danger" disabled={busy || monitorRun.stopIntent === "cancel"} onClick={requestCancelCurrentRun} type="button">
+                    <XCircle size={15} />
+                    {t.runs.cancelExperiment}
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             <div className="run-monitor-overview">
@@ -911,6 +1229,7 @@ export default function RunsPage() {
                 </button>
                 <button
                   className={startMode === "resume" ? "run-mode-card selected" : "run-mode-card"}
+                  disabled={!activeRuns.length}
                   onClick={() => setStartMode("resume")}
                   type="button"
                 >
@@ -964,7 +1283,7 @@ export default function RunsPage() {
                             <code>{run.id}</code>
                           </div>
                           <div>
-                            <span className={badgeClass(run.status)}>{statusLabels[run.status] ?? run.status}</span>
+                            <span className={badgeClass(run.status)}>{runStatusLabel(run.status, statusLabels)}</span>
                             <small>{run.progress}%</small>
                           </div>
                         </button>
@@ -980,9 +1299,38 @@ export default function RunsPage() {
               <button className="button" onClick={() => setStartDialogOpen(false)} type="button">
                 {t.runs.cancel}
               </button>
-              <button className="button primary" disabled={busy} onClick={submitStartDialog} type="button">
-                <PlayCircle size={16} />
-                {t.runs.beginExecution}
+              <button className="button primary" disabled={startActionDisabled} onClick={submitStartDialog} type="button">
+                {startMode === "resume" ? <RotateCcw size={16} /> : <PlayCircle size={16} />}
+                {startMode === "resume" ? t.runs.resume : t.runs.beginExecution}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cancelConfirmOpen && monitorRun ? (
+        <div className="modal-backdrop" role="presentation">
+          <div aria-modal="true" className="config-modal run-confirm-modal" role="dialog">
+            <div className="modal-header">
+              <div>
+                <h2>{t.runs.cancelConfirmTitle}</h2>
+                <p>{taskName(monitorRun)}</p>
+              </div>
+              <button className="icon-button" onClick={() => setCancelConfirmOpen(false)} title={t.runs.cancel} type="button">
+                ×
+              </button>
+            </div>
+            <div className="modal-body run-confirm-body">
+              <div className="risk warn">{t.runs.cancelConfirmBody}</div>
+              <code>{monitorRun.id}</code>
+            </div>
+            <div className="modal-footer">
+              <button className="button" disabled={busy} onClick={() => setCancelConfirmOpen(false)} type="button">
+                {t.runs.keepRunning}
+              </button>
+              <button className="button danger" disabled={busy} onClick={confirmCancelCurrentRun} type="button">
+                <XCircle size={16} />
+                {t.runs.confirmCancelExperiment}
               </button>
             </div>
           </div>
@@ -1007,13 +1355,67 @@ export default function RunsPage() {
                   <strong>{lastSummary.taskName}</strong>
                   <code>{lastSummary.runId}</code>
                 </div>
-                <span className={badgeClass(lastSummary.status)}>{statusLabels[lastSummary.status] ?? lastSummary.status}</span>
+                <span className={badgeClass(lastSummary.status)}>{runStatusLabel(lastSummary.status, statusLabels)}</span>
               </div>
               <div className="run-meta-grid">
                 <Metric label={t.common.progress} value={`${lastSummary.progress}%`} />
-                <Metric label={t.runs.matrixCells} value={lastSummary.cells.toString()} />
+                <Metric label={t.runs.duration} value={formatDurationMs(lastSummary.durationMs, language)} />
+                <Metric label={t.runs.completedCells} value={`${lastSummary.completedCells}/${lastSummary.cells}`} />
+                <Metric label={t.runs.successfulCells} value={lastSummary.succeededCells.toString()} />
+                <Metric label={t.runs.failedCells} value={lastSummary.failedCells.toString()} />
+                <Metric label={t.runs.remainingCells} value={lastSummary.remainingCells.toString()} />
+                <Metric label={t.common.config} value={lastSummary.configName} />
+                <Metric label={t.runs.worker} value={lastSummary.workerId ?? "n/a"} />
+                <Metric label={t.runs.created} value={formatOptionalDate(lastSummary.createdAt)} />
+                <Metric label={t.runs.started} value={formatOptionalDate(lastSummary.startedAt)} />
+                <Metric label={t.runs.finished} value={formatOptionalDate(lastSummary.finishedAt)} />
                 <Metric label={t.runs.updated} value={formatOptionalDate(lastSummary.updatedAt)} />
-                <Metric label={t.runs.artifactRoot} value={lastSummary.artifactRoot ?? "n/a"} />
+                <Metric label={t.runs.matrixCells} value={lastSummary.cells.toString()} />
+              </div>
+              {lastSummary.selection ? (
+                <div className="run-summary-section">
+                  <div className="run-artifacts-head">
+                    <CheckCircle2 size={15} />
+                    <span>{t.runs.selectionScope}</span>
+                  </div>
+                  <div className="run-meta-grid run-summary-compact-grid">
+                    <Metric label={t.runs.datasets} value={lastSummary.selection.datasets.toString()} />
+                    <Metric label={t.runs.watermarks} value={lastSummary.selection.watermarks.toString()} />
+                    <Metric label={t.runs.attacks} value={lastSummary.selection.attacks.toString()} />
+                    <Metric label={t.runs.seeds} value={lastSummary.selection.seeds.toString()} />
+                    <Metric label={t.common.samples} value={lastSummary.selection.sampleCount.toString()} />
+                    <Metric label={t.console.ops} value={lastSummary.selection.imageOperationCount.toString()} />
+                  </div>
+                </div>
+              ) : null}
+              <div className="run-summary-section">
+                <div className="run-artifacts-head">
+                  <TerminalSquare size={15} />
+                  <span>{t.runs.latestEvent}</span>
+                </div>
+                {lastSummary.latestEvent ? (
+                  <div className="run-event-row summary-event-row">
+                    <strong>{lastSummary.latestEvent.title}</strong>
+                    <span>{lastSummary.latestEvent.timestamp ? localizedDate(language, lastSummary.latestEvent.timestamp) : "n/a"}</span>
+                    <code>{lastSummary.latestEvent.meta}</code>
+                  </div>
+                ) : (
+                  <div className="empty compact-empty">{t.runs.noEvents}</div>
+                )}
+              </div>
+              <div className="run-summary-section">
+                <div className="run-artifacts-head">
+                  <TerminalSquare size={15} />
+                  <span>{t.runs.logSummary}</span>
+                </div>
+                <div className="run-meta-grid run-summary-compact-grid">
+                  <Metric label={t.runs.logPath} value={lastSummary.log?.path ?? lastSummary.artifactRoot ?? "n/a"} />
+                  <Metric label={t.runs.logLines} value={(lastSummary.log?.lineCount ?? 0).toString()} />
+                </div>
+                <div className="run-summary-log-tail">
+                  <span>{t.runs.logTail}</span>
+                  <pre>{lastSummary.log?.tailLines.length ? lastSummary.log.tailLines.join("\n") : t.runs.noLastLogLine}</pre>
+                </div>
               </div>
               <div className="run-artifacts">
                 <div className="run-artifacts-head">
@@ -1029,6 +1431,12 @@ export default function RunsPage() {
               </div>
             </div>
             <div className="modal-footer">
+              {isRestartableTerminalRun(lastSummary.status) ? (
+                <button className="button" disabled={busy} onClick={resumeSummaryRun} type="button">
+                  <RotateCcw size={16} />
+                  {t.runs.resumeFromCheckpoint}
+                </button>
+              ) : null}
               <button className="button primary" onClick={closeSummaryDialog} type="button">
                 {t.runs.closeSummary}
               </button>

@@ -9,6 +9,7 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    PAUSED = "paused"
     CANCELLED = "cancelled"
     PARTIALLY_FAILED = "partially_failed"
 
