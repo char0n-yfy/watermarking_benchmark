@@ -127,8 +127,7 @@ class RAWatermark(BaseWatermark):
             probs = self._torch.softmax(pred, dim=1)[:, 1].detach().cpu().tolist()
         return [
             {
-                "present": float(prob) > 0.5,
-                "watermark_probability": float(prob),
+                "detection_score": float(prob),
                 "payload_type": "zero-bit",
                 "wm_index": self.wm_index,
                 "weights_dir": str(self.weights_dir),
@@ -163,8 +162,7 @@ class RAWatermark(BaseWatermark):
             pred, _ = self._model.classifier(image)
             prob = float(self._torch.softmax(pred, dim=1)[:, 1].item())
         return {
-            "present": prob > 0.5,
-            "watermark_probability": prob,
+            "detection_score": prob,
             "payload_type": "zero-bit",
             "wm_index": self.wm_index,
             "weights_dir": str(self.weights_dir),

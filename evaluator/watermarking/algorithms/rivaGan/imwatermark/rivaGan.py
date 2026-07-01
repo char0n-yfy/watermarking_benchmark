@@ -8,6 +8,7 @@ import time
 class RivaWatermark(object):
     encoder = None
     decoder = None
+    onnx_providers = None
 
     def __init__(self, watermarks=[], wmLen=32, threshold=0.52):
         self._watermarks = watermarks
@@ -31,10 +32,45 @@ class RivaWatermark(object):
         modelDir = os.environ.get('IMWATERMARK_RIVAGAN_MODEL_DIR')
         if not modelDir:
             modelDir = os.path.dirname(os.path.abspath(__file__))
+        available_providers = onnxruntime.get_available_providers()
+        requested_providers = os.environ.get(
+            'IMWATERMARK_RIVAGAN_ONNX_PROVIDERS',
+            os.environ.get('WM_BENCH_RIVAGAN_ONNX_PROVIDERS', ''),
+        )
+        if requested_providers:
+            provider_preference = [
+                provider.strip()
+                for provider in requested_providers.replace(';', ',').split(',')
+                if provider.strip()
+            ]
+        else:
+            provider_preference = [
+                'CUDAExecutionProvider',
+                'CPUExecutionProvider',
+            ]
+        providers = [
+            provider
+            for provider in provider_preference
+            if provider in available_providers
+        ]
+        if not providers:
+            providers = (
+                ['CPUExecutionProvider']
+                if 'CPUExecutionProvider' in available_providers
+                else available_providers
+            )
         RivaWatermark.encoder = onnxruntime.InferenceSession(
-            os.path.join(modelDir, 'rivagan_encoder.onnx'))
+            os.path.join(modelDir, 'rivagan_encoder.onnx'),
+            providers=providers or None)
         RivaWatermark.decoder = onnxruntime.InferenceSession(
-            os.path.join(modelDir, 'rivagan_decoder.onnx'))
+            os.path.join(modelDir, 'rivagan_decoder.onnx'),
+            providers=providers or None)
+        RivaWatermark.onnx_providers = {
+            'available': available_providers,
+            'selected': providers,
+            'encoder': RivaWatermark.encoder.get_providers(),
+            'decoder': RivaWatermark.decoder.get_providers(),
+        }
 
     def encode(self, frame):
         if not RivaWatermark.encoder:

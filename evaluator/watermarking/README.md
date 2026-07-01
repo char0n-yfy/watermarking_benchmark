@@ -36,6 +36,7 @@ Current registered methods:
 - `wam`
 - `mbrs`
 - `cin`
+- `dwsf`
 - `pimog`
 - `invismark`
 - `hidden`
@@ -58,6 +59,7 @@ Newly promoted GitHub methods:
 - `wam`: Watermark Anything 32-bit localized watermark, using `wam_mit.pth`.
 - `mbrs`: MBRS 256-bit JPEG-robust baseline, using `EC_42.pth`.
 - `cin`: CIN 30-bit combined-noise baseline, using `cinNet_nsmNet.pth`.
+- `dwsf`: DWSF 30-bit deep dispersed watermark, using `encoder_best.pth`, `decoder_best.pth`, and `seg.pth`.
 - `pimog`: PIMoG 30-bit ScreenShooting baseline, using `Encoder_Decoder_Model_mask_99.pth`.
 - `pixelseal`: PixelSeal 256-bit VideoSeal-family checkpoint, using `pixelseal_checkpoint.pth`.
 - `chunkyseal`: ChunkySeal 1024-bit high-capacity VideoSeal-family checkpoint, using `chunkyseal_checkpoint.pth`.
@@ -80,3 +82,9 @@ is formally registered and uses only local packaged paths:
 embed/extract smoke passed on CUDA with 100/100 decoded bits. The SD-Turbo
 fp16 files are stored locally, while UNet and VAE are cast to fp32 at runtime
 to avoid fp16 NaNs during VINE inference.
+
+`dwsf` was reproduced first under `算法/` and promoted after a packaged-path
+smoke test decoded 30/30 bits. Its official repository does not ship pretrained
+checkpoints, so the local encoder, decoder, and segmentation checkpoints are
+from the WIBE DWSF model bundle and are documented under
+`resources/weights/watermarking/dwsf/WEIGHTS_PROVENANCE.md`.

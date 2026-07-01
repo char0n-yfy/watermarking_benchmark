@@ -27,7 +27,7 @@ class EmbedMaxDct(object):
             ca1,(h1,v1,d1) = pywt.dwt2(yuv[:row//4*4,:col//4*4,channel], 'haar')
             self.encode_frame(ca1, self._scales[channel])
 
-            yuv[:row//4*4,:col//4*4,channel] = pywt.idwt2((ca1, (v1,h1,d1)), 'haar')
+            yuv[:row//4*4,:col//4*4,channel] = pywt.idwt2((ca1, (h1,v1,d1)), 'haar')
 
         bgr_encoded = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
         return bgr_encoded
@@ -86,21 +86,23 @@ class EmbedMaxDct(object):
             return 0.0
 
     def diffuse_dct_matrix(self, block, wmBit, scale):
-        pos = np.argmax(abs(block.flatten()[1:])) + 1
+        dct = cv2.dct(block.astype(np.float32))
+        pos = np.argmax(abs(dct.flatten()[1:])) + 1
         i, j = pos // self._block, pos % self._block
-        val = block[i][j]
+        val = dct[i][j]
         if val >= 0.0:
-            block[i][j] = (val//scale + 0.25 + 0.5 * wmBit) * scale
+            dct[i][j] = (val//scale + 0.25 + 0.5 * wmBit) * scale
         else:
             val = abs(val)
-            block[i][j] = -1.0 * (val//scale + 0.25 + 0.5 * wmBit) * scale
-        return block
+            dct[i][j] = -1.0 * (val//scale + 0.25 + 0.5 * wmBit) * scale
+        return cv2.idct(dct)
 
     def infer_dct_matrix(self, block, scale):
-        pos = np.argmax(abs(block.flatten()[1:])) + 1
+        dct = cv2.dct(block.astype(np.float32))
+        pos = np.argmax(abs(dct.flatten()[1:])) + 1
         i, j = pos // self._block, pos % self._block
 
-        val = block[i][j]
+        val = dct[i][j]
         if val < 0:
             val = abs(val)
 

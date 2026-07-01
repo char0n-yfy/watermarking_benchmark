@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import os
 import random
+import shutil
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -74,9 +76,31 @@ class IdentityAttack(BaseAttack):
     description = "No-op distortion. Copies the watermarked image unchanged."
 
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
-        image = _load_rgb(input_path)
-        _save_png(image, output_path)
-        return {"operation": "copy"}
+        try:
+            if input_path.resolve() == output_path.resolve():
+                return {
+                    "operation": "same_path",
+                    "noOp": True,
+                    "encodedBytesPreserved": True,
+                }
+        except OSError:
+            pass
+
+        if output_path.exists():
+            output_path.unlink()
+
+        try:
+            os.link(input_path, output_path)
+            operation = "hardlink"
+        except OSError:
+            shutil.copy2(input_path, output_path)
+            operation = "copy2"
+
+        return {
+            "operation": operation,
+            "noOp": True,
+            "encodedBytesPreserved": True,
+        }
 
 
 @register_attack

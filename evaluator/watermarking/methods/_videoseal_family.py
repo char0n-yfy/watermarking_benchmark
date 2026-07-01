@@ -119,6 +119,11 @@ class VideoSealFamilyWatermark(BaseWatermark):
             kwargs["is_video"] = False
         return kwargs
 
+    def _internal_size(self) -> list[int]:
+        assert self._model is not None
+        size = int(getattr(self._model, "img_size", 256))
+        return [size, size]
+
     def embed_batch_impl(
         self,
         jobs: list[tuple[Path, Path, WatermarkContext]],
@@ -144,6 +149,7 @@ class VideoSealFamilyWatermark(BaseWatermark):
             grouped.setdefault(tuple(item[3].shape[-2:]), []).append(item)
 
         to_pil = self._tf.ToPILImage()
+        internal_size = self._internal_size()
         with self._torch.no_grad():
             for items in grouped.values():
                 tensors = self._torch.cat([item[3] for item in items], dim=0)
@@ -158,6 +164,7 @@ class VideoSealFamilyWatermark(BaseWatermark):
                         "checkpoint_file": str(self.checkpoint_path),
                         "weights_dir": str(self.weights_dir),
                         "lowres_attenuation": self.lowres_attenuation,
+                        "internalSize": internal_size,
                     }
         return [dict(result or {}) for result in results]
 
@@ -188,12 +195,14 @@ class VideoSealFamilyWatermark(BaseWatermark):
                 tensors = self._torch.cat([item[2] for item in items], dim=0)
                 detected = self._model.detect(tensors, **self._detect_kwargs())
                 decoded_batch = (detected["preds"][:, 1:] > 0).int().detach().cpu().tolist()
+                internal_size = self._internal_size()
                 for (result_index, context, _tensor), decoded_bits in zip(items, decoded_batch):
                     metadata: dict[str, Any] = {
                         "bits": bits_to_string(decoded_bits),
                         "payload_bits": len(decoded_bits),
                         "checkpoint_file": str(self.checkpoint_path),
                         "weights_dir": str(self.weights_dir),
+                        "decodeInternalSize": internal_size,
                     }
                     if context.message is not None:
                         expected = bits_from_message(context.message, len(decoded_bits), seed=context.seed)
@@ -220,6 +229,7 @@ class VideoSealFamilyWatermark(BaseWatermark):
             "checkpoint_file": str(self.checkpoint_path),
             "weights_dir": str(self.weights_dir),
             "lowres_attenuation": self.lowres_attenuation,
+            "internalSize": self._internal_size(),
         }
 
     def extract_impl(self, input_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
@@ -238,6 +248,7 @@ class VideoSealFamilyWatermark(BaseWatermark):
             "payload_bits": len(decoded_bits),
             "checkpoint_file": str(self.checkpoint_path),
             "weights_dir": str(self.weights_dir),
+            "decodeInternalSize": self._internal_size(),
         }
         if context.message is not None:
             expected = bits_from_message(context.message, len(decoded_bits), seed=context.seed)

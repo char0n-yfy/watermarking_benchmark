@@ -114,12 +114,16 @@ class _InvisibleWatermarkBase(BaseWatermark):
         import cv2
         import numpy as np
 
+        riva_provider_info = None
         with self._runtime_env(), prepend_sys_path(self.repo_dir, self._purge_modules()):
             from imwatermark import WatermarkEncoder
 
             if self.algorithm == "rivaGan":
+                from imwatermark.rivaGan import RivaWatermark
+
                 WatermarkEncoder.loadModel()
                 self._model_loaded = True
+                riva_provider_info = getattr(RivaWatermark, "onnx_providers", None)
 
             data = np.fromfile(str(input_path), dtype=np.uint8)
             bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -141,6 +145,7 @@ class _InvisibleWatermarkBase(BaseWatermark):
             "weights_dir": None if self.weights_dir is None else str(self.weights_dir),
             "encoder_path": None if self.encoder_path is None else str(self.encoder_path),
             "decoder_path": None if self.decoder_path is None else str(self.decoder_path),
+            "onnx_providers": riva_provider_info,
         }
 
     def extract_impl(self, input_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
@@ -151,12 +156,16 @@ class _InvisibleWatermarkBase(BaseWatermark):
         decode_bits = len(expected_payload) * 8 if expected_payload is not None else self.payload_bits
         decode_bytes = max(1, (decode_bits + 7) // 8)
 
+        riva_provider_info = None
         with self._runtime_env(), prepend_sys_path(self.repo_dir, self._purge_modules()):
             from imwatermark import WatermarkDecoder
 
             if self.algorithm == "rivaGan":
+                from imwatermark.rivaGan import RivaWatermark
+
                 WatermarkDecoder.loadModel()
                 self._model_loaded = True
+                riva_provider_info = getattr(RivaWatermark, "onnx_providers", None)
 
             data = np.fromfile(str(input_path), dtype=np.uint8)
             bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -179,6 +188,7 @@ class _InvisibleWatermarkBase(BaseWatermark):
             "weights_dir": None if self.weights_dir is None else str(self.weights_dir),
             "encoder_path": None if self.encoder_path is None else str(self.encoder_path),
             "decoder_path": None if self.decoder_path is None else str(self.decoder_path),
+            "onnx_providers": riva_provider_info,
         }
         if expected_payload is not None:
             expected_payload = expected_payload[:decode_bytes].ljust(decode_bytes, b"\0")

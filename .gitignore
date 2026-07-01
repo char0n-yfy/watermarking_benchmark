@@ -33,11 +33,22 @@
 *.tflite
 *.zip
 
+# Local rendered/extracted image artifacts
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.tif
+*.tiff
+
 # Python / build outputs
 __pycache__/
 *.pyc
 *.tsbuildinfo
 /runs/
+/tmp/
 node_modules/
 .pnpm-store/
 .next/

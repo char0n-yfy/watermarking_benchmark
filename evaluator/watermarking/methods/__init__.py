@@ -1,5 +1,6 @@
 from .chunkyseal import ChunkySealWatermark
 from .cin import CINWatermark
+from .dwsf import DWSFWatermark
 from .hidden import HiDDeNWatermark
 from .invismark import InvisMarkWatermark
 from .invisible_watermark import (
@@ -23,6 +24,7 @@ from .wam import WAMWatermark
 __all__ = [
     "ChunkySealWatermark",
     "CINWatermark",
+    "DWSFWatermark",
     "HiDDeNWatermark",
     "InvisMarkWatermark",
     "InvisibleWatermarkDwtDct",
