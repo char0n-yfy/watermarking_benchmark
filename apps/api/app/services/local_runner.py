@@ -37,6 +37,7 @@ from app.services.experiment_stages import (
     ExtractStage,
     QualityStage,
     WatermarkStage,
+    normalize_attack_params_for_runtime,
 )
 from app.services.resources import (
     get_attack_catalog_item,
@@ -1065,7 +1066,7 @@ def _attack_params(attack: JsonDict, strength: float) -> JsonDict:
         if str(strength_param) in {"scale", "xy"} and float(strength).is_integer():
             value = int(strength)
         params[str(strength_param)] = value
-    return params
+    return normalize_attack_params_for_runtime(str(attack["method"]), params)
 
 
 def _progress(completed_cells: int, total_cells: int) -> int:
@@ -1392,7 +1393,10 @@ def run_local_experiment(
                             attack_id = str(variant["attackId"])
                             attack = variant["attack"]
                             strength = float(variant["strength"])
-                            attack_params = dict(variant["attackParams"])
+                            attack_params = normalize_attack_params_for_runtime(
+                                str(attack["method"]),
+                                dict(variant["attackParams"]),
+                            )
                             cell_key = str(variant["cellKey"])
                             cell_root = run_root / "cells" / cell_key
                             attacked_dir = cell_root / "attacked"

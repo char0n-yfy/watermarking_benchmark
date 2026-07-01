@@ -10,6 +10,8 @@ import type {
   DemoRunRecord,
   ExperimentSelection,
   LeaderboardResponse,
+  ParallelTuningJob,
+  ParallelTuningSaveResult,
   ReadinessReport,
   RunEvents,
   RunLogs,
@@ -271,4 +273,33 @@ export function fetchReadiness(): Promise<ReadinessReport> {
 
 export function fetchSystemMetrics(): Promise<SystemMetrics> {
   return requestJson<SystemMetrics>("/system/metrics");
+}
+
+export function startParallelTuning(payload?: Record<string, unknown>): Promise<ParallelTuningJob> {
+  return requestJson<ParallelTuningJob>("/system/parallel-tuning", {
+    method: "POST",
+    body: JSON.stringify(payload ?? {})
+  });
+}
+
+export function fetchLatestParallelTuning(): Promise<ParallelTuningJob> {
+  return requestJson<ParallelTuningJob>("/system/parallel-tuning/latest");
+}
+
+export function fetchParallelTuning(jobId: string): Promise<ParallelTuningJob> {
+  return requestJson<ParallelTuningJob>(`/system/parallel-tuning/${encodeURIComponent(jobId)}`);
+}
+
+export function saveParallelTuning(jobId: string): Promise<ParallelTuningSaveResult> {
+  return requestJson<ParallelTuningSaveResult>(`/system/parallel-tuning/${encodeURIComponent(jobId)}/save`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function cancelParallelTuning(jobId: string): Promise<ParallelTuningJob> {
+  return requestJson<ParallelTuningJob>(`/system/parallel-tuning/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
 }

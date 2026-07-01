@@ -395,6 +395,7 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
     category = _attack_category(method, cls)
     resource_metadata = _viewpoint_resource_metadata(method)
     display_method = _attack_resource_method(method)
+    params = {"save_intermediates": False} if _is_viewpoint_rerendering_variant(method) else {}
     return {
         "id": f"atk-{_slug(method)}",
         "name": _display_name(method, ATTACK_DISPLAY_NAMES),
@@ -411,7 +412,7 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
         "requiresGpu": _attack_requires_gpu(method),
         "recommended": method == "identity",
         "available": True,
-        "params": {},
+        "params": params,
         **resource_metadata,
     }
 

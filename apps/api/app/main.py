@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,7 @@ from .services.dataset_download import DatasetDownloadService
 from .services.experiment_service import ExperimentService
 from .services.object_storage import get_object_storage_client
 from .services.attack_weight_download import AttackWeightDownloadService
+from .services.parallel_tuning import ParallelTuningService
 from .services.readiness import collect_readiness
 from .services.resources import (
     get_attack_catalog_item,
@@ -41,6 +43,18 @@ def create_app() -> FastAPI:
     download_service = DatasetDownloadService(settings.resources_root, oss=oss_client)
     weight_download_service = WeightDownloadService(settings.resources_root, oss=oss_client)
     attack_weight_download_service = AttackWeightDownloadService(settings.resources_root, oss=oss_client)
+    tuning_service = ParallelTuningService(
+        resources_root=settings.resources_root,
+        runs_root=settings.runs_root,
+        device=settings.device,
+    )
+
+    def tuning_env_path() -> Path:
+        configured = os.getenv("WM_BENCH_DOTENV_PATH")
+        if configured:
+            path = Path(configured).expanduser()
+            return path if path.is_absolute() else settings.project_root / path
+        return Path(settings.project_root) / ".env.autodl"
 
     app = FastAPI(
         title="Watermark Benchmark API",
@@ -89,6 +103,47 @@ def create_app() -> FastAPI:
     @app.get("/system/metrics")
     def system_metrics() -> dict[str, object]:
         return collect_system_metrics(data_root=settings.data_root, device=settings.device)
+
+    @app.post("/system/parallel-tuning")
+    def start_parallel_tuning(payload: dict[str, object] | None = Body(default=None)) -> dict[str, object]:
+        try:
+            return tuning_service.start(dict(payload or {}))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/system/parallel-tuning")
+    def list_parallel_tuning_jobs() -> list[dict[str, object]]:
+        return tuning_service.list_jobs()
+
+    @app.get("/system/parallel-tuning/latest")
+    def latest_parallel_tuning_job() -> dict[str, object]:
+        job = tuning_service.latest()
+        if job is None:
+            raise HTTPException(status_code=404, detail="No parallel tuning jobs found")
+        return job
+
+    @app.get("/system/parallel-tuning/{job_id}")
+    def get_parallel_tuning_job(job_id: str) -> dict[str, object]:
+        try:
+            return tuning_service.get(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/system/parallel-tuning/{job_id}/save")
+    def save_parallel_tuning_job(job_id: str) -> dict[str, object]:
+        try:
+            return tuning_service.save_parameters(job_id, tuning_env_path())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/system/parallel-tuning/{job_id}/cancel")
+    def cancel_parallel_tuning_job(job_id: str) -> dict[str, object]:
+        try:
+            return tuning_service.cancel(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/status-values")
     def status_values() -> dict[str, list[str]]:

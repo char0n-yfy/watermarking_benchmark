@@ -18,6 +18,7 @@ from app.core.planner import ExperimentCell, ExperimentSpec, materialize_cells
 from app.core.storage import safe_segment
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
 from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
+from app.services.runtime_parallel_config import apply_runtime_parallel_env
 from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols
 
 
@@ -277,6 +278,7 @@ class ExperimentService:
         if run["cancelRequested"]:
             return self._finish_stopped_run(run_id, self._stop_intent(run))
 
+        apply_runtime_parallel_env(self.runs_root)
         config = self.get_config(run["configId"])
         now = utc_now()
         log_path_value = str(log_path) if log_path is not None else run.get("logPath")

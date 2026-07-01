@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,16 @@ from app.services.resources import iter_image_paths
 
 
 JsonDict = dict[str, Any]
+VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
+    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
+)
+
+
+def normalize_attack_params_for_runtime(method: str, params: JsonDict) -> JsonDict:
+    normalized = dict(params)
+    if VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(str(method)):
+        normalized["save_intermediates"] = False
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -288,6 +299,7 @@ class AttackStage:
         input_dir: Path,
         output_dir: Path,
     ) -> tuple[Any, AttackStageResult]:
+        attack_params = normalize_attack_params_for_runtime(str(attack["method"]), attack_params)
         attack_instance = get_cached_attack(attack["method"], attack_params, self.device)
         self.reset_gpu_peak(self.device)
         started = time.perf_counter()
@@ -359,6 +371,7 @@ class AttackStage:
         cache: dict[str, dict[str, Any]],
         attack_instance: Any,
     ) -> AttackStageResult:
+        attack_params = normalize_attack_params_for_runtime(str(attack["method"]), attack_params)
         cached = cache.get(cache_key)
         if cached is not None:
             results = cached["results"]

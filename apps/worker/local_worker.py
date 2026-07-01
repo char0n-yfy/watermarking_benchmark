@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "apps" / "api"))
 from app.core.config import get_settings
 from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
+from app.services.runtime_parallel_config import apply_runtime_parallel_env
 
 
 class RunTimeoutError(TimeoutError):
@@ -76,6 +77,7 @@ def _run_timeout(seconds: int):
 
 def run_once(worker_id: str | None = None) -> int:
     settings = get_settings()
+    apply_runtime_parallel_env(settings.runs_root)
     service = build_service()
     resolved_worker_id = worker_id or default_worker_id()
     device = settings.device

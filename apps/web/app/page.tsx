@@ -176,6 +176,7 @@ export default function ExperimentConsole() {
       setSystemMetrics(null);
       setNotice("系统性能指标暂时不可用，队列和资源数据已加载。");
     }
+
   };
 
   useEffect(() => {
@@ -222,7 +223,6 @@ export default function ExperimentConsole() {
         ? systemMetrics.memory.totalBytes - systemMetrics.memory.usedBytes
         : null
     );
-
   return (
     <AppShell active="console">
       <div className="topbar console-topbar">
