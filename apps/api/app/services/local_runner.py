@@ -12,6 +12,13 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from evaluator.image_protocol import (
+    CANONICAL_IMAGE_SIZE,
+    CANONICAL_OUTPUT_POLICY,
+    CANONICAL_PREPROCESS_POLICY,
+    canonical_preprocess_image,
+    quality_alignment_metadata,
+)
 from evaluator.attacks.runner import AttackJob, get_cached_attack, run_attack_dir_with_attack
 from evaluator.watermarking.runner import (
     WatermarkEmbedJob,
@@ -46,6 +53,13 @@ class LocalRunRequest:
     device: str = "cpu"
     message: str = "1010101010101010"
     resume: bool = True
+
+
+@dataclass(frozen=True)
+class StagedSample:
+    path: Path
+    source_path: Path
+    metadata: JsonDict
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -104,6 +118,8 @@ def _artifact_paths(run_root: Path) -> dict[str, Path]:
         "cellManifestLatest": run_root / "cell_manifest_latest.jsonl",
         "cellSummaryLatest": run_root / "cell_summary_latest.json",
         "imageQuality": run_root / "image_quality.jsonl",
+        "imageWatermarkEmbed": run_root / "image_watermark_embed.jsonl",
+        "imageAttack": run_root / "image_attack.jsonl",
         "imageDetection": run_root / "image_detection.jsonl",
         "imageDetectionLatest": run_root / "image_detection_latest.jsonl",
         "runtimeProfile": run_root / "runtime_profile.jsonl",
@@ -429,6 +445,7 @@ def _record_quality_pairs(
         metadata={"scope": scope},
     )
     for (reference_path, _target_path), metrics in zip(pairs, metrics_by_pair):
+        alignment = quality_alignment_metadata(reference_path, _target_path)
         _append_jsonl(
             paths["imageQuality"],
             {
@@ -442,6 +459,7 @@ def _record_quality_pairs(
                 "attackStrength": attack_strength,
                 "seed": seed,
                 "sampleId": _image_sample_id(reference_path, reference_dir),
+                **alignment,
                 "metrics": metrics,
                 "timestamp": _utc_timestamp(),
             },
@@ -505,6 +523,107 @@ def _detection_record(
         "metadata": metadata,
         "timestamp": _utc_timestamp(),
     }
+
+
+def _record_watermark_embed_results(
+    paths: dict[str, Path],
+    *,
+    run_id: str,
+    cell_key: str,
+    dataset_id: str,
+    algorithm_id: str,
+    watermark_method: str,
+    seed: int,
+    input_root: Path,
+    results: list[Any],
+) -> None:
+    for result in results:
+        metadata = dict(getattr(result, "metadata", {}) or {})
+        input_path = Path(getattr(result, "input_path", ""))
+        output_path = Path(getattr(result, "output_path", ""))
+        _append_jsonl(
+            paths["imageWatermarkEmbed"],
+            {
+                "runId": run_id,
+                "cellKey": cell_key,
+                "stage": "watermark_embed",
+                "datasetId": dataset_id,
+                "algorithmId": algorithm_id,
+                "watermarkMethod": watermark_method,
+                "seed": seed,
+                "sampleId": _image_sample_id(input_path, input_root),
+                "status": "succeeded" if getattr(result, "ok", False) else "failed",
+                "inputPath": str(input_path),
+                "outputPath": str(output_path),
+                "inputSize": metadata.get("inputSize"),
+                "internalSize": metadata.get("internalSize"),
+                "preCanonicalOutputSize": metadata.get("preCanonicalOutputSize"),
+                "outputSize": metadata.get("outputSize"),
+                "canonicalSize": metadata.get("canonicalSize"),
+                "outputSizePolicy": metadata.get("outputSizePolicy"),
+                "canonicalizedOutput": metadata.get("canonicalizedOutput"),
+                "elapsedMs": getattr(result, "elapsed_ms", None),
+                "error": getattr(result, "error", None),
+                "metadata": metadata,
+                "timestamp": _utc_timestamp(),
+            },
+        )
+
+
+def _record_attack_results(
+    paths: dict[str, Path],
+    *,
+    run_id: str,
+    cell_key: str,
+    stage: str,
+    dataset_id: str,
+    algorithm_id: str,
+    attack_id: str,
+    attack_method: str,
+    attack_strength: float,
+    attack_params: JsonDict,
+    seed: int,
+    label: int,
+    input_root: Path,
+    results: list[Any],
+    cache_hit: bool = False,
+) -> None:
+    for result in results:
+        metadata = dict(getattr(result, "metadata", {}) or {})
+        input_path = Path(getattr(result, "input_path", ""))
+        output_path = Path(getattr(result, "output_path", ""))
+        _append_jsonl(
+            paths["imageAttack"],
+            {
+                "runId": run_id,
+                "cellKey": cell_key,
+                "stage": stage,
+                "datasetId": dataset_id,
+                "algorithmId": algorithm_id,
+                "attackPresetId": attack_id,
+                "attackMethod": attack_method,
+                "attackStrength": attack_strength,
+                "attackParams": attack_params,
+                "seed": seed,
+                "label": label,
+                "sampleId": _image_sample_id(input_path, input_root),
+                "status": "succeeded" if getattr(result, "ok", False) else "failed",
+                "inputPath": str(input_path),
+                "outputPath": str(output_path),
+                "inputSize": metadata.get("inputSize"),
+                "preProtocolOutputSize": metadata.get("preProtocolOutputSize"),
+                "outputSize": metadata.get("outputSize"),
+                "protocolResizedOutput": metadata.get("protocolResizedOutput"),
+                "sizePreserving": metadata.get("sizePreserving"),
+                "sizeChangeSemantic": metadata.get("sizeChangeSemantic"),
+                "sizePolicy": metadata.get("sizePolicy"),
+                "cacheHit": cache_hit,
+                "elapsedMs": getattr(result, "elapsed_ms", None),
+                "error": getattr(result, "error", None),
+                "metadata": metadata,
+                "timestamp": _utc_timestamp(),
+            },
+        )
 
 
 def _ensure_list(value: Any, fallback: list[Any]) -> list[Any]:
@@ -681,10 +800,17 @@ def estimate_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
     }
 
 
-def _copy_samples(dataset_path: Path, output_dir: Path, max_samples: int) -> list[Path]:
+def _canonical_target_path(output_dir: Path, relative: Path, index: int) -> Path:
+    target = (output_dir / relative).with_suffix(".png")
+    if not target.exists():
+        return target
+    return target.with_name(f"{target.stem}_{index:04d}.png")
+
+
+def _copy_samples(dataset_path: Path, output_dir: Path, max_samples: int) -> list[StagedSample]:
     sample_paths = iter_image_paths(dataset_path)[:max_samples]
     output_dir.mkdir(parents=True, exist_ok=True)
-    copied: list[Path] = []
+    staged: list[StagedSample] = []
 
     for index, sample_path in enumerate(sample_paths, start=1):
         try:
@@ -693,12 +819,11 @@ def _copy_samples(dataset_path: Path, output_dir: Path, max_samples: int) -> lis
             relative = Path(f"sample_{index:04d}{sample_path.suffix.lower()}")
         if relative.name.startswith("."):
             relative = Path(f"sample_{index:04d}{sample_path.suffix.lower()}")
-        target = output_dir / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(sample_path, target)
-        copied.append(target)
+        target = _canonical_target_path(output_dir, relative, index)
+        metadata = canonical_preprocess_image(sample_path, target)
+        staged.append(StagedSample(path=target, source_path=sample_path, metadata=metadata))
 
-    return copied
+    return staged
 
 
 def _cell_key(
@@ -780,6 +905,12 @@ def run_local_experiment(
             "datasets": selection["datasetIds"],
             "watermarkAlgorithms": selection["algorithmIds"],
             "attacks": attack_plan,
+            "imageSizeProtocol": {
+                "canonicalSize": list(CANONICAL_IMAGE_SIZE),
+                "preprocessPolicy": CANONICAL_PREPROCESS_POLICY,
+                "watermarkOutputPolicy": CANONICAL_OUTPUT_POLICY,
+                "qualityAlignmentPolicy": "resize target to reference only when sizes differ",
+            },
             "resume": request.resume,
             "createdAt": _utc_timestamp(),
         },
@@ -837,25 +968,40 @@ def run_local_experiment(
         cell_input_dir = run_root / "staging" / "samples" / safe_segment(dataset_id)
         _stage_event(paths, request.run_id, "dataset", "started", datasetId=dataset_id)
         try:
-            copied_samples = _copy_samples(dataset.path, cell_input_dir, selection["maxSamples"])
-            if not copied_samples:
+            staged_samples = _copy_samples(dataset.path, cell_input_dir, selection["maxSamples"])
+            copied_samples = [sample.path for sample in staged_samples]
+            if not staged_samples:
                 raise ValueError(f"Dataset has no supported image files: {dataset.path}")
 
-            for sample_path in copied_samples:
+            for staged_sample in staged_samples:
+                sample_path = staged_sample.path
                 sample_id = _image_sample_id(sample_path, cell_input_dir)
                 sample_key = (dataset_id, sample_id)
                 if sample_key in existing_sample_keys:
                     continue
-                width, height = _image_size(sample_path)
+                original_size = staged_sample.metadata.get("originalSize") or [None, None]
+                canonical_size = staged_sample.metadata.get("canonicalSize") or [None, None]
                 _append_jsonl(
                     paths["sampleManifest"],
                     {
                         "runId": request.run_id,
                         "datasetId": dataset_id,
                         "sampleId": sample_id,
-                        "sourcePath": str(dataset.path / sample_path.relative_to(cell_input_dir)),
-                        "width": width,
-                        "height": height,
+                        "sourcePath": str(staged_sample.source_path),
+                        "width": original_size[0],
+                        "height": original_size[1],
+                        "originalSize": original_size,
+                        "canonicalSize": canonical_size,
+                        "canonicalWidth": canonical_size[0],
+                        "canonicalHeight": canonical_size[1],
+                        "preprocessPolicy": staged_sample.metadata.get("preprocessPolicy"),
+                        "cropPolicy": staged_sample.metadata.get("cropPolicy"),
+                        "resizedContentSize": staged_sample.metadata.get("resizedContentSize"),
+                        "cropBox": staged_sample.metadata.get("cropBox"),
+                        "cropMargins": staged_sample.metadata.get("cropMargins"),
+                        "padding": staged_sample.metadata.get("padding"),
+                        "scale": staged_sample.metadata.get("scale"),
+                        "paddingColor": staged_sample.metadata.get("paddingColor"),
                         "timestamp": _utc_timestamp(),
                     },
                 )
@@ -960,6 +1106,17 @@ def run_local_experiment(
                             watermark_method,
                         )
                         embed_elapsed_ms = (time.perf_counter() - embed_started) * 1000
+                        _record_watermark_embed_results(
+                            paths,
+                            run_id=request.run_id,
+                            cell_key=embed_key,
+                            dataset_id=dataset_id,
+                            algorithm_id=algorithm_id,
+                            watermark_method=algorithm["method"],
+                            seed=int(seed),
+                            input_root=cell_input_dir,
+                            results=embed_results,
+                        )
                         embed_errors = [result.error for result in embed_results if getattr(result, "error", None)]
                         if not all(result.ok for result in embed_results):
                             embed_error = "; ".join(embed_errors) or "one or more watermark embed operations failed"
@@ -1118,6 +1275,22 @@ def run_local_experiment(
                                     attack_instance,
                                 )
                                 attack_elapsed_ms = (time.perf_counter() - attack_started) * 1000
+                                _record_attack_results(
+                                    paths,
+                                    run_id=request.run_id,
+                                    cell_key=cell_key,
+                                    stage="attack",
+                                    dataset_id=dataset_id,
+                                    algorithm_id=algorithm_id,
+                                    attack_id=attack_id,
+                                    attack_method=attack["method"],
+                                    attack_strength=strength,
+                                    attack_params=attack_params,
+                                    seed=int(seed),
+                                    label=1,
+                                    input_root=watermarked_dir,
+                                    results=attack_results,
+                                )
                                 attack_error = "; ".join(
                                     result.error for result in attack_results if getattr(result, "error", None)
                                 )
@@ -1172,6 +1345,23 @@ def run_local_experiment(
                                     negative_attack_results = cached_negative_attack["results"]
                                     negative_attack_elapsed_ms = 0.0
                                     negative_attack_error = cached_negative_attack.get("error")
+                                    _record_attack_results(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        stage="attack_negative_control",
+                                        dataset_id=dataset_id,
+                                        algorithm_id=algorithm_id,
+                                        attack_id=attack_id,
+                                        attack_method=attack["method"],
+                                        attack_strength=strength,
+                                        attack_params=attack_params,
+                                        seed=int(seed),
+                                        label=0,
+                                        input_root=cell_input_dir,
+                                        results=negative_attack_results,
+                                        cache_hit=True,
+                                    )
                                     _record_runtime_profile(
                                         paths,
                                         run_id=request.run_id,
@@ -1205,6 +1395,23 @@ def run_local_experiment(
                                         attack_instance,
                                     )
                                     negative_attack_elapsed_ms = (time.perf_counter() - negative_attack_started) * 1000
+                                    _record_attack_results(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        stage="attack_negative_control",
+                                        dataset_id=dataset_id,
+                                        algorithm_id=algorithm_id,
+                                        attack_id=attack_id,
+                                        attack_method=attack["method"],
+                                        attack_strength=strength,
+                                        attack_params=attack_params,
+                                        seed=int(seed),
+                                        label=0,
+                                        input_root=cell_input_dir,
+                                        results=negative_attack_results,
+                                        cache_hit=False,
+                                    )
                                     negative_attack_error = "; ".join(
                                         result.error
                                         for result in negative_attack_results

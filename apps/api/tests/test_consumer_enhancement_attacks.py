@@ -94,6 +94,15 @@ class ConsumerEnhancementAttackTest(unittest.TestCase):
                     self.assertEqual(len(results), 1)
                     self.assertTrue(results[0].ok, results[0].error)
                     self.assertTrue(results[0].output_path.exists())
+                    self.assertEqual(results[0].metadata["inputSize"], [40, 32])
+                    self.assertEqual(results[0].metadata["outputSize"], list(expected_size))
+                    if expected_size == (40, 32):
+                        self.assertTrue(results[0].metadata["sizePreserving"])
+                        self.assertEqual(results[0].metadata["sizePolicy"], "preserve_input_size")
+                    else:
+                        self.assertFalse(results[0].metadata["sizePreserving"])
+                        self.assertTrue(results[0].metadata["sizeChangeSemantic"])
+                        self.assertEqual(results[0].metadata["sizePolicy"], "semantic_size_change")
                     with Image.open(results[0].output_path) as image:
                         self.assertEqual(image.format, "PNG")
                         self.assertEqual(image.size, expected_size)
@@ -101,6 +110,8 @@ class ConsumerEnhancementAttackTest(unittest.TestCase):
                     manifest = json.loads((output_dir / "attack_manifest.json").read_text())
                     self.assertEqual(manifest[0]["attack_name"], attack_name)
                     self.assertTrue(manifest[0]["ok"])
+                    self.assertEqual(manifest[0]["metadata"]["inputSize"], [40, 32])
+                    self.assertEqual(manifest[0]["metadata"]["outputSize"], list(expected_size))
 
     def test_edit_strength_and_sr_scale_are_runtime_params(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,6 +147,9 @@ class ConsumerEnhancementAttackTest(unittest.TestCase):
             self.assertTrue(sr_result.ok, sr_result.error)
             self.assertEqual(sr_result.metadata["model_name"], "bsrgan_x4")
             self.assertEqual(sr_result.metadata["scale"], 4)
+            self.assertEqual(sr_result.metadata["inputSize"], [20, 16])
+            self.assertEqual(sr_result.metadata["outputSize"], [80, 64])
+            self.assertTrue(sr_result.metadata["sizeChangeSemantic"])
             with Image.open(sr_result.output_path) as image:
                 self.assertEqual(image.size, (80, 64))
 

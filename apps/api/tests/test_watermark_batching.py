@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -53,6 +55,17 @@ class DummyBatchWatermark(BaseWatermark):
         return [{"bits": "10", "message": "decoded", "mode": "batch"} for _job in jobs]
 
 
+class SmallOutputWatermark(BaseWatermark):
+    name = "small-output"
+
+    def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext):
+        Image.new("RGB", (64, 64), (120, 160, 200)).save(output_path)
+        return {"image_size": [64, 64]}
+
+    def extract_impl(self, input_path: Path, context: WatermarkContext):
+        return {"bits": "1", "image_size": [64, 64]}
+
+
 class WatermarkBatchingTest(unittest.TestCase):
     def test_base_watermark_chunks_batch_impls(self) -> None:
         previous = os.environ.get("WM_BENCH_WATERMARK_BATCH_SIZE")
@@ -92,6 +105,30 @@ class WatermarkBatchingTest(unittest.TestCase):
                 os.environ.pop("WM_BENCH_WATERMARK_BATCH_SIZE", None)
             else:
                 os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = previous
+
+    def test_base_watermark_canonicalizes_embed_outputs_and_records_decode_sizes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.png"
+            output_path = root / "output.png"
+            Image.new("RGB", (300, 200), (40, 50, 60)).save(input_path)
+            method = SmallOutputWatermark()
+            context = WatermarkContext(run_id="run", sample_id="sample", method_name=method.name)
+
+            embed_result = method.embed(input_path, output_path, context)
+            extract_result = method.extract(output_path, context)
+
+            self.assertTrue(embed_result.ok, embed_result.error)
+            with Image.open(output_path) as image:
+                self.assertEqual(image.size, (512, 512))
+            self.assertEqual(embed_result.metadata["inputSize"], [300, 200])
+            self.assertEqual(embed_result.metadata["internalSize"], [64, 64])
+            self.assertEqual(embed_result.metadata["preCanonicalOutputSize"], [64, 64])
+            self.assertEqual(embed_result.metadata["outputSize"], [512, 512])
+            self.assertTrue(embed_result.metadata["canonicalizedOutput"])
+            self.assertTrue(extract_result.ok, extract_result.error)
+            self.assertEqual(extract_result.metadata["decodeInputSize"], [512, 512])
+            self.assertEqual(extract_result.metadata["decodeInternalSize"], [64, 64])
 
     def test_torch_gpu_wrappers_expose_batch_hooks(self) -> None:
         embed_batch_classes = [

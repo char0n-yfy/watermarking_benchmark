@@ -7,6 +7,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from evaluator.image_protocol import (
+    CANONICAL_IMAGE_SIZE,
+    canonicalize_image_file_in_place,
+    first_metadata_size,
+    image_size,
+)
+
 
 JsonDict = dict[str, Any]
 
@@ -148,6 +155,67 @@ class BaseWatermark:
         except (TypeError, ValueError):
             return 4
 
+    def _embed_protocol_metadata(
+        self,
+        input_path: Path,
+        output_path: Path,
+        metadata: Mapping[str, Any],
+    ) -> JsonDict:
+        enriched = dict(metadata)
+        input_size = image_size(input_path)
+        pre_output_size = image_size(output_path)
+        if input_size is None and pre_output_size is None:
+            return enriched
+
+        canonicalized = canonicalize_image_file_in_place(output_path)
+        output_size = canonicalized.get("outputSize") or image_size(output_path)
+        internal_size = first_metadata_size(
+            enriched,
+            ("internalSize", "internal_size", "image_size", "output_size", "outputSize"),
+        )
+        if internal_size is None:
+            internal_size = pre_output_size or output_size
+
+        enriched.update(
+            {
+                "inputSize": input_size,
+                "internalSize": internal_size,
+                "preCanonicalOutputSize": pre_output_size,
+                "outputSize": output_size,
+                "canonicalSize": list(CANONICAL_IMAGE_SIZE),
+                "outputSizePolicy": canonicalized.get("outputSizePolicy"),
+                "canonicalizedOutput": bool(canonicalized.get("changed")),
+            }
+        )
+        return enriched
+
+    def _extract_protocol_metadata(
+        self,
+        input_path: Path,
+        metadata: Mapping[str, Any],
+    ) -> JsonDict:
+        enriched = dict(metadata)
+        decode_input_size = image_size(input_path)
+        if decode_input_size is None:
+            return enriched
+        decode_internal_size = first_metadata_size(
+            enriched,
+            (
+                "decodeInternalSize",
+                "decode_internal_size",
+                "internalSize",
+                "internal_size",
+                "image_size",
+            ),
+        )
+        enriched.update(
+            {
+                "decodeInputSize": decode_input_size,
+                "decodeInternalSize": decode_internal_size or decode_input_size,
+            }
+        )
+        return enriched
+
     def embed_many(
         self,
         jobs: Iterable[tuple[str | Path, str | Path, WatermarkContext]],
@@ -176,8 +244,12 @@ class BaseWatermark:
                 results.extend(self.embed(input_path, output_path, context) for input_path, output_path, context in chunk)
                 continue
 
-            elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
+            result_payloads: list[tuple[Path, Path, WatermarkContext, JsonDict]] = []
             for (input_path, output_path, context), metadata in zip(chunk, metadatas):
+                metadata = self._embed_protocol_metadata(input_path, output_path, metadata)
+                result_payloads.append((input_path, output_path, context, metadata))
+            elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
+            for input_path, output_path, context, metadata in result_payloads:
                 results.append(
                     WatermarkEmbedResult(
                         input_path=input_path,
@@ -223,6 +295,7 @@ class BaseWatermark:
             for (input_path, _context), metadata in zip(chunk, metadatas):
                 message = metadata.pop("message", None)
                 bits = metadata.pop("bits", None)
+                metadata = self._extract_protocol_metadata(input_path, metadata)
                 results.append(
                     WatermarkExtractResult(
                         input_path=input_path,
@@ -251,6 +324,7 @@ class BaseWatermark:
         started = time.perf_counter()
         try:
             metadata = dict(self.embed_impl(input_path, output_path, context))
+            metadata = self._embed_protocol_metadata(input_path, output_path, metadata)
             ok = True
             error = None
         except Exception as exc:
@@ -282,6 +356,7 @@ class BaseWatermark:
             metadata = dict(self.extract_impl(input_path, context))
             message = metadata.pop("message", None)
             bits = metadata.pop("bits", None)
+            metadata = self._extract_protocol_metadata(input_path, metadata)
             ok = True
             error = None
         except Exception as exc:

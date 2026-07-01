@@ -621,7 +621,7 @@ def _load_pair(reference_path: Path, target_path: Path):
     import numpy as np
 
     reference = Image.open(reference_path).convert("RGB")
-    target = Image.open(target_path).convert("RGB").resize(reference.size)
+    target = Image.open(target_path).convert("RGB").resize(reference.size, Image.Resampling.BICUBIC)
     return (
         np.asarray(reference, dtype=np.float64),
         np.asarray(target, dtype=np.float64),

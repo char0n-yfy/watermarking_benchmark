@@ -22,7 +22,7 @@ class LocalRunnerTest(unittest.TestCase):
             dataset_dir = root / "resources" / "datasets" / "smoke"
             runs_root = root / "runs"
             dataset_dir.mkdir(parents=True)
-            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            Image.new("RGB", (300, 200), (120, 160, 200)).save(dataset_dir / "sample.png")
 
             summary = run_local_experiment(
                 LocalRunRequest(
@@ -44,6 +44,8 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertEqual(summary["cells"][0]["status"], "succeeded")
             extract_manifest = json.loads(Path(summary["cells"][0]["manifestPath"]).read_text())
             self.assertEqual(extract_manifest[0]["decodedBits"], extract_manifest[0]["expectedBits"])
+            self.assertEqual(extract_manifest[0]["metadata"]["decodeInputSize"], [512, 512])
+            self.assertEqual(extract_manifest[0]["metadata"]["decodeInternalSize"], [512, 512])
             self.assertNotIn("bitAccuracy", summary["cells"][0])
             self.assertNotIn("bitErrorRate", summary["cells"][0])
             self.assertNotIn("scoring", summary["cells"][0])
@@ -60,6 +62,8 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertTrue((run_root / "run_plan.json").exists())
             self.assertTrue((run_root / "cell_manifest.jsonl").exists())
             self.assertTrue((run_root / "image_quality.jsonl").exists())
+            self.assertTrue((run_root / "image_watermark_embed.jsonl").exists())
+            self.assertTrue((run_root / "image_attack.jsonl").exists())
             self.assertTrue((run_root / "image_detection.jsonl").exists())
             self.assertTrue((run_root / "runtime_profile.jsonl").exists())
             self.assertTrue((run_root / "stage_events.jsonl").exists())
@@ -79,6 +83,19 @@ class LocalRunnerTest(unittest.TestCase):
             quality_record = json.loads((run_root / "image_quality.jsonl").read_text().splitlines()[0])
             runtime_record = json.loads((run_root / "runtime_profile.jsonl").read_text().splitlines()[0])
             self.assertNotIn("stagedPath", sample_record)
+            self.assertEqual(sample_record["originalSize"], [300, 200])
+            self.assertEqual(sample_record["canonicalSize"], [512, 512])
+            self.assertEqual(sample_record["preprocessPolicy"], "center_cover_crop_512")
+            self.assertEqual(sample_record["cropPolicy"], "deterministic_center_cover_crop")
+            self.assertEqual(sample_record["resizedContentSize"], [768, 512])
+            self.assertEqual(sample_record["cropBox"], [128, 0, 640, 512])
+            self.assertEqual(sample_record["cropMargins"], {"left": 128, "top": 0, "right": 128, "bottom": 0})
+            self.assertIsNone(sample_record["padding"])
+            self.assertIsNone(sample_record["paddingColor"])
+            self.assertEqual(quality_record["referenceSize"], [512, 512])
+            self.assertEqual(quality_record["targetSize"], [512, 512])
+            self.assertEqual(quality_record["alignedSize"], [512, 512])
+            self.assertEqual(quality_record["alignmentPolicy"], "none")
             for field in ("width", "height", "referencePath", "targetPath"):
                 self.assertNotIn(field, quality_record)
             for field in ("perceptualBackend", "perceptualDevice", "perceptualErrors"):

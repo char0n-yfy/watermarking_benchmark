@@ -2,7 +2,7 @@
 
 Updated: 2026-06-28
 
-Scope: this table covers the watermarking methods currently registered under `evaluator/watermarking/methods/`. Image-size and capacity notes describe the current local wrappers, not only the upstream papers. For variable-size methods, the listed capacity is the wrapper default or the packaged checkpoint capacity.
+Scope: this table covers the watermarking methods currently registered under `evaluator/watermarking/methods/`. Image-size and capacity notes describe the native local wrapper/model behavior before the benchmark size protocol normalizes staged samples to deterministic 512x512 center cover crops and canonicalizes final embedded outputs back to 512x512. For variable-size methods, the listed capacity is the wrapper default or the packaged checkpoint capacity.
 
 | Registered method | Image input size in this workspace | Embedding capacity | GitHub repository | Paper link | Watermark characteristics and notes |
 | --- | --- | --- | --- | --- | --- |

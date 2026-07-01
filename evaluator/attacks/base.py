@@ -6,6 +6,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from PIL import Image
+
+from evaluator.image_protocol import image_size, semantic_size_change_attack
+
 
 JsonDict = dict[str, Any]
 
@@ -69,6 +73,55 @@ class BaseAttack:
         """Write the attacked image to output_path and return extra metadata."""
         raise NotImplementedError
 
+    def _protocol_metadata(
+        self,
+        input_path: Path,
+        output_path: Path,
+        metadata: Mapping[str, Any],
+    ) -> JsonDict:
+        enriched = dict(metadata)
+        input_size = image_size(input_path)
+        output_size = image_size(output_path)
+        if input_size is None and output_size is None:
+            return enriched
+
+        semantic_size_change = semantic_size_change_attack(
+            self.name,
+            self.params,
+            enriched,
+            input_size,
+            output_size,
+        )
+        pre_protocol_output_size = output_size
+        protocol_resized_output = False
+        if input_size is not None and output_size is not None and input_size != output_size and not semantic_size_change:
+            with Image.open(output_path) as opened:
+                restored = opened.convert("RGB").resize(tuple(input_size), Image.Resampling.BICUBIC)
+            restored.save(output_path, format="PNG")
+            output_size = image_size(output_path)
+            protocol_resized_output = True
+
+        size_preserving = input_size == output_size if input_size is not None and output_size is not None else None
+        if size_preserving is True:
+            size_policy = "resized_back_to_input" if protocol_resized_output else "preserve_input_size"
+        elif semantic_size_change:
+            size_policy = "semantic_size_change"
+        else:
+            size_policy = "changed_size"
+
+        enriched.update(
+            {
+                "inputSize": input_size,
+                "preProtocolOutputSize": pre_protocol_output_size,
+                "outputSize": output_size,
+                "protocolResizedOutput": protocol_resized_output,
+                "sizePreserving": size_preserving,
+                "sizeChangeSemantic": semantic_size_change,
+                "sizePolicy": size_policy,
+            }
+        )
+        return enriched
+
     def attack(self, input_path: str | Path, output_path: str | Path, context: AttackContext) -> AttackResult:
         input_path = Path(input_path)
         output_path = Path(output_path)
@@ -76,7 +129,7 @@ class BaseAttack:
 
         started = time.perf_counter()
         try:
-            metadata = self.apply(input_path, output_path, context)
+            metadata = self._protocol_metadata(input_path, output_path, self.apply(input_path, output_path, context))
             ok = True
             error = None
         except Exception as exc:
