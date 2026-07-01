@@ -409,7 +409,7 @@ def _record_quality_pairs(
     reference_dir: Path,
     target_dir: Path,
     device: str = "cpu",
-) -> None:
+) -> list[JsonDict]:
     pairs = _pair_images(reference_dir, target_dir)
     started = time.perf_counter()
     target_paths = [target_path for _reference_path, target_path in pairs]
@@ -444,10 +444,88 @@ def _record_quality_pairs(
         status="succeeded",
         metadata={"scope": scope},
     )
-    for (reference_path, _target_path), metrics in zip(pairs, metrics_by_pair):
-        alignment = quality_alignment_metadata(reference_path, _target_path)
-        _append_jsonl(
-            paths["imageQuality"],
+    records = [
+        _quality_record(
+            run_id=run_id,
+            cell_key=cell_key,
+            scope=scope,
+            dataset_id=dataset_id,
+            algorithm_id=algorithm_id,
+            attack_id=attack_id,
+            attack_method=attack_method,
+            attack_strength=attack_strength,
+            seed=seed,
+            sample_id=_image_sample_id(reference_path, reference_dir),
+            reference_path=reference_path,
+            target_path=target_path,
+            metrics=metrics,
+        )
+        for (reference_path, target_path), metrics in zip(pairs, metrics_by_pair)
+    ]
+    _append_quality_records(paths, records)
+    return records
+
+
+def _quality_record(
+    *,
+    run_id: str,
+    cell_key: str,
+    scope: str,
+    dataset_id: str,
+    algorithm_id: str,
+    attack_id: str | None,
+    attack_method: str | None,
+    attack_strength: float | None,
+    seed: int,
+    sample_id: str,
+    reference_path: Path,
+    target_path: Path,
+    metrics: JsonDict,
+) -> JsonDict:
+    return {
+        "runId": run_id,
+        "cellKey": cell_key,
+        "scope": scope,
+        "datasetId": dataset_id,
+        "algorithmId": algorithm_id,
+        "attackPresetId": attack_id,
+        "attackMethod": attack_method,
+        "attackStrength": attack_strength,
+        "seed": seed,
+        "sampleId": sample_id,
+        **quality_alignment_metadata(reference_path, target_path),
+        "metrics": dict(metrics),
+        "timestamp": _utc_timestamp(),
+    }
+
+
+def _append_quality_records(paths: dict[str, Path], records: list[JsonDict]) -> None:
+    for record in records:
+        _append_jsonl(paths["imageQuality"], record)
+
+
+def _retarget_quality_records(
+    source_records: list[JsonDict],
+    *,
+    run_id: str,
+    cell_key: str,
+    scope: str,
+    dataset_id: str,
+    algorithm_id: str,
+    attack_id: str | None,
+    attack_method: str | None,
+    attack_strength: float | None,
+    seed: int,
+    source_scope: str,
+    reuse_policy: str,
+) -> list[JsonDict]:
+    records: list[JsonDict] = []
+    for source in source_records:
+        record = dict(source)
+        metrics = record.get("metrics")
+        if isinstance(metrics, dict):
+            record["metrics"] = dict(metrics)
+        record.update(
             {
                 "runId": run_id,
                 "cellKey": cell_key,
@@ -458,12 +536,132 @@ def _record_quality_pairs(
                 "attackMethod": attack_method,
                 "attackStrength": attack_strength,
                 "seed": seed,
-                "sampleId": _image_sample_id(reference_path, reference_dir),
-                **alignment,
-                "metrics": metrics,
+                "qualityComputation": "reused",
+                "sourceScope": source_scope,
+                "reusePolicy": reuse_policy,
                 "timestamp": _utc_timestamp(),
-            },
+            }
         )
+        records.append(record)
+    return records
+
+
+def _record_reused_quality_records(
+    paths: dict[str, Path],
+    *,
+    run_id: str,
+    cell_key: str,
+    scope: str,
+    dataset_id: str,
+    algorithm_id: str,
+    attack_id: str | None,
+    attack_method: str | None,
+    attack_strength: float | None,
+    seed: int,
+    source_records: list[JsonDict],
+    source_scope: str,
+    target_dir: Path,
+    device: str = "cpu",
+    reuse_policy: str = "identity_attack",
+) -> list[JsonDict]:
+    started = time.perf_counter()
+    records = _retarget_quality_records(
+        source_records,
+        run_id=run_id,
+        cell_key=cell_key,
+        scope=scope,
+        dataset_id=dataset_id,
+        algorithm_id=algorithm_id,
+        attack_id=attack_id,
+        attack_method=attack_method,
+        attack_strength=attack_strength,
+        seed=seed,
+        source_scope=source_scope,
+        reuse_policy=reuse_policy,
+    )
+    _append_quality_records(paths, records)
+    _record_runtime_profile(
+        paths,
+        run_id=run_id,
+        cell_key=cell_key,
+        stage="quality",
+        method="image_quality",
+        device=device,
+        elapsed_ms=(time.perf_counter() - started) * 1000,
+        image_paths=_list_image_files(target_dir),
+        status="reused",
+        metadata={"scope": scope, "sourceScope": source_scope, "reusePolicy": reuse_policy},
+    )
+    return records
+
+
+def _identity_quality_metrics() -> JsonDict:
+    return {
+        "psnr": 60.0,
+        "ssim": 1.0,
+        "msSsim": 1.0,
+        "nmi": 1.0,
+        "lpips": 0.0,
+        "dists": 0.0,
+    }
+
+
+def _record_identity_quality_pairs(
+    paths: dict[str, Path],
+    *,
+    run_id: str,
+    cell_key: str,
+    scope: str,
+    dataset_id: str,
+    algorithm_id: str,
+    attack_id: str | None,
+    attack_method: str | None,
+    attack_strength: float | None,
+    seed: int,
+    reference_dir: Path,
+    target_dir: Path,
+    device: str = "cpu",
+) -> list[JsonDict]:
+    started = time.perf_counter()
+    metrics = _identity_quality_metrics()
+    pairs = _pair_images(reference_dir, target_dir)
+    records = [
+        {
+            **_quality_record(
+                run_id=run_id,
+                cell_key=cell_key,
+                scope=scope,
+                dataset_id=dataset_id,
+                algorithm_id=algorithm_id,
+                attack_id=attack_id,
+                attack_method=attack_method,
+                attack_strength=attack_strength,
+                seed=seed,
+                sample_id=_image_sample_id(reference_path, reference_dir),
+                reference_path=reference_path,
+                target_path=target_path,
+                metrics=metrics,
+            ),
+            "qualityComputation": "reused",
+            "sourceScope": "identity_noop",
+            "reusePolicy": "identity_noop_perfect",
+        }
+        for reference_path, target_path in pairs
+    ]
+    _append_quality_records(paths, records)
+    _record_runtime_profile(
+        paths,
+        run_id=run_id,
+        cell_key=cell_key,
+        stage="quality",
+        method="image_quality",
+        device=device,
+        elapsed_ms=(time.perf_counter() - started) * 1000,
+        image_paths=[target_path for _reference_path, target_path in pairs],
+        status="reused",
+        metadata={"scope": scope, "sourceScope": "identity_noop", "reusePolicy": "identity_noop_perfect"},
+    )
+    return records
 
 
 def _bit_string(value: Any) -> str | None:
@@ -1133,7 +1331,7 @@ def run_local_experiment(
                         )
                         if embed_error:
                             raise RuntimeError(embed_error)
-                        _record_quality_pairs(
+                        embed_quality_records = _record_quality_pairs(
                             paths,
                             run_id=request.run_id,
                             cell_key=embed_key,
@@ -1489,36 +1687,70 @@ def run_local_experiment(
                                     ]
                                     error = "; ".join(errors) or "one or more image operations failed"
 
-                                _record_quality_pairs(
-                                    paths,
-                                    run_id=request.run_id,
-                                    cell_key=cell_key,
-                                    scope="original_vs_attacked_watermarked",
-                                    dataset_id=dataset_id,
-                                    algorithm_id=algorithm_id,
-                                    attack_id=attack_id,
-                                    attack_method=attack["method"],
-                                    attack_strength=strength,
-                                    seed=int(seed),
-                                    reference_dir=cell_input_dir,
-                                    target_dir=attacked_dir,
-                                    device=request.device,
-                                )
-                                _record_quality_pairs(
-                                    paths,
-                                    run_id=request.run_id,
-                                    cell_key=cell_key,
-                                    scope="watermarked_vs_attacked_watermarked",
-                                    dataset_id=dataset_id,
-                                    algorithm_id=algorithm_id,
-                                    attack_id=attack_id,
-                                    attack_method=attack["method"],
-                                    attack_strength=strength,
-                                    seed=int(seed),
-                                    reference_dir=watermarked_dir,
-                                    target_dir=attacked_dir,
-                                    device=request.device,
-                                )
+                                if str(attack["method"]).lower() == "identity":
+                                    _record_reused_quality_records(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        scope="original_vs_attacked_watermarked",
+                                        dataset_id=dataset_id,
+                                        algorithm_id=algorithm_id,
+                                        attack_id=attack_id,
+                                        attack_method=attack["method"],
+                                        attack_strength=strength,
+                                        seed=int(seed),
+                                        source_records=embed_quality_records,
+                                        source_scope="original_vs_watermarked",
+                                        target_dir=attacked_dir,
+                                        device=request.device,
+                                        reuse_policy="identity_attack_watermarked_copy",
+                                    )
+                                    _record_identity_quality_pairs(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        scope="watermarked_vs_attacked_watermarked",
+                                        dataset_id=dataset_id,
+                                        algorithm_id=algorithm_id,
+                                        attack_id=attack_id,
+                                        attack_method=attack["method"],
+                                        attack_strength=strength,
+                                        seed=int(seed),
+                                        reference_dir=watermarked_dir,
+                                        target_dir=attacked_dir,
+                                        device=request.device,
+                                    )
+                                else:
+                                    _record_quality_pairs(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        scope="original_vs_attacked_watermarked",
+                                        dataset_id=dataset_id,
+                                        algorithm_id=algorithm_id,
+                                        attack_id=attack_id,
+                                        attack_method=attack["method"],
+                                        attack_strength=strength,
+                                        seed=int(seed),
+                                        reference_dir=cell_input_dir,
+                                        target_dir=attacked_dir,
+                                        device=request.device,
+                                    )
+                                    _record_quality_pairs(
+                                        paths,
+                                        run_id=request.run_id,
+                                        cell_key=cell_key,
+                                        scope="watermarked_vs_attacked_watermarked",
+                                        dataset_id=dataset_id,
+                                        algorithm_id=algorithm_id,
+                                        attack_id=attack_id,
+                                        attack_method=attack["method"],
+                                        attack_strength=strength,
+                                        seed=int(seed),
+                                        reference_dir=watermarked_dir,
+                                        target_dir=attacked_dir,
+                                        device=request.device,
+                                    )
 
                                 for result in extract_results:
                                     record = _detection_record(

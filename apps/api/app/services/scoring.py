@@ -464,7 +464,9 @@ def _perceptual_backend() -> JsonDict:
     except Exception as exc:
         return {"device": "cpu", "models": {}, "errors": {"torch": f"{type(exc).__name__}: {exc}"}}
 
-    requested_device = os.getenv("WM_BENCH_PERCEPTUAL_DEVICE", "cpu")
+    requested_device = os.getenv("WM_BENCH_PERCEPTUAL_DEVICE")
+    if not requested_device:
+        requested_device = "cuda:0" if torch.cuda.is_available() else "cpu"
     if requested_device.startswith("cuda") and not torch.cuda.is_available():
         requested_device = "cpu"
     device = torch.device(requested_device)
