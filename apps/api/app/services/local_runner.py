@@ -495,7 +495,6 @@ def _detection_record(
     decoded_bits_metadata = metadata.pop("decoded_bits", None)
     decoded_bits = _bit_string(getattr(result, "bits", None)) or _bit_string(decoded_bits_metadata)
     expected_bits = _bit_string(metadata.pop("expected_bits", None))
-    metadata.pop("detection_score", None)
     expected_message = metadata.pop("expected_message", None)
     metadata.pop("payload_bits", None)
     for derived_key in ("bit_accuracy", "bit_error_rate", "match", "matched"):

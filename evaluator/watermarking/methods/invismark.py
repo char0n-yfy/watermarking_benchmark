@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
@@ -106,11 +107,14 @@ class InvisMarkWatermark(BaseWatermark):
                 "" if context.seed is None else str(context.seed),
             ]
         )
-        uid = uuid.uuid5(uuid.NAMESPACE_URL, material)
+        raw = bytearray(hashlib.sha256(material.encode("utf-8")).digest()[:16])
+        raw[6] = (raw[6] & 0x0F) | 0x40
+        raw[8] = (raw[8] & 0x3F) | 0x80
+        uid = uuid.UUID(bytes=bytes(raw))
         bits: list[int] = []
         for byte in uid.bytes:
             bits.extend((byte >> shift) & 1 for shift in range(7, -1, -1))
-        return bits[: self.payload_bits], "uuid5"
+        return bits[: self.payload_bits], "deterministic_uuid4"
 
     def _image_tensor(self, input_path: Path):
         assert self._torch is not None

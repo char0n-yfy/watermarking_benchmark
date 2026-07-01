@@ -10,7 +10,6 @@ from PIL import Image
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
-    bit_accuracy,
     bits_from_message,
     bits_to_string,
     normalize_device,
@@ -127,6 +126,20 @@ class WAMWatermark(BaseWatermark):
         tensor = self._torch.tensor(bits, dtype=self._torch.float32, device=next(self._model.parameters()).device).unsqueeze(0)
         return bits, tensor
 
+    def _mask_heatmap_metadata(self, mask_logits, mask_heatmap) -> dict[str, Any]:
+        height, width = mask_heatmap.shape[-2:]
+        return {
+            "mask_heatmap_size": [int(width), int(height)],
+            "mask_heatmap_min": float(mask_heatmap.min().item()),
+            "mask_heatmap_max": float(mask_heatmap.max().item()),
+            "mask_heatmap_mean": float(mask_heatmap.mean().item()),
+            "mask_heatmap_std": float(mask_heatmap.std(unbiased=False).item()),
+            "mask_logit_min": float(mask_logits.min().item()),
+            "mask_logit_max": float(mask_logits.max().item()),
+            "mask_logit_mean": float(mask_logits.mean().item()),
+            "mask_logit_std": float(mask_logits.std(unbiased=False).item()),
+        }
+
     def embed_batch_impl(
         self,
         jobs: list[tuple[Path, Path, WatermarkContext]],
@@ -200,17 +213,17 @@ class WAMWatermark(BaseWatermark):
                 mask_preds = self._F.sigmoid(preds[:, 0, :, :])
                 bit_preds = preds[:, 1:, :, :]
                 decoded_batch = self._msg_predict_inference(bit_preds, mask_preds).cpu().float().int().tolist()
-                for (result_index, context, _tensor), decoded in zip(items, decoded_batch):
+                for batch_index, ((result_index, context, _tensor), decoded) in enumerate(zip(items, decoded_batch)):
                     metadata: dict[str, Any] = {
                         "bits": bits_to_string(decoded),
                         "payload_bits": len(decoded),
                         "checkpoint_file": str(self.checkpoint_path),
                         "weights_dir": str(self.weights_dir),
                     }
+                    metadata.update(self._mask_heatmap_metadata(preds[batch_index, 0, :, :], mask_preds[batch_index]))
                     if context.message is not None:
                         expected = bits_from_message(context.message, len(decoded), seed=context.seed)
                         metadata["expected_bits"] = bits_to_string(expected)
-                        metadata["bit_accuracy"] = bit_accuracy(expected, decoded)
                     results[result_index] = metadata
         return [dict(result or {}) for result in results]
 
@@ -255,8 +268,8 @@ class WAMWatermark(BaseWatermark):
             "checkpoint_file": str(self.checkpoint_path),
             "weights_dir": str(self.weights_dir),
         }
+        metadata.update(self._mask_heatmap_metadata(preds[0, 0, :, :], mask_preds[0]))
         if context.message is not None:
             expected = bits_from_message(context.message, len(decoded), seed=context.seed)
             metadata["expected_bits"] = bits_to_string(expected)
-            metadata["bit_accuracy"] = bit_accuracy(expected, decoded)
         return metadata

@@ -156,6 +156,33 @@ class WatermarkBatchingTest(unittest.TestCase):
         for cls in extract_batch_classes:
             self.assertIsNot(cls.extract_batch_impl, BaseWatermark.extract_batch_impl, cls.__name__)
 
+    def test_invismark_deterministic_payload_uses_uuid4_layout(self) -> None:
+        method = InvisMarkWatermark.__new__(InvisMarkWatermark)
+        method.payload_bits = 100
+        context = WatermarkContext(
+            run_id="run",
+            sample_id="sample",
+            method_name="invismark",
+            message="1010101",
+            seed=42,
+        )
+
+        bits, mode = method._payload(context)
+        bits_again, mode_again = method._payload(context)
+
+        self.assertEqual(mode, "deterministic_uuid4")
+        self.assertEqual(mode_again, "deterministic_uuid4")
+        self.assertEqual(bits, bits_again)
+        self.assertEqual(bits[48:52], [0, 1, 0, 0])
+        self.assertEqual(bits[64:66], [1, 0])
+
+    def test_videoseal_wrappers_report_model_internal_size(self) -> None:
+        fake_model = type("FakeVideoSealModel", (), {"img_size": 256})()
+        for cls in (VideoSealWatermark, VideoSealFamilyWatermark):
+            method = cls.__new__(cls)
+            method._model = fake_model
+            self.assertEqual(method._internal_size(), [256, 256])
+
 
 if __name__ == "__main__":
     unittest.main()

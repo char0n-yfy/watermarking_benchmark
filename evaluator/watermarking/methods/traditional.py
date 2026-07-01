@@ -34,14 +34,19 @@ class _TraditionalWatermark(BaseWatermark):
         return bits_from_message(context.message, self.payload_bits, seed=context.seed)
 
     def _metadata(self, bits: list[int], decoded_bits: list[int] | None = None) -> dict[str, Any]:
+        if decoded_bits is not None:
+            return {
+                "bits": bits_to_string(decoded_bits),
+                "expected_bits": bits_to_string(bits),
+                "payload_bits": len(bits),
+                "checkpoint_file": None,
+                "bit_accuracy": bit_accuracy(bits, decoded_bits),
+            }
         metadata: dict[str, Any] = {
             "bits": bits_to_string(bits),
             "payload_bits": len(bits),
             "checkpoint_file": None,
         }
-        if decoded_bits is not None:
-            metadata["decoded_bits"] = bits_to_string(decoded_bits)
-            metadata["bit_accuracy"] = bit_accuracy(bits, decoded_bits)
         return metadata
 
 
