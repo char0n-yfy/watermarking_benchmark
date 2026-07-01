@@ -2020,30 +2020,22 @@ a.button {
   opacity: 0.45;
 }
 
-.detail-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.detail-title-heading {
-  display: flex;
-  flex: 1 1 160px;
-  flex-wrap: wrap;
-  align-items: center;
+.detail-title-block {
+  display: grid;
   gap: 8px;
-  min-width: 0;
 }
 
-.detail-title-heading h3,
-.detail-title-row h3 {
-  flex: 0 1 auto;
-  min-width: 0;
+.detail-title-text {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 17px;
+}
+
+.detail-title-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .dataset-category-badge,
@@ -2094,40 +2086,6 @@ a.button {
   overflow: auto;
 }
 
-.resource-action-summary {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--line);
-  border-left-width: 4px;
-  border-radius: 8px;
-  background: #fff;
-  padding: 10px 12px;
-}
-
-.resource-action-summary strong {
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.resource-action-summary span {
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.resource-action-summary.ok {
-  border-left-color: var(--teal);
-}
-
-.resource-action-summary.warn {
-  border-left-color: #d59a30;
-}
-
-.resource-action-summary.error {
-  border-left-color: var(--red);
-}
-
 .dataset-download-panel {
   display: grid;
   gap: 10px;
@@ -2170,6 +2128,8 @@ a.button {
   color: var(--ink);
   padding: 10px;
   text-align: left;
+  font: inherit;
+  appearance: none;
 }
 
 .dataset-download-choice.active {
@@ -2203,6 +2163,28 @@ a.button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.dataset-download-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dataset-download-action {
+  cursor: pointer;
+  gap: 0;
+}
+
+.dataset-download-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dataset-download-action-primary:not(:disabled) {
+  border-color: rgba(47, 125, 104, 0.5);
+  background: linear-gradient(180deg, #ffffff, #f2f8f5);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .dataset-download-selected {
@@ -2403,6 +2385,23 @@ a.button {
   gap: 8px;
 }
 
+.resource-reference-layer {
+  display: grid;
+  gap: 6px;
+}
+
+.resource-reference-layer + .resource-reference-layer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e7ece6;
+}
+
+.resource-reference-layer-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .resource-reference-block p {
   margin: 0;
   overflow-wrap: anywhere;
@@ -2415,6 +2414,13 @@ a.button {
 .resource-reference-note {
   color: var(--muted);
   font-size: 12px;
+}
+
+.resource-reference-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .resource-reference-note code {

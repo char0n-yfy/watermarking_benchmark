@@ -14,6 +14,8 @@ export interface ResourceReference {
   };
   papers: ResourceReferenceLink[];
   repos: ResourceReferenceLink[];
+  projectSources?: ResourceReferenceLink[];
+  upstreamRepos?: ResourceReferenceLink[];
   paperNotes?: string[];
   repoNotes?: string[];
 }

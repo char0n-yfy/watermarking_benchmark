@@ -14,6 +14,12 @@
         "label": "facebookresearch/videoseal",
         "url": "https://github.com/facebookresearch/videoseal"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/chunkyseal.py",
+        "url": "evaluator/watermarking/methods/chunkyseal.py"
+      }
     ]
   },
   "cin": {
@@ -35,6 +41,12 @@
         "label": "rmpku/CIN",
         "url": "https://github.com/rmpku/CIN"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/cin.py",
+        "url": "evaluator/watermarking/methods/cin.py"
+      }
     ]
   },
   "hidden": {
@@ -51,14 +63,13 @@
       {
         "label": "ando-khachatryan/HiDDeN",
         "url": "https://github.com/ando-khachatryan/HiDDeN"
-      },
-      {
-        "label": "jirenz/HiDDeN",
-        "url": "https://github.com/jirenz/HiDDeN"
       }
     ],
-    "repoNotes": [
-      "原始实现："
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/hidden.py",
+        "url": "evaluator/watermarking/methods/hidden.py"
+      }
     ]
   },
   "invismark": {
@@ -76,41 +87,71 @@
         "label": "microsoft/InvisMark",
         "url": "https://github.com/microsoft/InvisMark"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/invismark.py",
+        "url": "evaluator/watermarking/methods/invismark.py"
+      }
     ]
   },
   "invisible-watermark-dwtdct": {
     "summary": {
       "zh": "ShieldMnt invisible-watermark 中的经典频域盲水印变体，组合 DWT 和 DCT，不需要神经网络权重，速度快但抗强缩放/裁剪能力较弱。"
     },
-    "papers": [],
+    "papers": [
+      {
+        "label": "Combined DWT-DCT Digital Image Watermarking, DOI:10.3844/jcssp.2007.740.746",
+        "url": "https://doi.org/10.3844/jcssp.2007.740.746"
+      },
+      {
+        "label": "Cox 等扩频水印, DOI:10.1109/83.650120",
+        "url": "https://doi.org/10.1109/83.650120"
+      }
+    ],
     "repos": [
       {
         "label": "ShieldMnt/invisible-watermark",
         "url": "https://github.com/ShieldMnt/invisible-watermark"
       }
     ],
-    "paperNotes": [
-      "上游未绑定单篇论文；属于传统 DWT-DCT 水印基线。"
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/invisible_watermark.py",
+        "url": "evaluator/watermarking/methods/invisible_watermark.py"
+      }
     ]
   },
   "invisible-watermark-dwtdctsvd": {
     "summary": {
       "zh": "ShieldMnt invisible-watermark 中的 DWT-DCT-SVD 变体，在频域嵌入中加入 SVD。本项目将它与 DWT-DCT 拆开注册。"
     },
-    "papers": [],
+    "papers": [
+      {
+        "label": "An image watermarking algorithm based on DWT DCT and SVD, DOI:10.1109/icnidc.2009.5360866",
+        "url": "https://doi.org/10.1109/icnidc.2009.5360866"
+      },
+      {
+        "label": "DWT-DCT-SVD based watermarking, DOI:10.1109/comswa.2008.4554423",
+        "url": "https://doi.org/10.1109/comswa.2008.4554423"
+      }
+    ],
     "repos": [
       {
         "label": "ShieldMnt/invisible-watermark",
         "url": "https://github.com/ShieldMnt/invisible-watermark"
       }
     ],
-    "paperNotes": [
-      "上游未绑定单篇论文；属于传统 DWT-DCT-SVD 水印基线。"
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/invisible_watermark.py",
+        "url": "evaluator/watermarking/methods/invisible_watermark.py"
+      }
     ]
   },
   "invisible-watermark-rivagan": {
     "summary": {
-      "zh": "ShieldMnt 包中的 RivaGAN 神经水印变体。本项目使用 packaged ONNX 编码器/解码器，payload 固定为 32 bit。"
+      "zh": "ShieldMnt imwatermark 中的 RivaGAN 神经水印变体。本项目使用 packaged ONNX 编码器/解码器，payload 固定为 32 bit。"
     },
     "papers": [
       {
@@ -120,8 +161,14 @@
     ],
     "repos": [
       {
-        "label": "ShieldMnt/invisible-watermark",
-        "url": "https://github.com/ShieldMnt/invisible-watermark"
+        "label": "DAI-Lab/RivaGAN",
+        "url": "https://github.com/DAI-Lab/RivaGAN"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/invisible_watermark.py",
+        "url": "evaluator/watermarking/methods/invisible_watermark.py"
       }
     ]
   },
@@ -140,6 +187,12 @@
         "label": "hurunyi/MaskWM",
         "url": "https://github.com/hurunyi/MaskWM"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/maskwm.py",
+        "url": "evaluator/watermarking/methods/maskwm.py"
+      }
     ]
   },
   "mbrs": {
@@ -156,6 +209,12 @@
       {
         "label": "jzyustc/MBRS",
         "url": "https://github.com/jzyustc/MBRS"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/mbrs.py",
+        "url": "evaluator/watermarking/methods/mbrs.py"
       }
     ]
   },
@@ -174,6 +233,12 @@
         "label": "FangHanNUS/PIMoG",
         "url": "https://github.com/FangHanNUS/PIMoG-An-Effective-Screen-shooting-Noise-Layer-Simulation-for-Deep-Learning-Based-Watermarking-Netw"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/pimog.py",
+        "url": "evaluator/watermarking/methods/pimog.py"
+      }
     ]
   },
   "pixelseal": {
@@ -190,6 +255,12 @@
       {
         "label": "facebookresearch/videoseal",
         "url": "https://github.com/facebookresearch/videoseal"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/pixelseal.py",
+        "url": "evaluator/watermarking/methods/pixelseal.py"
       }
     ]
   },
@@ -208,6 +279,12 @@
         "label": "jeremyxianx/RAWatermark",
         "url": "https://github.com/jeremyxianx/RAWatermark"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/rawatermark.py",
+        "url": "evaluator/watermarking/methods/rawatermark.py"
+      }
     ]
   },
   "ssl-watermarking": {
@@ -224,6 +301,12 @@
       {
         "label": "facebookresearch/ssl_watermarking",
         "url": "https://github.com/facebookresearch/ssl_watermarking"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/ssl_watermarking.py",
+        "url": "evaluator/watermarking/methods/ssl_watermarking.py"
       }
     ]
   },
@@ -242,24 +325,35 @@
         "label": "tancik/StegaStamp",
         "url": "https://github.com/tancik/StegaStamp"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/stegastamp.py",
+        "url": "evaluator/watermarking/methods/stegastamp.py"
+      }
     ]
   },
   "traditional-spread-dct": {
     "summary": {
-      "zh": "项目内置的传统 DCT 扩频水印基线，使用两个 DCT 系数承载信息，主要用于速度快、可解释的频域对照实验。"
+      "zh": "项目内置的 Cox 扩频 DCT 对照基线（8×8 块双系数简化实现），不依赖外部权重；算法思想来自 Cox 等扩频水印论文。"
     },
     "papers": [
       {
-        "label": "Cox 等扩频水印，DOI:10.1109/83.650120",
+        "label": "Cox 等扩频水印, DOI:10.1109/83.650120",
         "url": "https://doi.org/10.1109/83.650120"
       }
     ],
-    "repos": [],
-    "paperNotes": [
-      "基础参考："
+    "repos": [
+      {
+        "label": "mr3coi/sss_watermarking_image",
+        "url": "https://github.com/mr3coi/sss_watermarking_image"
+      }
     ],
-    "repoNotes": [
-      "项目源码：`evaluator/watermarking/methods/traditional.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/traditional.py",
+        "url": "evaluator/watermarking/methods/traditional.py"
+      }
     ]
   },
   "trustmark-c": {
@@ -280,6 +374,12 @@
       {
         "label": "adobe/trustmark",
         "url": "https://github.com/adobe/trustmark"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/trustmark.py",
+        "url": "evaluator/watermarking/methods/trustmark.py"
       }
     ]
   },
@@ -302,6 +402,12 @@
         "label": "adobe/trustmark",
         "url": "https://github.com/adobe/trustmark"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/trustmark.py",
+        "url": "evaluator/watermarking/methods/trustmark.py"
+      }
     ]
   },
   "videoseal": {
@@ -318,6 +424,12 @@
       {
         "label": "facebookresearch/videoseal",
         "url": "https://github.com/facebookresearch/videoseal"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/videoseal.py",
+        "url": "evaluator/watermarking/methods/videoseal.py"
       }
     ]
   },
@@ -336,6 +448,12 @@
         "label": "Shilin-LU/VINE",
         "url": "https://github.com/Shilin-LU/VINE"
       }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/vine.py",
+        "url": "evaluator/watermarking/methods/vine.py"
+      }
     ]
   },
   "wam": {
@@ -352,6 +470,12 @@
       {
         "label": "facebookresearch/watermark-anything",
         "url": "https://github.com/facebookresearch/watermark-anything"
+      }
+    ],
+    "projectSources": [
+      {
+        "label": "evaluator/watermarking/methods/wam.py",
+        "url": "evaluator/watermarking/methods/wam.py"
       }
     ]
   }

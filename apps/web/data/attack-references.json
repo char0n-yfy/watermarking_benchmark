@@ -5,11 +5,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无独立论文；属于项目内消费级编辑预设。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_e2": {
@@ -18,11 +18,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无独立论文；属于项目内消费级编辑预设。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_e3": {
@@ -31,11 +31,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无独立论文；属于项目内消费级编辑预设。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_e4": {
@@ -44,11 +44,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无独立论文；属于项目内消费级编辑预设。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_d1": {
@@ -71,8 +71,11 @@
         "url": "https://github.com/Li-Chongyi/Zero-DCE_extension"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_d2": {
@@ -91,8 +94,11 @@
         "url": "https://github.com/mahmoudnafifi/Deep_White_Balance"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_d3": {
@@ -111,8 +117,11 @@
         "url": "https://github.com/HuiZeng/Image-Adaptive-3DLUT"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_d4": {
@@ -131,8 +140,11 @@
         "url": "https://github.com/caiyuanhao1998/Retinexformer"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_d5": {
@@ -176,8 +188,11 @@
         "url": "https://github.com/xinntao/Real-ESRGAN"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_s2": {
@@ -196,8 +211,11 @@
         "url": "https://github.com/JingyunLiang/SwinIR"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_s3": {
@@ -216,8 +234,11 @@
         "url": "https://github.com/cszn/BSRGAN"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/consumer_enhancement_workflow_attacks/backends/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/backends/"
+      }
     ]
   },
   "cew_c1": {
@@ -260,12 +281,11 @@
         "url": "https://github.com/xinntao/Real-ESRGAN"
       }
     ],
-    "paperNotes": [
-      "子攻击来源：、、、"
-    ],
-    "repoNotes": [
-      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
-      "子攻击仓库：、、、"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_c2": {
@@ -308,12 +328,11 @@
         "url": "https://github.com/JingyunLiang/SwinIR"
       }
     ],
-    "paperNotes": [
-      "子攻击来源：、、、"
-    ],
-    "repoNotes": [
-      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
-      "子攻击仓库：、、、"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_c3": {
@@ -356,12 +375,11 @@
         "url": "https://github.com/xinntao/Real-ESRGAN"
       }
     ],
-    "paperNotes": [
-      "子攻击来源：、、、"
-    ],
-    "repoNotes": [
-      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
-      "子攻击仓库：、、、"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "cew_c4": {
@@ -420,12 +438,11 @@
         "url": "https://github.com/cszn/BSRGAN"
       }
     ],
-    "paperNotes": [
-      "子攻击来源：、、、、、"
-    ],
-    "repoNotes": [
-      "组合源码：`evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py`",
-      "子攻击仓库：、、、、、"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py",
+        "url": "evaluator/attacks/consumer_enhancement_workflow_attacks/attacks.py"
+      }
     ]
   },
   "screen_shoot": {
@@ -444,8 +461,11 @@
         "url": "https://github.com/FangHanNUS/PIMoG-An-Effective-Screen-shooting-Noise-Layer-Simulation-for-Deep-Learning-Based-Watermarking-Netw"
       }
     ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/physical_channel_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/physical_channel_attacks/attacks.py",
+        "url": "evaluator/attacks/physical_channel_attacks/attacks.py"
+      }
     ]
   },
   "print_camera": {
@@ -459,8 +479,14 @@
       }
     ],
     "repos": [],
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/physical_channel_attacks/attacks.py",
+        "url": "evaluator/attacks/physical_channel_attacks/attacks.py"
+      }
+    ],
     "repoNotes": [
-      "未使用官方攻击仓库；项目源码：`evaluator/attacks/physical_channel_attacks/attacks.py`"
+      "未使用官方攻击仓库；"
     ]
   },
   "combined_physical": {
@@ -483,12 +509,11 @@
         "url": "https://github.com/FangHanNUS/PIMoG-An-Effective-Screen-shooting-Noise-Layer-Simulation-for-Deep-Learning-Based-Watermarking-Netw"
       }
     ],
-    "paperNotes": [
-      "子攻击来源：、"
-    ],
-    "repoNotes": [
-      "组合源码：`evaluator/attacks/physical_channel_attacks/attacks.py`",
-      "子攻击来源： 和项目内 CamMark-style 模拟"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/physical_channel_attacks/attacks.py",
+        "url": "evaluator/attacks/physical_channel_attacks/attacks.py"
+      }
     ]
   },
   "regen_vae": {
@@ -515,8 +540,11 @@
         "url": "https://github.com/InterDigitalInc/CompressAI"
       }
     ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/attacks.py",
+        "url": "evaluator/attacks/regeneration_attacks/attacks.py"
+      }
     ]
   },
   "regen_diffusion": {
@@ -539,8 +567,11 @@
         "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
       }
     ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/attacks.py",
+        "url": "evaluator/attacks/regeneration_attacks/attacks.py"
+      }
     ]
   },
   "2x_regen": {
@@ -563,11 +594,11 @@
         "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
       }
     ],
-    "paperNotes": [
-      "组成来源：、"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/attacks.py",
+        "url": "evaluator/attacks/regeneration_attacks/attacks.py"
+      }
     ]
   },
   "4x_regen": {
@@ -590,11 +621,11 @@
         "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
       }
     ],
-    "paperNotes": [
-      "组成来源：、"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/regeneration_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/attacks.py",
+        "url": "evaluator/attacks/regeneration_attacks/attacks.py"
+      }
     ]
   },
   "noise_to_image": {
@@ -613,8 +644,11 @@
         "url": "https://huggingface.co/yepengliu/ctrlregen"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ctrlregen/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ctrlregen/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ctrlregen/"
+      }
     ]
   },
   "image_to_vedio": {
@@ -623,16 +657,25 @@
     },
     "papers": [
       {
+        "label": "NFPA, NeurIPS 2025 (OpenReview)",
+        "url": "https://openreview.net/forum?id=yO2zE1yIYZ"
+      },
+      {
         "label": "Latent Diffusion Models, arXiv:2112.10752",
         "url": "https://arxiv.org/abs/2112.10752"
       }
     ],
-    "repos": [],
-    "paperNotes": [
-      "项目中未记录独立 NFPA 论文链接；底层扩散模型可参考"
+    "repos": [
+      {
+        "label": "1249748036/NFPA",
+        "url": "https://github.com/1249748036/NFPA"
+      }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/nfpa/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/nfpa/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/nfpa/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase0_point": {
@@ -651,8 +694,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase1_point": {
@@ -671,8 +717,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase2_point": {
@@ -691,8 +740,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase3_point": {
@@ -711,8 +763,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase4_point": {
@@ -731,8 +786,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase5_point": {
@@ -751,8 +809,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase6_point": {
@@ -771,8 +832,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase7_point": {
@@ -791,8 +855,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase0_ahead": {
@@ -811,8 +878,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase1_ahead": {
@@ -831,8 +901,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase2_ahead": {
@@ -851,8 +924,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase3_ahead": {
@@ -871,8 +947,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase4_ahead": {
@@ -891,8 +970,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase5_ahead": {
@@ -911,8 +993,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase6_ahead": {
@@ -931,8 +1016,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_swipe_phase7_ahead": {
@@ -951,8 +1039,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase0_point": {
@@ -971,8 +1062,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase1_point": {
@@ -991,8 +1085,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase2_point": {
@@ -1011,8 +1108,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase3_point": {
@@ -1031,8 +1131,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase4_point": {
@@ -1051,8 +1154,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase5_point": {
@@ -1071,8 +1177,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase6_point": {
@@ -1091,8 +1200,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase7_point": {
@@ -1111,8 +1223,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase0_ahead": {
@@ -1131,8 +1246,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase1_ahead": {
@@ -1151,8 +1269,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase2_ahead": {
@@ -1171,8 +1292,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase3_ahead": {
@@ -1191,8 +1315,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase4_ahead": {
@@ -1211,8 +1338,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase5_ahead": {
@@ -1231,8 +1361,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase6_ahead": {
@@ -1251,8 +1384,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_shake_phase7_ahead": {
@@ -1271,8 +1407,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase0_point": {
@@ -1291,8 +1430,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase1_point": {
@@ -1311,8 +1453,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase2_point": {
@@ -1331,8 +1476,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase3_point": {
@@ -1351,8 +1499,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase4_point": {
@@ -1371,8 +1522,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase5_point": {
@@ -1391,8 +1545,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase6_point": {
@@ -1411,8 +1568,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase7_point": {
@@ -1431,8 +1591,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase0_ahead": {
@@ -1451,8 +1614,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase1_ahead": {
@@ -1471,8 +1637,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase2_ahead": {
@@ -1491,8 +1660,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase3_ahead": {
@@ -1511,8 +1683,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase4_ahead": {
@@ -1531,8 +1706,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase5_ahead": {
@@ -1551,8 +1729,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase6_ahead": {
@@ -1571,8 +1752,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_phase7_ahead": {
@@ -1591,8 +1775,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase0_point": {
@@ -1611,8 +1798,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase1_point": {
@@ -1631,8 +1821,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase2_point": {
@@ -1651,8 +1844,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase3_point": {
@@ -1671,8 +1867,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase4_point": {
@@ -1691,8 +1890,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase5_point": {
@@ -1711,8 +1913,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase6_point": {
@@ -1731,8 +1936,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase7_point": {
@@ -1751,8 +1959,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase0_ahead": {
@@ -1771,8 +1982,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase1_ahead": {
@@ -1791,8 +2005,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase2_ahead": {
@@ -1811,8 +2028,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase3_ahead": {
@@ -1831,8 +2051,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase4_ahead": {
@@ -1851,8 +2074,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase5_ahead": {
@@ -1871,8 +2097,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase6_ahead": {
@@ -1891,8 +2120,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "3d_viewpoint_rerendering_rotate_forward_phase7_ahead": {
@@ -1911,8 +2143,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "identity": {
@@ -1921,11 +2156,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；benchmark baseline。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "rotation": {
@@ -1934,11 +2169,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "resized_crop": {
@@ -1947,11 +2182,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "erasing": {
@@ -1960,11 +2195,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "brightness": {
@@ -1973,11 +2208,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "contrast": {
@@ -1986,11 +2221,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "gaussian_blur": {
@@ -1999,11 +2234,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "gaussian_noise": {
@@ -2012,11 +2247,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "jpeg": {
@@ -2030,8 +2265,11 @@
       }
     ],
     "repos": [],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "resize": {
@@ -2040,11 +2278,11 @@
     },
     "papers": [],
     "repos": [],
-    "paperNotes": [
-      "无；标准图像变换。"
-    ],
-    "repoNotes": [
-      "项目源码：`evaluator/attacks/distortion_attacks/attacks.py`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/distortion_attacks/attacks.py",
+        "url": "evaluator/attacks/distortion_attacks/attacks.py"
+      }
     ]
   },
   "swipe": {
@@ -2063,8 +2301,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "shake": {
@@ -2083,8 +2324,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "rotate": {
@@ -2103,8 +2347,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   },
   "rotate_forward": {
@@ -2123,8 +2370,11 @@
         "url": "https://github.com/apple/ml-sharp"
       }
     ],
-    "repoNotes": [
-      "项目后端：`evaluator/attacks/regeneration_attacks/backends/ml_sharp/`"
+    "projectSources": [
+      {
+        "label": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/",
+        "url": "evaluator/attacks/regeneration_attacks/backends/ml_sharp/"
+      }
     ]
   }
 }

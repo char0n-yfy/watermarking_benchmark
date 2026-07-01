@@ -83,12 +83,6 @@ interface AttackResourceDetail {
   notes: string[];
 }
 
-interface ResourceActionSummary {
-  tone: BrowserResource["statusTone"];
-  title: string;
-  detail: string;
-}
-
 const DEFAULT_RESOURCE_PAGE_SIZE = 8;
 const HIDDEN_RESOURCE_ATTACK_METHODS = new Set(["identity"]);
 const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
@@ -834,146 +828,6 @@ function shouldShowLongDescription(resource: BrowserResource, summary: string) {
   return description.length > summary.length + 12;
 }
 
-function resourceActionSummary(
-  resource: BrowserResource,
-  language: "zh" | "en",
-  attackWeightTarget?: AttackPreset,
-  attackGroupWeightsInstalled?: boolean
-): ResourceActionSummary {
-  if (resource.type === "datasets") {
-    const catalog = resource.catalog;
-    if (catalog?.installed) {
-      return {
-        tone: "ok",
-        title: language === "zh" ? "本地已就绪" : "Ready locally",
-        detail:
-          language === "zh"
-            ? "已安装到数据集目录，可直接加入实验配置。"
-            : "Installed in the dataset directory and ready for configs."
-      };
-    }
-    if (catalog?.compactAvailable || catalog?.remoteCompactAvailable || catalog?.customDownloadReady) {
-      return {
-        tone: "warn",
-        title: language === "zh" ? "请选择下载方式" : "Choose a download option",
-        detail:
-          language === "zh"
-            ? "远程主机磁盘有限时优先使用精简包，也可以按数量自定义采样。"
-            : "Use the compact pack first on disk-limited hosts, or sample a custom count."
-      };
-    }
-    return {
-      tone: "warn",
-      title: language === "zh" ? "下载源待就绪" : "Download source pending",
-      detail:
-        language === "zh"
-          ? "目录信息已收录，下载包或远程采样入口尚未探测到。"
-          : "Catalog metadata is indexed, but no download pack or remote sampling source is ready yet."
-    };
-  }
-
-  if (resource.type === "watermarks") {
-    const algorithm = resource.algorithm;
-    if (resource.available === false) {
-      return {
-        tone: "error",
-        title: language === "zh" ? "当前不可运行" : "Not runnable yet",
-        detail:
-          language === "zh"
-            ? "算法资源未启用，暂时不能加入实验。"
-            : "The algorithm resource is not enabled and cannot be used in experiments yet."
-      };
-    }
-    if (algorithm?.weightsPackRequired !== true) {
-      return {
-        tone: "ok",
-        title: language === "zh" ? "无需额外权重" : "No extra weights",
-        detail:
-          language === "zh"
-            ? "算法可直接用于实验配置。"
-            : "The algorithm can be used directly in experiment configs."
-      };
-    }
-    if (algorithm.weightsInstalled) {
-      return {
-        tone: "ok",
-        title: language === "zh" ? "权重已安装" : "Weights installed",
-        detail:
-          language === "zh"
-            ? "本地权重目录已就绪，可以直接运行。"
-            : "The local weight directory is ready for execution."
-      };
-    }
-    if (algorithm.weightsDownloadReady) {
-      return {
-        tone: "warn",
-        title: language === "zh" ? "需要下载权重" : "Weights required",
-        detail:
-          language === "zh"
-            ? "下载按钮会拉取对应权重包，不会影响算法实现文件。"
-            : "The download action fetches the matching pack without changing algorithm code."
-      };
-    }
-    return {
-      tone: "error",
-      title: language === "zh" ? "权重包未就绪" : "Weight pack unavailable",
-      detail:
-        language === "zh"
-          ? "需要权重但远程包尚未配置，暂时不能完整运行。"
-          : "This method needs weights, but no remote pack is configured yet."
-    };
-  }
-
-  if (resource.available === false) {
-    return {
-      tone: "error",
-      title: language === "zh" ? "当前不可运行" : "Not runnable yet",
-      detail:
-        language === "zh"
-          ? "攻击实现或依赖未就绪，暂时不能加入实验。"
-          : "The attack implementation or dependency is not ready for experiments yet."
-    };
-  }
-  if (!attackWeightTarget?.weightsPackRequired) {
-    return {
-      tone: "ok",
-      title: language === "zh" ? "可直接选择" : "Ready to select",
-      detail:
-        language === "zh"
-          ? "该攻击族不需要额外权重，可在配置页选择强度。"
-          : "This attack family does not require extra weights; choose strengths in the config page."
-    };
-  }
-  if (attackGroupWeightsInstalled) {
-    return {
-      tone: "ok",
-      title: language === "zh" ? "攻击权重已安装" : "Attack weights installed",
-      detail:
-        language === "zh"
-          ? "该攻击族所需权重已在本地就绪。"
-          : "Required weights for this attack family are installed locally."
-    };
-  }
-  if (attackWeightTarget.weightsDownloadReady) {
-    return {
-      tone: "warn",
-      title: language === "zh" ? "需要下载攻击权重" : "Attack weights required",
-      detail:
-        language === "zh"
-          ? "同一攻击族可能共用权重目录，下载一次即可服务多个 preset。"
-          : "One shared weight directory may serve multiple presets in this attack family."
-    };
-  }
-  return {
-    tone: "error",
-    title: language === "zh" ? "攻击权重未就绪" : "Attack weights unavailable",
-    detail:
-      language === "zh"
-        ? "需要权重但远程包尚未配置，暂时不能完整运行。"
-        : "Weights are required, but no remote pack is configured yet."
-  };
-}
-
 function ResourceDetail({
   resource,
   language,
@@ -1023,31 +877,44 @@ function ResourceDetail({
       resource.type === "datasets" ? t.resources.referenceDatasetOverview : t.resources.referenceOverview,
     papers: t.resources.referencePapers,
     repos:
-      resource.type === "datasets" ? t.resources.referenceDatasetSource : t.resources.referenceRepos
+      resource.type === "datasets" ? t.resources.referenceDatasetSource : t.resources.referenceRepos,
+    projectSource: t.resources.referenceProjectSource,
+    upstreamRepos: t.resources.referenceUpstreamRepos,
+    noUpstream: t.resources.referenceNoUpstream
   };
   const referenceOverview = referenceOverviewText(reference, language);
   const rawSummary = resourcePurposeSummary(resource, language);
   const summary =
-    resource.type === "datasets" || !referenceOverview
+    resource.type === "datasets"
       ? rawSummary
-      : firstReadableSentence(resource.subtitle || resource.description, rawSummary);
-  const actionSummary = resourceActionSummary(resource, language, attackWeightTarget, attackGroupWeightsInstalled);
+      : referenceOverview
+        ? resource.subtitle?.trim() || resource.method || resource.id
+        : rawSummary;
+  const showHeroSummary =
+    resource.type === "datasets"
+      ? false
+      : !referenceOverview ||
+        Boolean(summary && summary !== resource.method && summary !== resource.id);
+  const showMetricsGrid = Boolean(attackDetail);
   return (
     <div className="resource-detail-stack">
       <div className="resource-detail-hero">
-        <div className="detail-title-row">
-          <div className="detail-title-heading">
-            <h3>{resource.name}</h3>
+        <div className="detail-title-block">
+          <h3 className="detail-title-text">{resource.name}</h3>
+          <div className="detail-title-badges">
             {resource.categoryLabel ?? resource.category ? (
               <span className="badge resource-category-badge">
                 {resource.categoryLabel ?? resource.category}
               </span>
             ) : null}
+            {resource.type !== "datasets" && resource.requiresGpu ? (
+              <span className="badge warn">{t.common.gpu}</span>
+            ) : null}
+            <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
           </div>
-          <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
         </div>
-        <p>{summary}</p>
-        {shouldShowLongDescription(resource, summary) ? (
+        {showHeroSummary ? <p>{summary}</p> : null}
+        {shouldShowLongDescription(resource, summary) && !referenceOverview ? (
           <details className="resource-long-description">
             <summary>{language === "zh" ? "查看完整说明" : "View full description"}</summary>
             <p>{resource.description}</p>
@@ -1055,50 +922,28 @@ function ResourceDetail({
         ) : null}
       </div>
 
-      <div className={`resource-action-summary ${actionSummary.tone}`}>
-        <strong>{actionSummary.title}</strong>
-        <span>{actionSummary.detail}</span>
-      </div>
-
-      <div className="detail-metrics-grid">
-        {resource.type === "datasets" ? (
-          <>
-            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
-            {resource.sampleCount != null ? (
-              <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
-            ) : null}
-            {resource.catalog?.officialTotalImages ? (
+      {showMetricsGrid ? (
+        <div className="detail-metrics-grid">
+          {attackDetail ? (
+            <>
               <DetailMetric
-                label={t.resources.datasetTotalImages}
-                value={resource.catalog.officialTotalImages.toLocaleString()}
+                label={language === "zh" ? "底层 preset" : "Presets"}
+                value={attackDetail.presetCount.toString()}
               />
-            ) : null}
-          </>
-        ) : attackDetail ? (
-          <>
-            <DetailMetric label="ID" value={resource.id} />
-            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
-            <DetailMetric label="Method" value={resource.method ?? "n/a"} />
-            <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
-            <DetailMetric label={language === "zh" ? "底层 preset" : "Presets"} value={attackDetail.presetCount.toString()} />
-            <DetailMetric
-              label={language === "zh" ? "权重" : "Weights"}
-              value={attackDetail.weights.length > 0 ? attackDetail.weights.length.toString() : language === "zh" ? "无需额外权重" : "none"}
-            />
-          </>
-        ) : (
-          <>
-            <DetailMetric label="ID" value={resource.id} />
-            <DetailMetric label={t.resources.category} value={resource.categoryLabel ?? resource.category} />
-            <DetailMetric label="Method" value={resource.method ?? "n/a"} />
-            <DetailMetric label={t.resources.device} value={resource.requiresGpu ? t.common.gpu : t.common.cpu} />
-            {resource.sampleCount != null ? (
-              <DetailMetric label={t.common.samples} value={resource.sampleCount.toLocaleString()} />
-            ) : null}
-            {resource.version ? <DetailMetric label="Version" value={resource.version} /> : null}
-          </>
-        )}
-      </div>
+              <DetailMetric
+                label={language === "zh" ? "权重" : "Weights"}
+                value={
+                  attackDetail.weights.length > 0
+                    ? attackDetail.weights.length.toString()
+                    : language === "zh"
+                      ? "无需额外权重"
+                      : "none"
+                }
+              />
+            </>
+          ) : null}
+        </div>
+      ) : null}
 
       {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
 
@@ -1131,7 +976,7 @@ function ResourceDetail({
 
       {reference ? (
         <ResourceReferencePanel
-          hideOverview={resource.type === "datasets"}
+          forceLayeredRepos={resource.type === "watermarks"}
           language={language}
           labels={referenceLabels}
           reference={reference}
@@ -1434,12 +1279,30 @@ function WeightDownloadPanel({
       <strong>{panelTitle}</strong>
       {!showUninstallOnly && installed ? <div className="risk ok">{alreadyInstalled}</div> : null}
       {!showUninstallOnly && !canStart && !installed && !jobInFlight ? <div className="risk warn">{unavailable}</div> : null}
-      <div className="download-action-row">
-        <button className="button primary" disabled={!canStart || busy || jobInFlight || installed} onClick={handleStart} type="button">
-          {t.resources.startDownload}
+      <div className="dataset-download-action-grid">
+        <button
+          className={
+            !canStart || busy || jobInFlight || installed
+              ? "dataset-download-choice dataset-download-action"
+              : "dataset-download-choice dataset-download-action dataset-download-action-primary"
+          }
+          disabled={!canStart || busy || jobInFlight || installed}
+          onClick={handleStart}
+          type="button"
+        >
+          <span className="dataset-download-choice-head">
+            <strong>{t.resources.startDownload}</strong>
+          </span>
         </button>
-        <button className="button danger" disabled={!canUninstall || uninstallBusy} onClick={handleUninstall} type="button">
-          {t.resources.uninstallLocal}
+        <button
+          className="dataset-download-choice dataset-download-action"
+          disabled={!canUninstall || uninstallBusy}
+          onClick={handleUninstall}
+          type="button"
+        >
+          <span className="dataset-download-choice-head">
+            <strong>{t.resources.uninstallLocal}</strong>
+          </span>
         </button>
       </div>
       {uninstallNotice ? <div className="risk ok">{uninstallNotice}</div> : null}
@@ -1662,35 +1525,9 @@ function DatasetDownloadPanel({
           <small>{t.resources.customDownloadMeta}</small>
         </button>
       </div>
-      {!showUninstallOnly ? (
-        <div className="dataset-download-selected">
-          <span>{t.resources.selectedDownloadChoice}</span>
-          <strong>{mode === "compact" ? t.resources.compactDownload : t.resources.customDownload}</strong>
-          <small>{mode === "compact" ? t.resources.compactDownloadHint : t.resources.customDownloadHint}</small>
-        </div>
-      ) : null}
-      {!showUninstallOnly && mode === "compact" ? (
-        <p className="dataset-download-hint">
-          {`${t.resources.compactPack}：${detail.compactSampleCount.toLocaleString()} ${t.resources.imagesUnit}`}
-        </p>
-      ) : null}
-      {!showUninstallOnly && mode === "custom" ? (
-        <div className="dataset-pool-summary">
-          <span>
-            {t.resources.datasetTotalImages}：
-            {totalImages > 0 ? `${totalImages.toLocaleString()} ${t.resources.imagesUnit}` : "—"}
-          </span>
-        </div>
-      ) : null}
       {!showUninstallOnly && ossProbing && mode === "compact" ? <div className="risk warn">{t.resources.ossProbing}</div> : null}
       {!showUninstallOnly && !compactReady && !ossProbing && mode === "compact" ? (
         <div className="risk warn">{t.resources.compactUnavailable}</div>
-      ) : null}
-      {!showUninstallOnly && compactReady && !installedForMode && detail.remoteCompactAvailable && mode === "compact" ? (
-        <div className="risk ok">{t.resources.compactRemoteReady}</div>
-      ) : null}
-      {!showUninstallOnly && installedForMode && mode === "compact" ? (
-        <div className="risk ok">{t.resources.compactAlreadyInstalled}</div>
       ) : null}
       {!showUninstallOnly && !customReady && mode === "custom" ? <div className="risk warn">{t.resources.customUnavailable}</div> : null}
       {!showUninstallOnly && mode === "custom" ? (
@@ -1716,12 +1553,30 @@ function DatasetDownloadPanel({
           </label>
         </div>
       ) : null}
-      <div className="download-action-row">
-        <button className="button primary" disabled={!canStart || busy || jobInFlight} onClick={handleStart} type="button">
-          {t.resources.startDownload}
+      <div className="dataset-download-action-grid">
+        <button
+          className={
+            !canStart || busy || jobInFlight
+              ? "dataset-download-choice dataset-download-action"
+              : "dataset-download-choice dataset-download-action dataset-download-action-primary"
+          }
+          disabled={!canStart || busy || jobInFlight}
+          onClick={handleStart}
+          type="button"
+        >
+          <span className="dataset-download-choice-head">
+            <strong>{t.resources.startDownload}</strong>
+          </span>
         </button>
-        <button className="button danger" disabled={!canUninstall || uninstallBusy} onClick={handleUninstall} type="button">
-          {t.resources.uninstallLocal}
+        <button
+          className="dataset-download-choice dataset-download-action"
+          disabled={!canUninstall || uninstallBusy}
+          onClick={handleUninstall}
+          type="button"
+        >
+          <span className="dataset-download-choice-head">
+            <strong>{t.resources.uninstallLocal}</strong>
+          </span>
         </button>
       </div>
       {uninstallNotice ? <div className="risk ok">{uninstallNotice}</div> : null}

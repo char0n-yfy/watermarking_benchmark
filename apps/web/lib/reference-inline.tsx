@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import type { MouseEvent } from "react";
 import type { ReactNode } from "react";
 
 const DEFAULT_PROJECT_SOURCE_BASE =
@@ -20,6 +21,18 @@ export function normalizeExternalHref(value: string): string | null {
   }
   const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   return isExternalUrl(candidate) ? candidate : null;
+}
+
+export function openExternalReferenceLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
+  event.stopPropagation();
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
+    return;
+  }
+  event.preventDefault();
+  const opened = window.open(href, "_blank", "noopener,noreferrer");
+  if (!opened) {
+    window.location.assign(href);
+  }
 }
 
 export function projectSourceHref(path: string): string | null {
@@ -71,7 +84,8 @@ function renderExternalAnchor(href: string, label: string, key: string) {
       className="resource-reference-external-link"
       href={href}
       key={key}
-      onClick={(event) => event.stopPropagation()}
+      onClick={(event) => openExternalReferenceLink(event, href)}
+      onMouseDown={(event) => event.stopPropagation()}
       rel="noreferrer noopener"
       target="_blank"
       title={href}
