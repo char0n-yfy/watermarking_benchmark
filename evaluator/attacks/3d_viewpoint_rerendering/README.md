@@ -39,31 +39,35 @@ evaluator/attacks/regeneration_attacks/backends/ml_sharp/
 
 ## 注册方法
 
-4 种运动、8 个相位和 2 种 `lookat_mode` 被拆分为 64 个独立攻击方法：
+4 种运动和 2 种 `lookat_mode` 被拆分为 8 个独立攻击方法。每次攻击执行时，
+会从 8 个相位中随机抽取一个相位渲染新视角；当 `AttackContext.seed` 固定时，
+抽样结果可复现。
 
 ```text
-3d_viewpoint_rerendering_swipe_phase0_point
+3d_viewpoint_rerendering_swipe_point
 ...
-3d_viewpoint_rerendering_rotate_forward_phase7_point
-3d_viewpoint_rerendering_swipe_phase0_ahead
+3d_viewpoint_rerendering_rotate_forward_point
+3d_viewpoint_rerendering_swipe_ahead
 ...
-3d_viewpoint_rerendering_rotate_forward_phase7_ahead
+3d_viewpoint_rerendering_rotate_forward_ahead
 ```
 
-每个方法固定一个 `(motion, phase, lookat_mode)`，只输出当前固定组合的一张
-PNG。前端资源页按 4 个 motion 方法展示；实验配置页再由 motion、phase 和
-lookat_mode 三个独立维度展开到底层执行 preset。
+每个方法固定一个 `(motion, lookat_mode)`，只输出当前组合的一张 PNG。前端资源页
+按 4 个 motion 方法展示；实验配置页再由 motion 和 lookat_mode 两个维度展开到
+底层执行 preset。
 
 为了兼容旧配置，旧 ID：
 
 ```text
 3d_viewpoint_rerendering_phaseN_{point|ahead}
+3d_viewpoint_rerendering_{motion}_phaseN_{point|ahead}
 ```
 
 会映射到：
 
 ```text
-3d_viewpoint_rerendering_rotate_phaseN_{point|ahead}
+3d_viewpoint_rerendering_rotate_{point|ahead}
+3d_viewpoint_rerendering_{motion}_{point|ahead}
 ```
 
 ## 强度映射
@@ -73,12 +77,12 @@ lookat_mode 三个独立维度展开到底层执行 preset。
 ```text
 strength=0.0 -> max_disparity=0.01
 strength=0.5 -> max_disparity=0.02
-strength=1.0 -> max_disparity=0.04
+strength=1.0 -> max_disparity=0.1
 ```
 
 中间值按 mild -> medium -> strong 分段线性插值。每次运行会在 metadata 中记录
-`motion`、`trajectory_type`、`phase_index`、`phase`、`lookat_mode`、`strength`
-和实际 `max_disparity`。
+`motion`、`trajectory_type`、实际抽到的 `phase_index`、`phase`、`lookat_mode`、
+`strength` 和实际 `max_disparity`。
 
 ## 运行要求
 
@@ -99,7 +103,7 @@ from evaluator.attacks.runner import AttackJob, run_attack_dir
 
 run_attack_dir(AttackJob(
     run_id="sharp-viewpoint-demo",
-    attack_name="3d_viewpoint_rerendering_rotate_phase0_point",
+    attack_name="3d_viewpoint_rerendering_rotate_point",
     params={"strength": 0.5},
     input_dir=Path("input_images"),
     output_dir=Path("attacked_images"),

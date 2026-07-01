@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -144,8 +146,6 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
     name = "3d_viewpoint_rerendering_variant"
     description = "REG-3D-SHARP 3D Gaussian viewpoint re-rendering variant."
     motion = "rotate"
-    phase_index = 0
-    phase = 0.0
     lookat_mode = "point"
 
     def __init__(
@@ -190,8 +190,8 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             motion=self.motion,
             trajectory_type=self.motion,
             max_zoom=0.0,
-            phase_index=int(self.phase_index),
-            phase=float(self.phase),
+            phase_policy="random_per_sample",
+            phase_choices=list(range(len(DEFAULT_SHARP_PHASES))),
             lookat_mode=self.lookat_mode,
             image_size=None if image_size is None else int(image_size),
             device=device,
@@ -215,11 +215,26 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
         self._source_root: Path | None = None
         self._sharp_modules: dict[str, Any] = {}
 
-    def _eye_position(self, offset_x: float, offset_y: float) -> Any:
+    def _select_phase_index(self, context: AttackContext) -> int:
+        if context.seed is None:
+            return random.randrange(len(DEFAULT_SHARP_PHASES))
+        phase_params = {
+            "attack_name": self.name,
+            "sample_id": context.sample_id,
+            "strength": self.strength,
+            "max_disparity": self.max_disparity,
+            "image_size": self.image_size,
+        }
+        params_key = json.dumps(phase_params, sort_keys=True, default=str, separators=(",", ":"))
+        sample_key = f"{context.seed}:{params_key}"
+        digest = hashlib.sha256(sample_key.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") % len(DEFAULT_SHARP_PHASES)
+
+    def _eye_position(self, offset_x: float, offset_y: float, phase: float) -> Any:
         import numpy as np
         import torch
 
-        angle = 2 * np.pi * float(self.phase)
+        angle = 2 * np.pi * float(phase)
         if self.motion == "swipe":
             xyz = [float(offset_x) * np.sin(angle), 0.0, 0.0]
         elif self.motion == "shake":
@@ -299,6 +314,7 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
         metadata: Any,
         *,
         device: str,
+        phase: float,
         renderer: Any | None = None,
         gaussians_device: Any | None = None,
     ) -> Image.Image:
@@ -335,7 +351,7 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             resolution_px=metadata.resolution_px,
             f_px=f_px,
         )
-        eye_position = self._eye_position(float(offset_x), float(offset_y))
+        eye_position = self._eye_position(float(offset_x), float(offset_y), phase)
         camera_model = camera.create_camera_model(
             gaussians,
             intrinsics,
@@ -378,6 +394,8 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
         height, width = image_np.shape[:2]
         gaussians = predict_image(self._predictor, image_np, f_px, torch_device)
         metadata = SceneMetaData(float(f_px), (width, height), "linearRGB")
+        phase_index = self._select_phase_index(context)
+        phase = DEFAULT_SHARP_PHASES[phase_index]
 
         variant_dir = self._variant_output_dir(output_path, context)
         if self.save_intermediates:
@@ -389,10 +407,11 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             gaussians,
             metadata,
             device=str(torch_device),
+            phase=phase,
             renderer=renderer,
             gaussians_device=gaussians.to(torch_device),
         )
-        variant_path = variant_dir / f"phase_{self.phase_index:02d}_{self.lookat_mode}.png"
+        variant_path = variant_dir / f"phase_{phase_index:02d}_{self.lookat_mode}.png"
         if self.save_intermediates:
             rendered.save(variant_path, format="PNG")
         if self.image_size is not None:
@@ -415,8 +434,10 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             "max_disparity": self.max_disparity,
             "max_disparity_levels": list(DEFAULT_MAX_DISPARITY_LEVELS),
             "max_zoom": 0.0,
-            "phase_index": int(self.phase_index),
-            "phase": float(self.phase),
+            "phase_policy": "random_per_sample",
+            "phase_choices": list(range(len(DEFAULT_SHARP_PHASES))),
+            "phase_index": int(phase_index),
+            "phase": float(phase),
             "lookat_mode": self.lookat_mode,
             "variant_count": 1,
             "variant_output_path": str(variant_path) if self.save_intermediates else None,
@@ -428,11 +449,11 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
 VIEWPOINT_ATTACK_CLASSES: list[type[ViewpointRerendering3DVariantAttack]] = []
 
 
-def _register_viewpoint_variant(motion: str, phase_index: int, phase: float, lookat_mode: str) -> None:
+def _register_viewpoint_variant(motion: str, lookat_mode: str) -> None:
     motion_name = motion.title().replace("_", "")
     mode_name = lookat_mode.title().replace("_", "")
-    class_name = f"ViewpointRerendering3D{motion_name}Phase{phase_index}{mode_name}Attack"
-    method_name = f"3d_viewpoint_rerendering_{motion}_phase{phase_index}_{lookat_mode}"
+    class_name = f"ViewpointRerendering3D{motion_name}{mode_name}Attack"
+    method_name = f"3d_viewpoint_rerendering_{motion}_{lookat_mode}"
     cls = type(
         class_name,
         (ViewpointRerendering3DVariantAttack,),
@@ -441,11 +462,9 @@ def _register_viewpoint_variant(motion: str, phase_index: int, phase: float, loo
             "name": method_name,
             "description": (
                 "REG-3D-SHARP 3D Gaussian viewpoint re-rendering "
-                f"{motion} motion, phase {phase_index}/8, lookat_mode={lookat_mode}."
+                f"{motion} motion, random phase from 0..7, lookat_mode={lookat_mode}."
             ),
             "motion": motion,
-            "phase_index": phase_index,
-            "phase": phase,
             "lookat_mode": lookat_mode,
         },
     )
@@ -455,8 +474,7 @@ def _register_viewpoint_variant(motion: str, phase_index: int, phase: float, loo
 
 for _motion in DEFAULT_SHARP_MOTIONS:
     for _lookat_mode in DEFAULT_SHARP_LOOKAT_MODES:
-        for _phase_index, _phase in enumerate(DEFAULT_SHARP_PHASES):
-            _register_viewpoint_variant(_motion, _phase_index, _phase, _lookat_mode)
+        _register_viewpoint_variant(_motion, _lookat_mode)
 
 
 __all__ = [

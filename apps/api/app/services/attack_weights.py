@@ -19,7 +19,7 @@ REGENERATION_ATTACK_METHODS = {
 
 VIEWPOINT_RERENDERING_METHOD = "3d_viewpoint_rerendering"
 VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
-    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase\d+_(point|ahead)"
+    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
 )
 
 CEW_ATTACK_METHODS = {

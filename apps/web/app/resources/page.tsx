@@ -86,7 +86,7 @@ interface AttackResourceDetail {
 const DEFAULT_RESOURCE_PAGE_SIZE = 8;
 const HIDDEN_RESOURCE_ATTACK_METHODS = new Set(["identity"]);
 const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
-const VIEWPOINT_MAX_DISPARITY_LEVELS = [0.01, 0.02, 0.04] as const;
+const VIEWPOINT_MAX_DISPARITY_LEVELS = [0.01, 0.02, 0.1] as const;
 const REGENERATION_UNIT_METHODS = ["2x_regen", "4x_regen", "regen_diffusion", "noise_to_image"] as const;
 const REGENERATION_VAE_METHOD = "regen_vae";
 const REGENERATION_IMAGE_TO_VIDEO_METHOD = "image_to_vedio";
@@ -232,7 +232,7 @@ const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
   cew_s2: { en: "SwinIR", zh: "SwinIR" },
   cew_s3: { en: "BSRGAN", zh: "BSRGAN" }
 };
-const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase(\d+)_(point|ahead)$/;
+const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)$/;
 const VIEWPOINT_MOTION_LABELS: Record<(typeof VIEWPOINT_MOTION_ORDER)[number], { en: string; zh: string }> = {
   swipe: { en: "Swipe", zh: "横向扫动" },
   shake: { en: "Shake", zh: "抖动" },
@@ -335,8 +335,7 @@ function parseViewpointMethod(method: string) {
   }
   return {
     motion: match[1],
-    phaseIndex: Number(match[2]),
-    lookatMode: match[3]
+    lookatMode: match[2]
   };
 }
 
@@ -1737,8 +1736,8 @@ function viewpointDisplayName(method: string, language: "zh" | "en") {
   }
   const mode = parsed.lookatMode === "point" ? "point" : "ahead";
   return language === "zh"
-    ? `3D 视角 ${viewpointMotionLabel(parsed.motion, language)} Phase ${parsed.phaseIndex} (${mode})`
-    : `3D Viewpoint ${viewpointMotionLabel(parsed.motion, language)} Phase ${parsed.phaseIndex} (${mode})`;
+    ? `3D 视角 ${viewpointMotionLabel(parsed.motion, language)} (${mode})`
+    : `3D Viewpoint ${viewpointMotionLabel(parsed.motion, language)} (${mode})`;
 }
 
 function attackLabelByMethod(method: string, language: "zh" | "en") {
@@ -1777,7 +1776,7 @@ function viewpointExecutionRank(method: string) {
     return attackMethodRank(method);
   }
   const motionRank = VIEWPOINT_MOTION_ORDER.indexOf(parsed.motion as (typeof VIEWPOINT_MOTION_ORDER)[number]);
-  return Math.max(0, motionRank) * 16 + parsed.phaseIndex * 2 + (parsed.lookatMode === "point" ? 0 : 1);
+  return Math.max(0, motionRank) * 2 + (parsed.lookatMode === "point" ? 0 : 1);
 }
 
 function resourceSlug(value: string) {
@@ -1905,8 +1904,8 @@ function attackMethodDescription(
   if (category === "3d_viewpoint_rerendering") {
     const motion = viewpointMotionLabel(method, language);
     return language === "zh"
-      ? `${motion} 运动变体；底层由 phase 与 look-at mode 组合展开，攻击强度映射到 max_disparity。`
-      : `${motion} motion variant; execution expands by phase and look-at mode, with strength mapped to max_disparity.`;
+      ? `${motion} 运动变体；底层由 look-at mode 展开，运行时从 8 个 phase 中随机抽取一个，攻击强度映射到 max_disparity。`
+      : `${motion} motion variant; execution expands by look-at mode, samples one of eight phases at runtime, and maps strength to max_disparity.`;
   }
   return methodAttacks[0]?.description ?? attackResourceEnglishName(category, method, methodAttacks);
 }
@@ -1920,25 +1919,29 @@ function buildAttackResourceDetail(
   return {
     presetCount: attacks.length,
     presetIds: attacks.map((attack) => attack.id),
-    variants: attackResourceVariants(category, method, attacks),
+    variants: attackResourceVariants(category, method, attacks, language),
     mappings: attackResourceMappings(category, method, language),
     weights: attackResourceWeights(category, method, attacks, language),
     notes: attackResourceNotes(category, method, language)
   };
 }
 
-function attackResourceVariants(category: string, method: string, attacks: AttackPreset[]): AttackResourceVariant[] {
+function attackResourceVariants(
+  category: string,
+  method: string,
+  attacks: AttackPreset[],
+  language: "zh" | "en"
+): AttackResourceVariant[] {
   if (category === "3d_viewpoint_rerendering") {
     return [...attacks]
       .sort((left, right) => viewpointExecutionRank(left.method) - viewpointExecutionRank(right.method))
       .map((attack) => {
         const parsed = parseViewpointMethod(attack.method);
-        const phase = attack.viewpointPhase ?? parsed?.phaseIndex;
         const lookat = attack.viewpointLookatMode ?? parsed?.lookatMode;
         return {
           id: attack.id,
-          label: `phase ${phase ?? "?"}`,
-          sublabel: lookat ? `look-at ${lookat}` : attack.method
+          label: lookat ? `look-at ${lookat}` : attack.method,
+          sublabel: language === "zh" ? "随机 phase 0-7" : "random phase 0-7"
         };
       });
   }
@@ -2010,8 +2013,8 @@ function attackResourceMappings(category: string, method: string, language: "zh"
         one: `${VIEWPOINT_MAX_DISPARITY_LEVELS[2]}`,
         note:
           language === "zh"
-            ? "0.5 对应 0.02；phase 和 look-at mode 在实验配置页继续细分。"
-            : "0.5 maps to 0.02; phase and look-at mode remain configurable in the experiment page."
+            ? "0.5 对应 0.02；look-at mode 在实验配置页继续细分，phase 运行时随机抽样。"
+            : "0.5 maps to 0.02; look-at mode remains configurable in the experiment page, while phase is sampled at runtime."
       }
     ];
   }

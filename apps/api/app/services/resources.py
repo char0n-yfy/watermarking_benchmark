@@ -226,7 +226,7 @@ ATTACK_PARAM_BY_METHOD = {
 
 PHYSICAL_CHANNEL_METHODS = {"screen_shoot", "print_camera", "combined_physical"}
 VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
-    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_phase(\d+)_(point|ahead)"
+    r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
 )
 VIEWPOINT_RERENDERING_STRENGTHS = [0.0, 0.5, 1.0]
 
@@ -241,10 +241,17 @@ for _phase_index in range(8):
     for _lookat_mode in ("point", "ahead"):
         LEGACY_ATTACK_ALIASES[
             f"atk-3d-viewpoint-rerendering-phase{_phase_index}-{_lookat_mode}"
-        ] = f"atk-3d-viewpoint-rerendering-rotate-phase{_phase_index}-{_lookat_mode}"
+        ] = f"atk-3d-viewpoint-rerendering-rotate-{_lookat_mode}"
         LEGACY_ATTACK_ALIASES[
             f"3d_viewpoint_rerendering_phase{_phase_index}_{_lookat_mode}"
-        ] = f"atk-3d-viewpoint-rerendering-rotate-phase{_phase_index}-{_lookat_mode}"
+        ] = f"atk-3d-viewpoint-rerendering-rotate-{_lookat_mode}"
+        for _motion in ("swipe", "shake", "rotate", "rotate_forward"):
+            LEGACY_ATTACK_ALIASES[
+                f"atk-3d-viewpoint-rerendering-{_motion.replace('_', '-')}-phase{_phase_index}-{_lookat_mode}"
+            ] = f"atk-3d-viewpoint-rerendering-{_motion.replace('_', '-')}-{_lookat_mode}"
+            LEGACY_ATTACK_ALIASES[
+                f"3d_viewpoint_rerendering_{_motion}_phase{_phase_index}_{_lookat_mode}"
+            ] = f"atk-3d-viewpoint-rerendering-{_motion.replace('_', '-')}-{_lookat_mode}"
 
 
 def _slug(value: str) -> str:
@@ -260,8 +267,8 @@ def _viewpoint_display_name(method: str) -> str | None:
     match = VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method)
     if match is None:
         return None
-    motion, phase_index, lookat_mode = match.groups()
-    return f"3D Viewpoint {motion.replace('_', ' ').title()} Phase {phase_index} ({lookat_mode})"
+    motion, lookat_mode = match.groups()
+    return f"3D Viewpoint {motion.replace('_', ' ').title()} ({lookat_mode})"
 
 
 def _viewpoint_resource_metadata(method: str) -> dict[str, Any]:
@@ -269,14 +276,14 @@ def _viewpoint_resource_metadata(method: str) -> dict[str, Any]:
     if match is None:
         return {}
     motion = match.group(1)
-    phase_index = int(match.group(2))
-    lookat_mode = match.group(3)
+    lookat_mode = match.group(2)
     return {
         "displayMethod": motion,
         "displayGroup": "3d_viewpoint_rerendering",
         "executionMethod": method,
         "viewpointMotion": motion,
-        "viewpointPhase": phase_index,
+        "viewpointPhasePolicy": "random_per_sample",
+        "viewpointPhaseChoices": list(range(8)),
         "viewpointLookatMode": lookat_mode,
     }
 

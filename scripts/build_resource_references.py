@@ -16,7 +16,7 @@ OUT_DIR = ROOT / "apps" / "web" / "data"
 LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 ID_RE = re.compile(r"`([^`]+)`")
 VIEWPOINT_ID_RE = re.compile(
-    r"^3d_viewpoint_rerendering_(?P<motion>swipe|shake|rotate|rotate_forward)_phase\d+_(?P<lookat>point|ahead)$"
+    r"^3d_viewpoint_rerendering_(?P<motion>swipe|shake|rotate|rotate_forward)_(?P<lookat>point|ahead)$"
 )
 PROJECT_SOURCE_PREFIXES = ("项目源码", "项目实现", "项目后端", "组合源码")
 UPSTREAM_MARKERS = ("原始实现", "上游参考")

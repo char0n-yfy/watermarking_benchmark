@@ -129,6 +129,8 @@ export interface AttackPreset {
   executionMethod?: string | null;
   viewpointMotion?: string | null;
   viewpointPhase?: number | null;
+  viewpointPhasePolicy?: string | null;
+  viewpointPhaseChoices?: number[] | null;
   viewpointLookatMode?: string | null;
   strengths: number[];
   description?: string;
