@@ -16,6 +16,7 @@ from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.methods._videoseal_family import VideoSealFamilyWatermark
 from evaluator.watermarking.methods.chunkyseal import ChunkySealWatermark
 from evaluator.watermarking.methods.cin import CINWatermark
+from evaluator.watermarking.methods.dwsf import DWSFWatermark
 from evaluator.watermarking.methods.hidden import HiDDeNWatermark
 from evaluator.watermarking.methods.invismark import InvisMarkWatermark
 from evaluator.watermarking.methods.maskwm import MaskWMD32Watermark
@@ -247,6 +248,7 @@ class WatermarkBatchingTest(unittest.TestCase):
             StegaStampWatermark,
             TrustMarkCWatermark,
             TrustMarkQWatermark,
+            DWSFWatermark,
         ]
         extract_batch_classes = [
             *embed_batch_classes,
