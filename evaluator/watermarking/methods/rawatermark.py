@@ -5,9 +5,11 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_io import save_png_image
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
+    move_tensor_to_device,
     normalize_device,
     packaged_algorithm_dir,
     packaged_weights_dir,
@@ -79,11 +81,17 @@ class RAWatermark(BaseWatermark):
         self._loaded = True
         self._loaded_device = device_name
 
-    def _image_tensor(self, input_path: Path):
+    def _image_tensor_cpu(self, input_path: Path):
         assert self._tf is not None
-        assert self._model is not None
         transform = self._tf.Compose([self._tf.Resize((512, 512)), self._tf.ToTensor()])
-        return transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(self._model.spa_watermark.device)
+        return transform(Image.open(input_path).convert("RGB"))
+
+    def _image_tensor(self, input_path: Path):
+        assert self._model is not None
+        return move_tensor_to_device(
+            self._image_tensor_cpu(input_path).unsqueeze(0),
+            self._model.spa_watermark.device,
+        )
 
     def embed_batch_impl(
         self,
@@ -96,11 +104,14 @@ class RAWatermark(BaseWatermark):
         assert self._to_pil_image is not None
         assert self._model is not None
 
-        images = self._torch.cat([self._image_tensor(input_path) for input_path, _output_path, _context in jobs], dim=0)
+        images = move_tensor_to_device(
+            self._torch.stack([self._image_tensor_cpu(input_path) for input_path, _output_path, _context in jobs], dim=0),
+            self._model.spa_watermark.device,
+        )
         with self._torch.no_grad():
             watermarked = self._model.encode_img(images)
         for index, (_input_path, output_path, _context) in enumerate(jobs):
-            self._to_pil_image(watermarked[index].detach().cpu().clamp(0, 1)).save(output_path)
+            save_png_image(self._to_pil_image(watermarked[index].detach().cpu().clamp(0, 1)), output_path)
         return [
             {
                 "payload_type": "zero-bit",
@@ -121,7 +132,10 @@ class RAWatermark(BaseWatermark):
         assert self._torch is not None
         assert self._model is not None
 
-        images = self._torch.cat([self._image_tensor(input_path) for input_path, _context in jobs], dim=0)
+        images = move_tensor_to_device(
+            self._torch.stack([self._image_tensor_cpu(input_path) for input_path, _context in jobs], dim=0),
+            self._model.spa_watermark.device,
+        )
         with self._torch.no_grad():
             pred, _ = self._model.classifier(images)
             probs = self._torch.softmax(pred, dim=1)[:, 1].detach().cpu().tolist()
@@ -144,7 +158,7 @@ class RAWatermark(BaseWatermark):
         image = self._image_tensor(input_path)
         with self._torch.no_grad():
             watermarked = self._model.encode_img(image)
-        self._to_pil_image(watermarked[0].detach().cpu().clamp(0, 1)).save(output_path)
+        save_png_image(self._to_pil_image(watermarked[0].detach().cpu().clamp(0, 1)), output_path)
         return {
             "payload_type": "zero-bit",
             "wm_index": self.wm_index,

@@ -450,6 +450,10 @@ def _image_to_latents(pipe, image: Image.Image, generator: Any, device: str):
 
 
 def _latents_to_image(pipe, latents: Any) -> Image.Image:
+    return _latents_to_images(pipe, latents)[0]
+
+
+def _latents_to_images(pipe, latents: Any) -> list[Image.Image]:
     import numpy as np
     import torch
 
@@ -457,9 +461,35 @@ def _latents_to_image(pipe, latents: Any) -> Image.Image:
     with torch.no_grad():
         decoded = pipe.vae.decode(latents / scaling_factor, return_dict=False)[0]
     decoded = (decoded / 2.0 + 0.5).clamp(0, 1)
-    image_np = decoded.detach().cpu().permute(0, 2, 3, 1).float().numpy()[0]
-    image_uint8 = (image_np * 255.0).round().astype(np.uint8)
-    return Image.fromarray(image_uint8)
+    image_np = decoded.detach().cpu().permute(0, 2, 3, 1).float().numpy()
+    images = []
+    for item in image_np:
+        image_uint8 = (item * 255.0).round().astype(np.uint8)
+        images.append(Image.fromarray(image_uint8))
+    return images
+
+
+def _image_to_latents_batch(pipe, images: list[Image.Image], seeds: list[int], device: str):
+    import torch
+
+    torch_device = torch.device(device)
+    latents = []
+    for image, seed in zip(images, seeds):
+        generator_device = "cpu" if torch_device.type == "mps" else torch_device
+        generator = torch.Generator(device=generator_device).manual_seed(int(seed))
+        latents.append(_image_to_latents(pipe, image, generator, torch_device))
+    return torch.cat(latents, dim=0)
+
+
+def _prompt_embeddings_for_batch(pipe, prompt: str, negative_prompt: str | None, device: Any, do_cfg: bool, batch_size: int):
+    single = _prompt_embeddings(pipe, prompt, negative_prompt, device, do_cfg)
+    if do_cfg:
+        negative, positive = single.chunk(2)
+        return torch_cat_negative_positive(
+            negative.repeat(batch_size, 1, 1),
+            positive.repeat(batch_size, 1, 1),
+        )
+    return single.repeat(batch_size, 1, 1)
 
 
 def _run_diffusion_regeneration(
@@ -529,6 +559,93 @@ def _run_diffusion_regeneration(
         "num_train_timesteps": num_train_timesteps,
         "scheduler": pipe.scheduler.__class__.__name__,
     }
+
+
+def _run_diffusion_regeneration_batch(
+    pipe: Any,
+    images: list[Image.Image],
+    *,
+    prompt: str,
+    negative_prompt: str | None,
+    noise_step: int,
+    num_inference_steps: int,
+    guidance_scale: float,
+    eta: float,
+    seeds: list[int],
+    device: str,
+    head_start_step: int | None,
+) -> tuple[list[Image.Image], list[Mapping[str, Any]]]:
+    import torch
+    from diffusers.utils.torch_utils import randn_tensor
+
+    if not images:
+        return [], []
+    if len(images) != len(seeds):
+        raise ValueError("images and seeds must have the same length")
+    if noise_step < 0:
+        raise ValueError("noise_step must be non-negative")
+    if num_inference_steps <= 0:
+        raise ValueError("num_inference_steps must be positive")
+
+    batch_size = len(images)
+    torch_device = torch.device(device)
+    generator_device = "cpu" if torch_device.type == "mps" else torch_device
+    generators = [torch.Generator(device=generator_device).manual_seed(int(seed)) for seed in seeds]
+    num_train_timesteps = int(getattr(pipe.scheduler.config, "num_train_timesteps", 1000))
+    if noise_step >= num_train_timesteps:
+        raise ValueError(f"noise_step must be < scheduler num_train_timesteps ({num_train_timesteps})")
+
+    with torch.inference_mode():
+        latents = _image_to_latents_batch(pipe, images, seeds, str(torch_device))
+        noises = [
+            randn_tensor(
+                latents[index : index + 1].shape,
+                generator=generators[index],
+                device=torch_device,
+                dtype=latents.dtype,
+            )
+            for index in range(batch_size)
+        ]
+        noise = torch.cat(noises, dim=0)
+        timestep = torch.tensor([noise_step] * batch_size, dtype=torch.long, device=torch_device)
+        latents = pipe.scheduler.add_noise(latents, noise, timestep)
+
+        do_cfg = guidance_scale > 1.0
+        prompt_embeds = _prompt_embeddings_for_batch(pipe, prompt, negative_prompt, torch_device, do_cfg, batch_size)
+        pipe.scheduler.set_timesteps(num_inference_steps, device=torch_device)
+        timesteps = pipe.scheduler.timesteps
+        start_step = _head_start_step(noise_step, num_inference_steps, num_train_timesteps, head_start_step)
+        extra_step_kwargs = pipe.prepare_extra_step_kwargs(generators[0], eta)
+
+        for index, timestep_value in enumerate(timesteps):
+            if index < start_step:
+                continue
+            latent_model_input = torch.cat([latents] * 2) if do_cfg else latents
+            latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, timestep_value)
+            noise_pred = pipe.unet(latent_model_input, timestep_value, encoder_hidden_states=prompt_embeds).sample
+            if do_cfg:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            latents = pipe.scheduler.step(noise_pred, timestep_value, latents, **extra_step_kwargs).prev_sample
+
+        images_out = _latents_to_images(pipe, latents)
+
+    metadatas = [
+        {
+            "seed": int(seed),
+            "noise_step": noise_step,
+            "num_inference_steps": num_inference_steps,
+            "head_start_step": start_step,
+            "guidance_scale": guidance_scale,
+            "eta": eta,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "num_train_timesteps": num_train_timesteps,
+            "scheduler": pipe.scheduler.__class__.__name__,
+        }
+        for seed in seeds
+    ]
+    return images_out, metadatas
 
 
 def _clamp_unit_strength(strength: float) -> float:
@@ -643,6 +760,57 @@ class RegenVAEAttack(BaseAttack):
             "weight_downloaded": self._downloaded,
             "diffusion_model_root": str(DEFAULT_DIFFUSION_MODEL_ROOT),
         }
+
+    def apply_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, AttackContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+
+        import torch
+        from torchvision import transforms
+
+        device = jobs[0][2].device or "cpu"
+        self._ensure_model(device)
+        assert self._model is not None
+        assert self._weight_path is not None
+        assert self._weight_url is not None
+
+        prepared_tensors = []
+        input_sizes: list[tuple[int, int]] = []
+        for input_path, _output_path, _context in jobs:
+            image = Image.open(input_path)
+            input_sizes.append(image.size)
+            prepared_tensors.append(transforms.ToTensor()(_prepare_image(image, self.image_size)))
+
+        tensor = torch.stack(prepared_tensors, dim=0).to(device)
+        with torch.no_grad():
+            output = self._model(tensor)
+            tensor_out = output["x_hat"].clamp(0, 1)
+
+        metadatas: list[Mapping[str, Any]] = []
+        to_pil = transforms.ToPILImage()
+        for index, (_input_path, output_path, _context) in enumerate(jobs):
+            attacked = to_pil(tensor_out[index].cpu())
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            attacked.save(output_path)
+            metadatas.append(
+                {
+                    "backend": "compressai",
+                    "vae_model_name": self.vae_model_name,
+                    "quality": self.quality,
+                    "metric": self.metric,
+                    "image_size": self.image_size,
+                    "input_size": list(input_sizes[index]),
+                    "output_size": list(attacked.size),
+                    "weight_path": str(self._weight_path),
+                    "weight_url": self._weight_url,
+                    "weight_downloaded": self._downloaded,
+                    "diffusion_model_root": str(DEFAULT_DIFFUSION_MODEL_ROOT),
+                }
+            )
+        return metadatas
 
 
 class _BaseRegenDiffusionAttack(BaseAttack):
@@ -840,6 +1008,87 @@ class _BaseRegenDiffusionAttack(BaseAttack):
             "pass_metadata": pass_metadata,
             "intermediate_paths": intermediate_paths,
         }
+
+    def apply_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, AttackContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+
+        import torch
+
+        device = jobs[0][2].device or "cpu"
+        self._ensure_pipe(device)
+        assert self._pipe is not None
+        assert self._model_path is not None
+        assert self._model_repo_id is not None
+
+        current_images: list[Image.Image] = []
+        input_sizes: list[tuple[int, int]] = []
+        seeds: list[int] = []
+        for input_path, _output_path, context in jobs:
+            image = Image.open(input_path)
+            input_sizes.append(image.size)
+            current_images.append(_prepare_image(image, self.image_size))
+            seeds.append(self._seed_for_context(context))
+
+        pass_metadata_by_job: list[list[Mapping[str, Any]]] = [[] for _ in jobs]
+        intermediate_paths_by_job: list[list[str]] = [[] for _ in jobs]
+
+        for pass_index in range(1, self.passes + 1):
+            current_images, batch_pass_metadata = _run_diffusion_regeneration_batch(
+                self._pipe,
+                current_images,
+                prompt=self.prompt,
+                negative_prompt=self.negative_prompt,
+                noise_step=self.noise_step,
+                num_inference_steps=self.num_inference_steps,
+                guidance_scale=self.guidance_scale,
+                eta=self.eta,
+                seeds=seeds,
+                device=device,
+                head_start_step=self.head_start_step,
+            )
+            for job_index, metadata in enumerate(batch_pass_metadata):
+                metadata = dict(metadata)
+                metadata["pass_index"] = pass_index
+                pass_metadata_by_job[job_index].append(metadata)
+                intermediate_path = self._intermediate_path(jobs[job_index][2], pass_index)
+                if intermediate_path is not None:
+                    intermediate_path.parent.mkdir(parents=True, exist_ok=True)
+                    current_images[job_index].save(intermediate_path)
+                    intermediate_paths_by_job[job_index].append(str(intermediate_path))
+
+        metadatas: list[Mapping[str, Any]] = []
+        for index, (_input_path, output_path, _context) in enumerate(jobs):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            current_images[index].save(output_path)
+            metadatas.append(
+                {
+                    "backend": "diffusers",
+                    "model_name": "StableDiffusion2.1-base",
+                    "model_repo_id": self._model_repo_id,
+                    "model_path": str(self._model_path),
+                    "model_downloaded": self._model_downloaded,
+                    "dtype": str(self._torch_dtype).replace("torch.", ""),
+                    "passes": self.passes,
+                    "strength": self.strength,
+                    "noise_step": self.noise_step,
+                    "noise_step_min": self.noise_step_min,
+                    "noise_step_max": self.noise_step_max,
+                    "num_inference_steps": self.num_inference_steps,
+                    "guidance_scale": self.guidance_scale,
+                    "image_size": self.image_size,
+                    "input_size": list(input_sizes[index]),
+                    "output_size": list(current_images[index].size),
+                    "pass_metadata": pass_metadata_by_job[index],
+                    "intermediate_paths": intermediate_paths_by_job[index],
+                }
+            )
+        if str(device).startswith("cuda"):
+            torch.cuda.empty_cache()
+        return metadatas
 
 
 @register_attack
@@ -1290,6 +1539,124 @@ class NoiseToImageAttack(BaseAttack):
             "output_size": list(attacked.size),
         }
 
+    def apply_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, AttackContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+
+        if self.noise_step <= 0:
+            metadatas: list[Mapping[str, Any]] = []
+            for input_path, output_path, context in jobs:
+                image = Image.open(input_path).convert("RGB")
+                input_size = image.size
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                image.save(output_path)
+                metadatas.append(
+                    {
+                        "backend": "ctrlregen",
+                        "skipped_backend": True,
+                        "reason": "noise_step_zero_noop",
+                        "step": self.step,
+                        "noise_step": self.noise_step,
+                        "noise_step_min": self.noise_step_min,
+                        "noise_step_max": self.noise_step_max,
+                        "seed": self._seed_for_context(context),
+                        "num_inference_steps": self.num_inference_steps,
+                        "guidance_scale": self.guidance_scale,
+                        "controlnet_conditioning_scale": self.controlnet_conditioning_scale,
+                        "image_size": self.image_size,
+                        "input_size": list(input_size),
+                        "output_size": list(image.size),
+                    }
+                )
+            return metadatas
+
+        import torch
+
+        device = jobs[0][2].device or "cpu"
+        self._ensure_pipe(device)
+        assert self._pipe is not None
+        assert self._canny_impl is not None
+        assert self._color_match is not None
+        num_train_timesteps = int(getattr(self._pipe.scheduler.config, "num_train_timesteps", self.noise_step_max))
+        pipeline_strength = max(0.0, min(1.0, float(self.noise_step) / max(float(num_train_timesteps), 1.0)))
+
+        watermarked_images = []
+        control_images = []
+        input_sizes: list[tuple[int, int]] = []
+        generators = []
+        generator_device = _generator_device(torch.device(self._pipe_device or device))
+        for input_path, _output_path, context in jobs:
+            image = Image.open(input_path)
+            input_sizes.append(image.size)
+            watermarked = _square_image(image, self.image_size, self.square_mode)
+            watermarked_images.append(watermarked)
+            control_images.append(self._canny_impl(watermarked))
+            generators.append(torch.Generator(device=generator_device).manual_seed(self._seed_for_context(context)))
+
+        with torch.inference_mode():
+            outputs = self._pipe(
+                [self.prompt] * len(jobs),
+                negative_prompt=[self.negative_prompt] * len(jobs),
+                image=watermarked_images,
+                control_image=control_images,
+                ip_adapter_image=watermarked_images,
+                strength=pipeline_strength,
+                generator=generators,
+                num_inference_steps=self.num_inference_steps,
+                controlnet_conditioning_scale=self.controlnet_conditioning_scale,
+                guidance_scale=self.guidance_scale,
+                control_guidance_start=0.0,
+                control_guidance_end=1.0,
+            ).images
+
+        metadatas: list[Mapping[str, Any]] = []
+        for index, (_input_path, output_path, context) in enumerate(jobs):
+            attacked = outputs[index]
+            try:
+                attacked = self._color_match(watermarked_images[index], attacked)
+            except Exception:
+                pass
+            attacked = _square_image(attacked.convert("RGB"), self.image_size, "fit")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            attacked.save(output_path)
+            metadatas.append(
+                {
+                    "backend": "ctrlregen",
+                    "source_root": str(self._resolved_paths.get("source_root")),
+                    "base_model": self._resolved_paths.get("base_ref"),
+                    "base_repo_id": self._resolved_paths.get("base_repo"),
+                    "base_downloaded": self._resolved_paths.get("base_downloaded"),
+                    "adapter_repo_id": self._resolved_paths.get("adapter_repo"),
+                    "adapter_downloaded": self._resolved_paths.get("adapter_downloaded"),
+                    "image_encoder": self._resolved_paths.get("encoder_ref"),
+                    "image_encoder_repo_id": self._resolved_paths.get("encoder_repo"),
+                    "image_encoder_downloaded": self._resolved_paths.get("encoder_downloaded"),
+                    "vae_model": self._resolved_paths.get("vae_ref"),
+                    "vae_repo_id": self._resolved_paths.get("vae_repo"),
+                    "vae_downloaded": self._resolved_paths.get("vae_downloaded"),
+                    "dtype": self._resolved_paths.get("dtype"),
+                    "step": self.step,
+                    "noise_step": self.noise_step,
+                    "noise_step_min": self.noise_step_min,
+                    "noise_step_max": self.noise_step_max,
+                    "pipeline_strength": pipeline_strength,
+                    "num_train_timesteps": num_train_timesteps,
+                    "seed": self._seed_for_context(context),
+                    "num_inference_steps": self.num_inference_steps,
+                    "guidance_scale": self.guidance_scale,
+                    "controlnet_conditioning_scale": self.controlnet_conditioning_scale,
+                    "image_size": self.image_size,
+                    "input_size": list(input_sizes[index]),
+                    "output_size": list(attacked.size),
+                }
+            )
+        if str(self._pipe_device or device).startswith("cuda"):
+            torch.cuda.empty_cache()
+        return metadatas
+
 
 @register_attack
 class ImageToVedioAttack(BaseAttack):
@@ -1500,3 +1867,74 @@ class ImageToVedioAttack(BaseAttack):
             "input_size": list(input_size),
             "output_size": list(attacked.size),
         }
+
+    def apply_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, AttackContext]],
+    ) -> list[Mapping[str, Any]]:
+        if not jobs:
+            return []
+
+        import torch
+        from torchvision import transforms
+
+        device = jobs[0][2].device or "cpu"
+        self._ensure_pipe(device)
+        assert self._pipe is not None
+        assert self._model_path is not None
+
+        watermarked_images = []
+        input_sizes: list[tuple[int, int]] = []
+        inverse_latents = []
+        generator_device = _generator_device(self._pipe.device)
+        seeds: list[int] = []
+        for input_path, _output_path, context in jobs:
+            image = Image.open(input_path)
+            input_sizes.append(image.size)
+            watermarked = _square_image(image, self.image_size, self.square_mode)
+            watermarked_images.append(watermarked)
+            tensor = transforms.ToTensor()(watermarked).unsqueeze(0)
+            seed = self._seed_for_context(context)
+            seeds.append(seed)
+            inverse_latents.append(self._invert_latents(tensor, seed))
+
+        latents = torch.cat(inverse_latents, dim=0)
+        warped_timestep = torch.tensor([0] * len(jobs), dtype=torch.long, device=self._pipe.device)
+        generators = [torch.Generator(device=generator_device).manual_seed(seed) for seed in seeds]
+        with torch.no_grad():
+            images = self._pipe(
+                prompt=[""] * len(jobs),
+                num_images_per_prompt=2,
+                latents=latents,
+                xyz=[self.xy, self.xy, 0],
+                num_inference_steps=self.num_inference_steps,
+                warped_latents_timestep=warped_timestep,
+                generator=generators,
+            ).images
+        attacked_images = images[len(jobs) :]
+
+        metadatas: list[Mapping[str, Any]] = []
+        for index, (_input_path, output_path, _context) in enumerate(jobs):
+            attacked = _square_image(attacked_images[index].convert("RGB"), self.image_size, "fit")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            attacked.save(output_path)
+            metadatas.append(
+                {
+                    "backend": "nfpa",
+                    "source_root": str(self._source_root),
+                    "model_repo_id": self._model_repo_id,
+                    "model_path": str(self._model_path),
+                    "model_downloaded": self._model_downloaded,
+                    "model_image_size": self._model_image_size,
+                    "dtype": str(self._torch_dtype).replace("torch.", ""),
+                    "xy": self.xy,
+                    "seed": seeds[index],
+                    "num_inference_steps": self.num_inference_steps,
+                    "image_size": self.image_size,
+                    "input_size": list(input_sizes[index]),
+                    "output_size": list(attacked.size),
+                }
+            )
+        if str(self._pipe_device or device).startswith("cuda"):
+            torch.cuda.empty_cache()
+        return metadatas

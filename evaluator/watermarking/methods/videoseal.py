@@ -6,12 +6,14 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_io import save_png_image
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
     bit_accuracy,
     bits_from_message,
     bits_to_string,
+    move_tensor_to_device,
     normalize_device,
     packaged_algorithm_dir,
     packaged_weights_dir,
@@ -111,12 +113,11 @@ class VideoSealWatermark(BaseWatermark):
         assert self._tf is not None
         assert self._model is not None
 
-        device = next(self._model.parameters()).device
         loaded: list[tuple[int, Path, list[int], Any, Any]] = []
         for index, (input_path, output_path, context) in enumerate(jobs):
             bits = bits_from_message(context.message, self.payload_bits, seed=context.seed)
-            message = self._torch.tensor(bits, dtype=self._torch.float32, device=device).unsqueeze(0)
-            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            message = self._torch.tensor(bits, dtype=self._torch.float32)
+            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB"))
             loaded.append((index, output_path, bits, tensor, message))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
@@ -126,14 +127,15 @@ class VideoSealWatermark(BaseWatermark):
 
         to_pil = self._tf.ToPILImage()
         internal_size = self._internal_size()
+        device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = self._torch.cat([item[3] for item in items], dim=0)
-                messages = self._torch.cat([item[4] for item in items], dim=0)
+                tensors = move_tensor_to_device(self._torch.stack([item[3] for item in items], dim=0), device)
+                messages = move_tensor_to_device(self._torch.stack([item[4] for item in items], dim=0), device)
                 outputs = self._model.embed(tensors, **self._embed_kwargs(messages))
                 watermarked = outputs["imgs_w"].detach().cpu().clamp(0, 1)
                 for batch_index, (result_index, output_path, bits, _tensor, _message) in enumerate(items):
-                    to_pil(watermarked[batch_index]).save(output_path)
+                    save_png_image(to_pil(watermarked[batch_index]), output_path)
                     results[result_index] = {
                         "bits": bits_to_string(bits),
                         "payload_bits": self.payload_bits,
@@ -153,10 +155,9 @@ class VideoSealWatermark(BaseWatermark):
         assert self._tf is not None
         assert self._model is not None
 
-        device = next(self._model.parameters()).device
         loaded: list[tuple[int, WatermarkContext, Any]] = []
         for index, (input_path, context) in enumerate(jobs):
-            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB"))
             loaded.append((index, context, tensor))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
@@ -164,9 +165,10 @@ class VideoSealWatermark(BaseWatermark):
         for item in loaded:
             grouped.setdefault(tuple(item[2].shape[-2:]), []).append(item)
 
+        device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = self._torch.cat([item[2] for item in items], dim=0)
+                tensors = move_tensor_to_device(self._torch.stack([item[2] for item in items], dim=0), device)
                 detected = self._model.detect(tensors, **self._detect_kwargs())
                 decoded_batch = (detected["preds"][:, 1:] > 0).int().detach().cpu().tolist()
                 internal_size = self._internal_size()
@@ -195,7 +197,7 @@ class VideoSealWatermark(BaseWatermark):
         with self._torch.no_grad():
             outputs = self._model.embed(tensor, **self._embed_kwargs(msg))
         watermarked = outputs["imgs_w"][0].detach().cpu().clamp(0, 1)
-        self._tf.ToPILImage()(watermarked).save(output_path)
+        save_png_image(self._tf.ToPILImage()(watermarked), output_path)
         return {
             "bits": bits_to_string(bits),
             "payload_bits": self.payload_bits,

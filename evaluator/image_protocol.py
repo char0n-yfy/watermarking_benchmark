@@ -5,6 +5,8 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_io import save_png_image
+
 
 JsonDict = dict[str, Any]
 
@@ -81,7 +83,7 @@ def canonical_preprocess_image(
     right = left + target_w
     bottom = top + target_h
     cropped = resized.crop((left, top, right, bottom))
-    cropped.save(target_path, format="PNG")
+    save_png_image(cropped, target_path)
 
     return {
         "preprocessPolicy": CANONICAL_PREPROCESS_POLICY,
@@ -128,7 +130,7 @@ def canonicalize_image_file_in_place(
         }
     with Image.open(image_path) as opened:
         image = opened.convert("RGB").resize(size, Image.Resampling.BICUBIC)
-    image.save(image_path, format="PNG")
+    save_png_image(image, image_path)
     return {
         "ok": True,
         "changed": True,

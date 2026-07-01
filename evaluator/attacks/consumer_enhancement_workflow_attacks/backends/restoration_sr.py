@@ -52,12 +52,30 @@ def image_to_tensor(image: Image.Image, device: torch.device) -> torch.Tensor:
     return tensor.to(device=device, dtype=torch.float32)
 
 
+def image_to_tensor_cpu(image: Image.Image) -> torch.Tensor:
+    import numpy as np
+
+    array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    return torch.from_numpy(array).permute(2, 0, 1)
+
+
+def move_batch_to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    non_blocking = False
+    if device.type == "cuda":
+        try:
+            tensor = tensor.pin_memory()
+            non_blocking = True
+        except Exception:
+            non_blocking = False
+    return tensor.to(device=device, dtype=torch.float32, non_blocking=non_blocking)
+
+
 def tensor_to_image(tensor: torch.Tensor, size: tuple[int, int] | None = None) -> Image.Image:
     import numpy as np
 
     tensor = tensor.detach().float().clamp_(0.0, 1.0).squeeze(0).permute(1, 2, 0).cpu()
     array = (tensor.numpy() * 255.0).round().astype(np.uint8)
-    image = Image.fromarray(array, mode="RGB")
+    image = Image.fromarray(array).convert("RGB")
     if size is not None and image.size != size:
         image = image.resize(size, Image.Resampling.LANCZOS)
     return image
@@ -76,6 +94,65 @@ def pad_to_multiple(tensor: torch.Tensor, multiple: int) -> tuple[torch.Tensor, 
 def crop_to_size(tensor: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
     height, width = size
     return tensor[:, :, :height, :width]
+
+
+def _group_indices_by_shape(tensors: list[torch.Tensor]) -> dict[tuple[int, ...], list[int]]:
+    grouped: dict[tuple[int, ...], list[int]] = {}
+    for index, tensor in enumerate(tensors):
+        grouped.setdefault(tuple(tensor.shape), []).append(index)
+    return grouped
+
+
+def _run_same_shape_batch(
+    images: list[Image.Image],
+    device: torch.device,
+    model: nn.Module,
+    *,
+    output_sizes: list[tuple[int, int] | None] | None = None,
+) -> list[Image.Image]:
+    if not images:
+        return []
+    cpu_tensors = [image_to_tensor_cpu(image) for image in images]
+    sizes = output_sizes or [image.size for image in images]
+    results: list[Image.Image | None] = [None] * len(images)
+    with torch.inference_mode():
+        for indices in _group_indices_by_shape(cpu_tensors).values():
+            batch = move_batch_to_device(torch.stack([cpu_tensors[index] for index in indices], dim=0), device)
+            outputs = model(batch).detach().cpu()
+            for batch_index, image_index in enumerate(indices):
+                results[image_index] = tensor_to_image(outputs[batch_index : batch_index + 1], size=sizes[image_index])
+    return [result for result in results if result is not None]
+
+
+def _run_padded_batch(
+    images: list[Image.Image],
+    device: torch.device,
+    model: nn.Module,
+    *,
+    multiple: int,
+    scale: int = 1,
+) -> list[Image.Image]:
+    if not images:
+        return []
+    padded_tensors: list[torch.Tensor] = []
+    original_hws: list[tuple[int, int]] = []
+    for image in images:
+        padded, original_hw = pad_to_multiple(image_to_tensor_cpu(image).unsqueeze(0), multiple)
+        padded_tensors.append(padded.squeeze(0))
+        original_hws.append(original_hw)
+
+    results: list[Image.Image | None] = [None] * len(images)
+    with torch.inference_mode():
+        for indices in _group_indices_by_shape(padded_tensors).values():
+            batch = move_batch_to_device(torch.stack([padded_tensors[index] for index in indices], dim=0), device)
+            outputs = model(batch).detach().cpu()
+            for batch_index, image_index in enumerate(indices):
+                crop_hw = (original_hws[image_index][0] * scale, original_hws[image_index][1] * scale)
+                cropped = crop_to_size(outputs[batch_index : batch_index + 1], crop_hw)
+                image = images[image_index]
+                output_size = (image.size[0] * scale, image.size[1] * scale)
+                results[image_index] = tensor_to_image(cropped, size=output_size)
+    return [result for result in results if result is not None]
 
 
 def load_state_dict(path: Path) -> dict[str, torch.Tensor]:
@@ -735,6 +812,12 @@ def run_rrdbnet_x2(image: Image.Image, weight_path: Path, device_name: str | Non
     return tensor_to_image(output)
 
 
+def run_rrdbnet_x2_batch(images: list[Image.Image], weight_path: Path, device_name: str | None = None) -> list[Image.Image]:
+    device = select_device(device_name)
+    model = _load_model("rrdbnet_x2", weight_path, device)
+    return _run_same_shape_batch(images, device, model, output_sizes=[None] * len(images))
+
+
 def run_rrdbnet_x4(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
     device = select_device(device_name)
     model = _load_model("rrdbnet_x4", weight_path, device)
@@ -742,6 +825,12 @@ def run_rrdbnet_x4(image: Image.Image, weight_path: Path, device_name: str | Non
     with torch.inference_mode():
         output = model(tensor)
     return tensor_to_image(output)
+
+
+def run_rrdbnet_x4_batch(images: list[Image.Image], weight_path: Path, device_name: str | None = None) -> list[Image.Image]:
+    device = select_device(device_name)
+    model = _load_model("rrdbnet_x4", weight_path, device)
+    return _run_same_shape_batch(images, device, model, output_sizes=[None] * len(images))
 
 
 def run_zero_dce_plus_plus(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
@@ -753,6 +842,12 @@ def run_zero_dce_plus_plus(image: Image.Image, weight_path: Path, device_name: s
     return tensor_to_image(output, size=image.size)
 
 
+def run_zero_dce_plus_plus_batch(images: list[Image.Image], weight_path: Path, device_name: str | None = None) -> list[Image.Image]:
+    device = select_device(device_name)
+    model = _load_model("zero_dce_plus_plus", weight_path, device)
+    return _run_same_shape_batch(images, device, model)
+
+
 def run_swinir_jpeg_car(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
     device = select_device(device_name)
     model = _load_model("swinir_jpeg_car", weight_path, device)
@@ -761,6 +856,12 @@ def run_swinir_jpeg_car(image: Image.Image, weight_path: Path, device_name: str 
     with torch.inference_mode():
         output = crop_to_size(model(padded), original_hw)
     return tensor_to_image(output, size=image.size)
+
+
+def run_swinir_jpeg_car_batch(images: list[Image.Image], weight_path: Path, device_name: str | None = None) -> list[Image.Image]:
+    device = select_device(device_name)
+    model = _load_model("swinir_jpeg_car", weight_path, device)
+    return _run_padded_batch(images, device, model, multiple=7)
 
 
 def run_swinir_classical_sr(
@@ -782,6 +883,20 @@ def run_swinir_classical_sr(
     return tensor_to_image(output, size=(image.size[0] * scale, image.size[1] * scale))
 
 
+def run_swinir_classical_sr_batch(
+    images: list[Image.Image],
+    weight_path: Path,
+    scale: int,
+    device_name: str | None = None,
+) -> list[Image.Image]:
+    if scale not in {2, 4}:
+        raise ValueError(f"SwinIR classical SR only supports scale 2 or 4, got {scale}")
+    device = select_device(device_name)
+    kind: ModelKind = "swinir_classical_sr_x2" if scale == 2 else "swinir_classical_sr_x4"
+    model = _load_model(kind, weight_path, device)
+    return _run_padded_batch(images, device, model, multiple=8, scale=scale)
+
+
 def run_restormer_denoise(image: Image.Image, weight_path: Path, device_name: str | None = None) -> Image.Image:
     device = select_device(device_name)
     model = _load_model("restormer_denoise", weight_path, device)
@@ -790,3 +905,9 @@ def run_restormer_denoise(image: Image.Image, weight_path: Path, device_name: st
     with torch.inference_mode():
         output = crop_to_size(model(padded), original_hw)
     return tensor_to_image(output, size=image.size)
+
+
+def run_restormer_denoise_batch(images: list[Image.Image], weight_path: Path, device_name: str | None = None) -> list[Image.Image]:
+    device = select_device(device_name)
+    model = _load_model("restormer_denoise", weight_path, device)
+    return _run_padded_batch(images, device, model, multiple=8)

@@ -445,6 +445,22 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             "output_size": list(rendered.size),
         }
 
+    def apply_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, AttackContext]],
+    ) -> list[Mapping[str, Any]]:
+        metadatas: list[Mapping[str, Any]] = []
+        for input_path, output_path, context in jobs:
+            metadata = dict(self.apply(input_path, output_path, context))
+            metadata.update(
+                {
+                    "batch_adapter": "sequential_batch_adapter",
+                    "batch_adapter_reason": "SHARP wrapper predicts and renders one Gaussian scene per image",
+                }
+            )
+            metadatas.append(metadata)
+        return metadatas
+
 
 VIEWPOINT_ATTACK_CLASSES: list[type[ViewpointRerendering3DVariantAttack]] = []
 

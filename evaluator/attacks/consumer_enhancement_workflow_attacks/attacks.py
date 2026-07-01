@@ -408,6 +408,95 @@ def _deep_enhance(image: Image.Image, operation: str, params: Mapping[str, Any],
         return output, _fallback_metadata(weight_meta, exc, ops)
 
 
+def _batch_success_metadata(metadata: Mapping[str, Any], batch_size: int) -> dict[str, Any]:
+    return {
+        **metadata,
+        "backendBatch": True,
+        "backendBatchSize": batch_size,
+        "backendBatchFallback": False,
+        "backendBatchFallbackReason": None,
+    }
+
+
+def _batch_fallback_metadata(metadata: Mapping[str, Any], exc: Exception) -> dict[str, Any]:
+    return {
+        **metadata,
+        "backendBatch": False,
+        "backendBatchFallback": True,
+        "backendBatchFallbackReason": f"{type(exc).__name__}: {exc}",
+    }
+
+
+def _deep_enhance_batch(
+    images: list[Image.Image],
+    operation: str,
+    params: Mapping[str, Any],
+    contexts: list[AttackContext],
+) -> list[tuple[Image.Image, dict[str, Any]]]:
+    if not images:
+        return []
+    model_name = str(params["model_name"])
+    task_name = str(params["task_name"])
+    allow_fallback = bool(params.get("allow_fallback", True))
+    weight_path = _resolve_weight_path(task_name, model_name, params.get("weight_root"))
+    weight_meta = _weight_metadata(weight_path, task_name, model_name, allow_fallback)
+    device = contexts[0].device if contexts else None
+    try:
+        if operation == "d1":
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_zero_dce_plus_plus_batch
+
+            outputs = run_zero_dce_plus_plus_batch(images, weight_path, device)
+            metadata = _torch_metadata(weight_meta, "torch_zero_dce_plus_plus")
+        elif operation == "d2":
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.deep_enhance import run_deepwb_awb_batch
+
+            outputs = run_deepwb_awb_batch(
+                images,
+                weight_path,
+                device,
+                max_size=int(params.get("max_size", 656)),
+            )
+            metadata = _torch_metadata(weight_meta, "torch_deepwb_awb")
+        elif operation == "d3":
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.deep_enhance import run_image_adaptive_3dlut_batch
+
+            outputs = run_image_adaptive_3dlut_batch(
+                images,
+                weight_path,
+                device,
+                blend=float(params.get("blend", 1.0)),
+            )
+            metadata = _torch_metadata(weight_meta, "torch_image_adaptive_3dlut")
+        elif operation == "d4":
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.deep_enhance import run_retinexformer_low_light_batch
+
+            outputs = run_retinexformer_low_light_batch(
+                images,
+                weight_path,
+                device,
+                window_size=int(params.get("window_size", 4)),
+            )
+            metadata = _torch_metadata(weight_meta, "torch_retinexformer_low_light")
+        elif operation == "d5":
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_restormer_denoise_batch
+
+            outputs = run_restormer_denoise_batch(images, weight_path, device)
+            metadata = _torch_metadata(weight_meta, "torch_restormer_denoise")
+        else:
+            raise NotImplementedError(f"No local torch backend is wired for {operation}/{model_name}")
+        if len(outputs) != len(images):
+            raise RuntimeError(f"Batch backend returned {len(outputs)} outputs for {len(images)} inputs")
+        return [(output, _batch_success_metadata(metadata, len(images))) for output in outputs]
+    except Exception as exc:
+        if not allow_fallback:
+            raise
+        return [
+            (output, _batch_fallback_metadata(metadata, exc))
+            for image, context in zip(images, contexts)
+            for output, metadata in [_deep_enhance(image, operation, params, context)]
+        ]
+
+
 def _sr(image: Image.Image, params: Mapping[str, Any], context: AttackContext) -> tuple[Image.Image, dict[str, Any]]:
     params = _resolve_sr_params(params)
     model_name = str(params["model_name"])
@@ -452,12 +541,63 @@ def _sr(image: Image.Image, params: Mapping[str, Any], context: AttackContext) -
         return output, {**_fallback_metadata(weight_meta, exc, ["lanczos_upscale", "unsharp"]), **runtime_meta}
 
 
-def _apply_named_step(
-    image: Image.Image,
+def _sr_batch(
+    images: list[Image.Image],
+    params: Mapping[str, Any],
+    contexts: list[AttackContext],
+) -> list[tuple[Image.Image, dict[str, Any]]]:
+    if not images:
+        return []
+    params = _resolve_sr_params(params)
+    model_name = str(params["model_name"])
+    task_name = "super_resolution"
+    scale = int(params["scale"])
+    allow_fallback = bool(params.get("allow_fallback", True))
+    weight_path = _resolve_weight_path(task_name, model_name, params.get("weight_root"))
+    weight_meta = _weight_metadata(weight_path, task_name, model_name, allow_fallback)
+    runtime_meta = {
+        "model_family": params["model_family"],
+        "model_name": model_name,
+        "scale": scale,
+        "sharpen": params.get("sharpen"),
+        "denoise_strength": params.get("denoise_strength"),
+    }
+    device = contexts[0].device if contexts else None
+    try:
+        if model_name in {"realesrgan_x2plus", "bsrgan_x2", "bsrgan_x2_rescaled"} and scale == 2:
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_rrdbnet_x2_batch
+
+            outputs = run_rrdbnet_x2_batch(images, weight_path, device)
+            metadata = {**_torch_metadata(weight_meta, "torch_rrdbnet_x2"), **runtime_meta}
+        elif model_name in {"realesrgan_x4plus", "bsrgan_x4"} and scale == 4:
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_rrdbnet_x4_batch
+
+            outputs = run_rrdbnet_x4_batch(images, weight_path, device)
+            metadata = {**_torch_metadata(weight_meta, "torch_rrdbnet_x4"), **runtime_meta}
+        elif model_name in {"swinir_x2", "swinir_x4"}:
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends.restoration_sr import run_swinir_classical_sr_batch
+
+            outputs = run_swinir_classical_sr_batch(images, weight_path, scale, device)
+            metadata = {**_torch_metadata(weight_meta, f"torch_swinir_classical_sr_x{scale}"), **runtime_meta}
+        else:
+            raise NotImplementedError(f"No local torch backend is wired for {model_name} x{scale}")
+        if len(outputs) != len(images):
+            raise RuntimeError(f"Batch backend returned {len(outputs)} outputs for {len(images)} inputs")
+        return [(output, _batch_success_metadata(metadata, len(images))) for output in outputs]
+    except Exception as exc:
+        if not allow_fallback:
+            raise
+        return [
+            (output, _batch_fallback_metadata(metadata, exc))
+            for image, context in zip(images, contexts)
+            for output, metadata in [_sr(image, params, context)]
+        ]
+
+
+def _build_named_step_attack(
     step: str | Mapping[str, Any],
-    context: AttackContext,
     inherited_params: Mapping[str, Any] | None = None,
-) -> tuple[Image.Image, str, dict[str, Any]]:
+) -> tuple[str, CEWAttack]:
     if isinstance(step, str):
         step_name = step
         step_params: Mapping[str, Any] = {}
@@ -477,6 +617,16 @@ def _apply_named_step(
     }
     overrides.update(step_params)
     attack = cls(**overrides)
+    return step_name, attack
+
+
+def _apply_named_step(
+    image: Image.Image,
+    step: str | Mapping[str, Any],
+    context: AttackContext,
+    inherited_params: Mapping[str, Any] | None = None,
+) -> tuple[Image.Image, str, dict[str, Any]]:
+    step_name, attack = _build_named_step_attack(step, inherited_params)
     output, metadata = attack._apply_image(image, context)
     return output, step_name, metadata
 
@@ -521,10 +671,74 @@ class CEWAttack(BaseAttack):
             return current, {"backend": "cew_composite_chain", "fallback_used": any(step.get("fallback_used") for step in metadata_steps), "steps": metadata_steps}
         raise ValueError(f"Unsupported CEW operation: {operation}")
 
+    def _apply_images(
+        self,
+        images: list[Image.Image],
+        contexts: list[AttackContext],
+    ) -> list[tuple[Image.Image, dict[str, Any]]]:
+        if self.operation in {"d1", "d2", "d3", "d4", "d5"}:
+            return _deep_enhance_batch(images, self.operation, self.config, contexts)
+        if self.operation == "sr":
+            return _sr_batch(images, self.config, contexts)
+        if self.operation != "composite":
+            return [self._apply_image(image, context) for image, context in zip(images, contexts)]
+
+        current_images = list(images)
+        metadata_steps_by_image: list[list[dict[str, Any]]] = [[] for _image in current_images]
+        for step in self.config["chain"]:
+            step_name, attack = _build_named_step_attack(step, self.config)
+            next_images: list[Image.Image] = []
+            for index, (output, metadata) in enumerate(attack._apply_images(current_images, contexts)):
+                next_images.append(output)
+                metadata_steps_by_image[index].append({"step": step_name, **metadata})
+            current_images = next_images
+
+        outputs: list[tuple[Image.Image, dict[str, Any]]] = []
+        for image, metadata_steps in zip(current_images, metadata_steps_by_image):
+            outputs.append(
+                (
+                    image,
+                    {
+                        "backend": "cew_composite_chain",
+                        "fallback_used": any(step.get("fallback_used") for step in metadata_steps),
+                        "steps": metadata_steps,
+                    },
+                )
+            )
+        return outputs
+
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
         output, metadata = self._apply_image(load_rgb(input_path), context)
         save_png(output, output_path)
         return metadata
+
+    def apply_batch_impl(
+        self,
+        jobs: list[tuple[Path, Path, AttackContext]],
+    ) -> list[Mapping[str, Any]]:
+        images = [load_rgb(input_path) for input_path, _output_path, _context in jobs]
+        contexts = [context for _input_path, _output_path, context in jobs]
+        outputs = self._apply_images(images, contexts)
+        if self.operation == "composite":
+            adapter = "step_backend_batch_adapter"
+            reason = "CEW composite batch reuses one step wrapper and calls backend batch hooks when available"
+        elif self.operation in {"d1", "d2", "d3", "d4", "d5", "sr"}:
+            adapter = "backend_batch_adapter"
+            reason = "CEW torch backend is called with an image batch when available"
+        else:
+            adapter = "sequential_batch_adapter"
+            reason = "CEW edit operations expose image-level PIL APIs in this wrapper"
+        metadatas: list[Mapping[str, Any]] = []
+        for (_input_path, output_path, _context), (output, metadata) in zip(jobs, outputs):
+            save_png(output, output_path)
+            metadatas.append(
+                {
+                    **metadata,
+                    "batch_adapter": adapter,
+                    "batch_adapter_reason": reason,
+                }
+            )
+        return metadatas
 
 
 def _class_name(name: str) -> str:
@@ -540,6 +754,13 @@ def _register(name: str, description: str, operation: str, params: Mapping[str, 
             "description": description,
             "operation": operation,
             "default_params": dict(params),
+            "thread_safe_parallel": operation.startswith("edit_"),
+            "batch_capability": {
+                "supported": True,
+                "stage": "attack",
+                "source": "declared",
+                "reason": "CEW wrapper provides apply_batch_impl; edit operations prefer CPU threadpool",
+            },
             "__module__": __name__,
         },
     )

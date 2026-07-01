@@ -423,6 +423,7 @@ def _compute_cpu_quality_metrics_batch_with_profile(pairs: list[tuple[Path, Path
         mode="threadpool" if workers > 1 else "serial",
         job_count=len(pairs),
         cpu_workers=workers,
+        batch_stage="quality_cpu",
         config={"cpuWorkers": worker_config.to_json()},
     ).to_json()
     if workers <= 1 or len(pairs) <= 1:
@@ -582,6 +583,7 @@ def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]
             mode="empty",
             job_count=0,
             device=str(backend.get("device") or "cpu"),
+            batch_stage="quality_perceptual",
             details=base_details,
         ).to_json()
     if not models:
@@ -591,6 +593,7 @@ def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]
             mode="unavailable",
             job_count=len(pairs),
             device=str(backend.get("device") or "cpu"),
+            batch_stage="quality_perceptual",
             details=base_details,
         ).to_json()
 
@@ -650,6 +653,7 @@ def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]
             device=str(backend.get("device") or "cpu"),
             configured_batch_size=max_configured_batch,
             actual_batch_size=max_actual_batch,
+            batch_stage="quality_perceptual",
             supports_batch=True,
             details={
                 **base_details,
@@ -666,6 +670,7 @@ def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]
             mode="failed_fallback_none",
             job_count=len(pairs),
             device=str(backend.get("device") or "cpu"),
+            batch_stage="quality_perceptual",
             supports_batch=True,
             fallback=True,
             fallback_reason=f"{type(exc).__name__}: {exc}",

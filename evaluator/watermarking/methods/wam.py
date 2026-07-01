@@ -7,11 +7,13 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_io import save_png_image
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
     bits_from_message,
     bits_to_string,
+    move_tensor_to_device,
     normalize_device,
     packaged_algorithm_dir,
     packaged_weights_dir,
@@ -60,6 +62,7 @@ class WAMWatermark(BaseWatermark):
         self._torch = None
         self._F = None
         self._save_image = None
+        self._to_pil_image = None
         self._default_transform = None
         self._unnormalize_img = None
         self._msg_predict_inference = None
@@ -75,6 +78,7 @@ class WAMWatermark(BaseWatermark):
             import torch
             import torch.nn.functional as F
             from torchvision.utils import save_image
+            from torchvision.transforms.functional import to_pil_image
             from watermark_anything.augmentation.augmenter import Augmenter
             from watermark_anything.data.metrics import msg_predict_inference
             from watermark_anything.data.transforms import default_transform, normalize_img, unnormalize_img
@@ -112,6 +116,7 @@ class WAMWatermark(BaseWatermark):
         self._torch = torch
         self._F = F
         self._save_image = save_image
+        self._to_pil_image = to_pil_image
         self._default_transform = default_transform
         self._unnormalize_img = unnormalize_img
         self._msg_predict_inference = msg_predict_inference
@@ -153,12 +158,11 @@ class WAMWatermark(BaseWatermark):
         assert self._save_image is not None
         assert self._model is not None
 
-        device = next(self._model.parameters()).device
         loaded: list[tuple[int, Path, list[int], Any, Any]] = []
         for index, (input_path, output_path, context) in enumerate(jobs):
             bits = bits_from_message(context.message, self.payload_bits, seed=context.seed)
-            msg = self._torch.tensor(bits, dtype=self._torch.float32, device=device).unsqueeze(0)
-            tensor = self._default_transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            msg = self._torch.tensor(bits, dtype=self._torch.float32)
+            tensor = self._default_transform(Image.open(input_path).convert("RGB"))
             loaded.append((index, output_path, bits, tensor, msg))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
@@ -166,14 +170,16 @@ class WAMWatermark(BaseWatermark):
         for item in loaded:
             grouped.setdefault(tuple(item[3].shape[-2:]), []).append(item)
 
+        assert self._to_pil_image is not None
+        device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = self._torch.cat([item[3] for item in items], dim=0)
-                messages = self._torch.cat([item[4] for item in items], dim=0)
+                tensors = move_tensor_to_device(self._torch.stack([item[3] for item in items], dim=0), device)
+                messages = move_tensor_to_device(self._torch.stack([item[4] for item in items], dim=0), device)
                 outputs = self._model.embed(tensors, messages)
                 watermarked = self._unnormalize_img(outputs["imgs_w"]).detach().cpu().clamp(0, 1)
                 for batch_index, (result_index, output_path, bits, _tensor, _msg) in enumerate(items):
-                    self._save_image(watermarked[batch_index], output_path)
+                    save_png_image(self._to_pil_image(watermarked[batch_index]), output_path)
                     results[result_index] = {
                         "bits": bits_to_string(bits),
                         "payload_bits": self.payload_bits,
@@ -195,10 +201,9 @@ class WAMWatermark(BaseWatermark):
         assert self._msg_predict_inference is not None
         assert self._model is not None
 
-        device = next(self._model.parameters()).device
         loaded: list[tuple[int, WatermarkContext, Any]] = []
         for index, (input_path, context) in enumerate(jobs):
-            tensor = self._default_transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(device)
+            tensor = self._default_transform(Image.open(input_path).convert("RGB"))
             loaded.append((index, context, tensor))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
@@ -206,9 +211,10 @@ class WAMWatermark(BaseWatermark):
         for item in loaded:
             grouped.setdefault(tuple(item[2].shape[-2:]), []).append(item)
 
+        device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = self._torch.cat([item[2] for item in items], dim=0)
+                tensors = move_tensor_to_device(self._torch.stack([item[2] for item in items], dim=0), device)
                 preds = self._model.detect(tensors)["preds"]
                 mask_preds = self._F.sigmoid(preds[:, 0, :, :])
                 bit_preds = preds[:, 1:, :, :]
@@ -233,13 +239,15 @@ class WAMWatermark(BaseWatermark):
         assert self._default_transform is not None
         assert self._unnormalize_img is not None
         assert self._save_image is not None
+        assert self._to_pil_image is not None
         assert self._model is not None
 
         bits, msg = self._message_tensor(context)
         tensor = self._default_transform(Image.open(input_path).convert("RGB")).unsqueeze(0).to(msg.device)
         with self._torch.no_grad():
             outputs = self._model.embed(tensor, msg)
-        self._save_image(self._unnormalize_img(outputs["imgs_w"]), output_path)
+        watermarked = self._unnormalize_img(outputs["imgs_w"]).detach().cpu().clamp(0, 1)
+        save_png_image(self._to_pil_image(watermarked[0]), output_path)
         return {
             "bits": bits_to_string(bits),
             "payload_bits": self.payload_bits,

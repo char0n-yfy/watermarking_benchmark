@@ -4,6 +4,7 @@ import gc
 import json
 import os
 import sys
+import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -18,30 +19,17 @@ from . import (  # noqa: F401 - import registers default attacks
 )
 from .base import AttackContext, AttackResult, BaseAttack
 from .registry import build_attack
-from evaluator.execution import ExecutionProfile, replace_result_execution, resolve_named_cpu_workers
+from evaluator.execution import (
+    ExecutionProfile,
+    attach_execution_metadata,
+    replace_result_execution,
+    resolve_named_batch_size,
+    resolve_named_cpu_workers,
+)
 
 
 INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
 _ATTACK_INSTANCE_CACHE: OrderedDict[str, BaseAttack] = OrderedDict()
-THREAD_SAFE_ATTACK_METHODS = {
-    "identity",
-    "rotation",
-    "resized_crop",
-    "erasing",
-    "brightness",
-    "contrast",
-    "gaussian_blur",
-    "gaussian_noise",
-    "jpeg",
-    "resize",
-    "cew_e1",
-    "cew_e2",
-    "cew_e3",
-    "cew_e4",
-    "screen_shoot",
-    "print_camera",
-    "combined_physical",
-}
 
 
 def _cache_max_entries() -> int:
@@ -167,7 +155,105 @@ def run_attack_dir_with_attack(job: AttackJob, attack: BaseAttack) -> list[Attac
         input_path, output_path, context = task
         return attack.attack(input_path, output_path, context)
 
-    thread_safe_parallel = str(attack.name).lower() in THREAD_SAFE_ATTACK_METHODS
+    thread_safe_parallel = bool(getattr(attack, "thread_safe_parallel", False))
+    batch_capability = attack.batch_capability_info()
+    supports_batch = batch_capability.supported
+    if supports_batch and not thread_safe_parallel:
+        batch_config = resolve_named_batch_size(
+            str(attack.name),
+            params=attack.params,
+            param_key="attack_batch_size",
+            overrides_env="WM_BENCH_ATTACK_BATCH_SIZES",
+            global_env="WM_BENCH_ATTACK_BATCH_SIZE",
+            default=1,
+        )
+        batch_size = batch_config.value
+        results: list[AttackResult] = []
+        for offset in range(0, len(tasks), batch_size):
+            chunk = tasks[offset : offset + batch_size]
+            for _input_path, output_path, _context in chunk:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            execution = ExecutionProfile(
+                stage="attack",
+                method=str(attack.name),
+                mode="batch",
+                job_count=len(tasks),
+                device=job.device,
+                cpu_workers=1,
+                configured_batch_size=batch_size,
+                actual_batch_size=len(chunk),
+                batch_stage=batch_capability.stage,
+                supports_batch=True,
+                thread_safe_parallel=thread_safe_parallel,
+                config={
+                    "batchSize": batch_config.to_json(),
+                    "batchCapability": batch_capability.to_json(),
+                },
+            )
+            started = time.perf_counter()
+            try:
+                metadatas = [dict(metadata) for metadata in attack.apply_batch_impl(chunk)]
+                if len(metadatas) != len(chunk):
+                    raise ValueError(
+                        f"apply_batch_impl returned {len(metadatas)} results for {len(chunk)} jobs"
+                    )
+            except Exception as exc:
+                fallback = ExecutionProfile(
+                    stage="attack",
+                    method=str(attack.name),
+                    mode="batch_fallback_serial",
+                    job_count=len(tasks),
+                    device=job.device,
+                    cpu_workers=1,
+                    configured_batch_size=batch_size,
+                    actual_batch_size=len(chunk),
+                    batch_stage=batch_capability.stage,
+                    supports_batch=True,
+                    thread_safe_parallel=thread_safe_parallel,
+                    fallback=True,
+                    fallback_reason=f"{type(exc).__name__}: {exc}",
+                    config={
+                        "batchSize": batch_config.to_json(),
+                        "batchCapability": batch_capability.to_json(),
+                    },
+                )
+                results.extend(replace_result_execution(run_one(task), fallback) for task in chunk)
+                continue
+
+            elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
+            for (input_path, output_path, _context), metadata in zip(chunk, metadatas):
+                try:
+                    metadata = attack._protocol_metadata(input_path, output_path, metadata)
+                    metadata = attach_execution_metadata(metadata, execution)
+                    results.append(
+                        AttackResult(
+                            input_path=input_path,
+                            output_path=output_path,
+                            attack_name=attack.name,
+                            params=attack.params,
+                            elapsed_ms=elapsed_ms,
+                            ok=True,
+                            error=None,
+                            metadata=metadata,
+                        )
+                    )
+                except Exception as exc:
+                    results.append(
+                        AttackResult(
+                            input_path=input_path,
+                            output_path=output_path,
+                            attack_name=attack.name,
+                            params=attack.params,
+                            elapsed_ms=elapsed_ms,
+                            ok=False,
+                            error=f"{type(exc).__name__}: {exc}",
+                            metadata=attach_execution_metadata({}, execution),
+                        )
+                    )
+
+        attack.write_manifest(job.output_dir / "attack_manifest.json", results)
+        return results
+
     worker_config = resolve_named_cpu_workers(
         str(attack.name),
         overrides_env="WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD",
@@ -184,8 +270,13 @@ def run_attack_dir_with_attack(job: AttackJob, attack: BaseAttack) -> list[Attac
         job_count=len(tasks),
         device=job.device,
         cpu_workers=workers,
+        batch_stage=batch_capability.stage,
+        supports_batch=supports_batch,
         thread_safe_parallel=thread_safe_parallel,
-        config={"cpuWorkers": worker_config.to_json()},
+        config={
+            "cpuWorkers": worker_config.to_json(),
+            "batchCapability": batch_capability.to_json(),
+        },
     )
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as executor:

@@ -16,25 +16,32 @@ from evaluator.image_protocol import (
     CANONICAL_IMAGE_SIZE,
     CANONICAL_OUTPUT_POLICY,
     CANONICAL_PREPROCESS_POLICY,
-    canonical_preprocess_image,
     quality_alignment_metadata,
 )
-from evaluator.execution import ExecutionProfile, execution_environment_snapshot, summarize_execution_profiles
-from evaluator.attacks.runner import AttackJob, get_cached_attack, run_attack_dir_with_attack
-from evaluator.watermarking.runner import (
-    WatermarkEmbedJob,
-    WatermarkExtractJob,
-    get_cached_watermark,
-    run_watermark_embed_dir_with_method,
-    run_watermark_extract_dir_with_method,
-)
+from evaluator.execution import ExecutionProfile, execution_environment_snapshot
 
 from app.core.storage import safe_segment
+from app.services.experiment_schema import (
+    CELL_MANIFEST_SCHEMA,
+    IMAGE_ATTACK_SCHEMA,
+    IMAGE_DETECTION_SCHEMA,
+    IMAGE_QUALITY_SCHEMA,
+    IMAGE_WATERMARK_EMBED_SCHEMA,
+    RUNTIME_PROFILE_SCHEMA,
+    STAGE_EVENT_SCHEMA,
+)
+from app.services.experiment_stages import (
+    AttackStage,
+    DatasetStage,
+    DetectionStage,
+    ExtractStage,
+    QualityStage,
+    WatermarkStage,
+)
 from app.services.resources import (
     get_attack_catalog_item,
     get_dataset_by_id,
     get_watermark_catalog_item,
-    iter_image_paths,
     scan_dataset_resources,
 )
 from app.services.scoring import compute_image_quality_pairs_with_profile
@@ -54,13 +61,6 @@ class LocalRunRequest:
     device: str = "cpu"
     message: str = "1010101010101010"
     resume: bool = True
-
-
-@dataclass(frozen=True)
-class StagedSample:
-    path: Path
-    source_path: Path
-    metadata: JsonDict
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -132,13 +132,15 @@ def _artifact_paths(run_root: Path) -> dict[str, Path]:
 def _stage_event(paths: dict[str, Path], run_id: str, stage: str, status: str, **payload: Any) -> None:
     _append_jsonl(
         paths["stageEvents"],
-        {
-            "runId": run_id,
-            "stage": stage,
-            "status": status,
-            "timestamp": _utc_timestamp(),
-            **payload,
-        },
+        STAGE_EVENT_SCHEMA.apply(
+            {
+                "runId": run_id,
+                "stage": stage,
+                "status": status,
+                "timestamp": _utc_timestamp(),
+                **payload,
+            }
+        ),
     )
 
 
@@ -346,23 +348,33 @@ def _record_runtime_profile(
     metadata: JsonDict | None = None,
 ) -> None:
     total_mp = _total_megapixels(image_paths)
+    gpu_peak = _gpu_peak_memory_mb(device)
+    if gpu_peak is not None:
+        peak_memory_mb = gpu_peak
+        peak_memory_source = "cuda_max_memory_allocated"
+    else:
+        peak_memory_mb = _process_peak_memory_mb()
+        peak_memory_source = "process_peak_rss" if peak_memory_mb is not None else None
     _append_jsonl(
         paths["runtimeProfile"],
-        {
-            "runId": run_id,
-            "cellKey": cell_key,
-            "stage": stage,
-            "method": method,
-            "device": device,
-            "status": status,
-            "imageCount": len(image_paths),
-            "totalMegapixels": total_mp,
-            "elapsedMs": elapsed_ms,
-            "peakMemoryMB": _gpu_peak_memory_mb(device) or _process_peak_memory_mb(),
-            "error": error,
-            "metadata": metadata or {},
-            "timestamp": _utc_timestamp(),
-        },
+        RUNTIME_PROFILE_SCHEMA.apply(
+            {
+                "runId": run_id,
+                "cellKey": cell_key,
+                "stage": stage,
+                "method": method,
+                "device": device,
+                "status": status,
+                "imageCount": len(image_paths),
+                "totalMegapixels": total_mp,
+                "elapsedMs": elapsed_ms,
+                "peakMemoryMB": peak_memory_mb,
+                "peakMemorySource": peak_memory_source,
+                "error": error,
+                "metadata": metadata or {},
+                "timestamp": _utc_timestamp(),
+            }
+        ),
     )
 
 
@@ -483,21 +495,23 @@ def _quality_record(
     target_path: Path,
     metrics: JsonDict,
 ) -> JsonDict:
-    return {
-        "runId": run_id,
-        "cellKey": cell_key,
-        "scope": scope,
-        "datasetId": dataset_id,
-        "algorithmId": algorithm_id,
-        "attackPresetId": attack_id,
-        "attackMethod": attack_method,
-        "attackStrength": attack_strength,
-        "seed": seed,
-        "sampleId": sample_id,
-        **quality_alignment_metadata(reference_path, target_path),
-        "metrics": dict(metrics),
-        "timestamp": _utc_timestamp(),
-    }
+    return IMAGE_QUALITY_SCHEMA.apply(
+        {
+            "runId": run_id,
+            "cellKey": cell_key,
+            "scope": scope,
+            "datasetId": dataset_id,
+            "algorithmId": algorithm_id,
+            "attackPresetId": attack_id,
+            "attackMethod": attack_method,
+            "attackStrength": attack_strength,
+            "seed": seed,
+            "sampleId": sample_id,
+            **quality_alignment_metadata(reference_path, target_path),
+            "metrics": dict(metrics),
+            "timestamp": _utc_timestamp(),
+        }
+    )
 
 
 def _append_quality_records(paths: dict[str, Path], records: list[JsonDict]) -> None:
@@ -726,27 +740,29 @@ def _detection_record(
         metadata.pop(derived_key, None)
 
     input_path = Path(getattr(result, "input_path", ""))
-    return {
-        "runId": run_id,
-        "cellKey": cell_key,
-        "datasetId": dataset_id,
-        "algorithmId": algorithm_id,
-        "attackPresetId": attack_id,
-        "attackMethod": attack_method,
-        "attackStrength": attack_strength,
-        "seed": seed,
-        "label": label,
-        "sampleId": _image_sample_id(input_path, input_root),
-        "status": "succeeded" if getattr(result, "ok", False) else "failed",
-        "decodedMessage": getattr(result, "message", None),
-        "expectedMessage": expected_message,
-        "decodedBits": decoded_bits,
-        "expectedBits": expected_bits,
-        "elapsedMs": getattr(result, "elapsed_ms", None),
-        "error": getattr(result, "error", None),
-        "metadata": metadata,
-        "timestamp": _utc_timestamp(),
-    }
+    return IMAGE_DETECTION_SCHEMA.apply(
+        {
+            "runId": run_id,
+            "cellKey": cell_key,
+            "datasetId": dataset_id,
+            "algorithmId": algorithm_id,
+            "attackPresetId": attack_id,
+            "attackMethod": attack_method,
+            "attackStrength": attack_strength,
+            "seed": seed,
+            "label": label,
+            "sampleId": _image_sample_id(input_path, input_root),
+            "status": "succeeded" if getattr(result, "ok", False) else "failed",
+            "decodedMessage": getattr(result, "message", None),
+            "expectedMessage": expected_message,
+            "decodedBits": decoded_bits,
+            "expectedBits": expected_bits,
+            "elapsedMs": getattr(result, "elapsed_ms", None),
+            "error": getattr(result, "error", None),
+            "metadata": metadata,
+            "timestamp": _utc_timestamp(),
+        }
+    )
 
 
 def _record_watermark_embed_results(
@@ -767,30 +783,32 @@ def _record_watermark_embed_results(
         output_path = Path(getattr(result, "output_path", ""))
         _append_jsonl(
             paths["imageWatermarkEmbed"],
-            {
-                "runId": run_id,
-                "cellKey": cell_key,
-                "stage": "watermark_embed",
-                "datasetId": dataset_id,
-                "algorithmId": algorithm_id,
-                "watermarkMethod": watermark_method,
-                "seed": seed,
-                "sampleId": _image_sample_id(input_path, input_root),
-                "status": "succeeded" if getattr(result, "ok", False) else "failed",
-                "inputPath": str(input_path),
-                "outputPath": str(output_path),
-                "inputSize": metadata.get("inputSize"),
-                "internalSize": metadata.get("internalSize"),
-                "preCanonicalOutputSize": metadata.get("preCanonicalOutputSize"),
-                "outputSize": metadata.get("outputSize"),
-                "canonicalSize": metadata.get("canonicalSize"),
-                "outputSizePolicy": metadata.get("outputSizePolicy"),
-                "canonicalizedOutput": metadata.get("canonicalizedOutput"),
-                "elapsedMs": getattr(result, "elapsed_ms", None),
-                "error": getattr(result, "error", None),
-                "metadata": metadata,
-                "timestamp": _utc_timestamp(),
-            },
+            IMAGE_WATERMARK_EMBED_SCHEMA.apply(
+                {
+                    "runId": run_id,
+                    "cellKey": cell_key,
+                    "stage": "watermark_embed",
+                    "datasetId": dataset_id,
+                    "algorithmId": algorithm_id,
+                    "watermarkMethod": watermark_method,
+                    "seed": seed,
+                    "sampleId": _image_sample_id(input_path, input_root),
+                    "status": "succeeded" if getattr(result, "ok", False) else "failed",
+                    "inputPath": str(input_path),
+                    "outputPath": str(output_path),
+                    "inputSize": metadata.get("inputSize"),
+                    "internalSize": metadata.get("internalSize"),
+                    "preCanonicalOutputSize": metadata.get("preCanonicalOutputSize"),
+                    "outputSize": metadata.get("outputSize"),
+                    "canonicalSize": metadata.get("canonicalSize"),
+                    "outputSizePolicy": metadata.get("outputSizePolicy"),
+                    "canonicalizedOutput": metadata.get("canonicalizedOutput"),
+                    "elapsedMs": getattr(result, "elapsed_ms", None),
+                    "error": getattr(result, "error", None),
+                    "metadata": metadata,
+                    "timestamp": _utc_timestamp(),
+                }
+            ),
         )
 
 
@@ -818,35 +836,37 @@ def _record_attack_results(
         output_path = Path(getattr(result, "output_path", ""))
         _append_jsonl(
             paths["imageAttack"],
-            {
-                "runId": run_id,
-                "cellKey": cell_key,
-                "stage": stage,
-                "datasetId": dataset_id,
-                "algorithmId": algorithm_id,
-                "attackPresetId": attack_id,
-                "attackMethod": attack_method,
-                "attackStrength": attack_strength,
-                "attackParams": attack_params,
-                "seed": seed,
-                "label": label,
-                "sampleId": _image_sample_id(input_path, input_root),
-                "status": "succeeded" if getattr(result, "ok", False) else "failed",
-                "inputPath": str(input_path),
-                "outputPath": str(output_path),
-                "inputSize": metadata.get("inputSize"),
-                "preProtocolOutputSize": metadata.get("preProtocolOutputSize"),
-                "outputSize": metadata.get("outputSize"),
-                "protocolResizedOutput": metadata.get("protocolResizedOutput"),
-                "sizePreserving": metadata.get("sizePreserving"),
-                "sizeChangeSemantic": metadata.get("sizeChangeSemantic"),
-                "sizePolicy": metadata.get("sizePolicy"),
-                "cacheHit": cache_hit,
-                "elapsedMs": getattr(result, "elapsed_ms", None),
-                "error": getattr(result, "error", None),
-                "metadata": metadata,
-                "timestamp": _utc_timestamp(),
-            },
+            IMAGE_ATTACK_SCHEMA.apply(
+                {
+                    "runId": run_id,
+                    "cellKey": cell_key,
+                    "stage": stage,
+                    "datasetId": dataset_id,
+                    "algorithmId": algorithm_id,
+                    "attackPresetId": attack_id,
+                    "attackMethod": attack_method,
+                    "attackStrength": attack_strength,
+                    "attackParams": attack_params,
+                    "seed": seed,
+                    "label": label,
+                    "sampleId": _image_sample_id(input_path, input_root),
+                    "status": "succeeded" if getattr(result, "ok", False) else "failed",
+                    "inputPath": str(input_path),
+                    "outputPath": str(output_path),
+                    "inputSize": metadata.get("inputSize"),
+                    "preProtocolOutputSize": metadata.get("preProtocolOutputSize"),
+                    "outputSize": metadata.get("outputSize"),
+                    "protocolResizedOutput": metadata.get("protocolResizedOutput"),
+                    "sizePreserving": metadata.get("sizePreserving"),
+                    "sizeChangeSemantic": metadata.get("sizeChangeSemantic"),
+                    "sizePolicy": metadata.get("sizePolicy"),
+                    "cacheHit": cache_hit,
+                    "elapsedMs": getattr(result, "elapsed_ms", None),
+                    "error": getattr(result, "error", None),
+                    "metadata": metadata,
+                    "timestamp": _utc_timestamp(),
+                }
+            ),
         )
 
 
@@ -1024,32 +1044,6 @@ def estimate_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
     }
 
 
-def _canonical_target_path(output_dir: Path, relative: Path, index: int) -> Path:
-    target = (output_dir / relative).with_suffix(".png")
-    if not target.exists():
-        return target
-    return target.with_name(f"{target.stem}_{index:04d}.png")
-
-
-def _copy_samples(dataset_path: Path, output_dir: Path, max_samples: int) -> list[StagedSample]:
-    sample_paths = iter_image_paths(dataset_path)[:max_samples]
-    output_dir.mkdir(parents=True, exist_ok=True)
-    staged: list[StagedSample] = []
-
-    for index, sample_path in enumerate(sample_paths, start=1):
-        try:
-            relative = sample_path.relative_to(dataset_path)
-        except ValueError:
-            relative = Path(f"sample_{index:04d}{sample_path.suffix.lower()}")
-        if relative.name.startswith("."):
-            relative = Path(f"sample_{index:04d}{sample_path.suffix.lower()}")
-        target = _canonical_target_path(output_dir, relative, index)
-        metadata = canonical_preprocess_image(sample_path, target)
-        staged.append(StagedSample(path=target, source_path=sample_path, metadata=metadata))
-
-    return staged
-
-
 def _cell_key(
     dataset_id: str,
     algorithm_id: str,
@@ -1162,6 +1156,57 @@ def run_local_experiment(
         for record in _read_jsonl(paths["sampleManifest"])
         if record.get("datasetId") is not None and record.get("sampleId") is not None
     }
+    dataset_stage = DatasetStage(
+        paths=paths,
+        run_id=request.run_id,
+        append_jsonl=_append_jsonl,
+        stage_event=_stage_event,
+        image_sample_id=_image_sample_id,
+        utc_timestamp=_utc_timestamp,
+    )
+    watermark_stage = WatermarkStage(
+        paths=paths,
+        run_id=request.run_id,
+        device=request.device,
+        message=request.message,
+        reset_gpu_peak=_reset_gpu_peak,
+        record_runtime_profile=_record_runtime_profile,
+        record_watermark_embed_results=_record_watermark_embed_results,
+        record_quality_pairs=_record_quality_pairs,
+        stage_event=_stage_event,
+    )
+    attack_stage = AttackStage(
+        paths=paths,
+        run_id=request.run_id,
+        device=request.device,
+        reset_gpu_peak=_reset_gpu_peak,
+        list_image_files=_list_image_files,
+        record_runtime_profile=_record_runtime_profile,
+        record_attack_results=_record_attack_results,
+    )
+    extract_stage = ExtractStage(
+        paths=paths,
+        run_id=request.run_id,
+        device=request.device,
+        message=request.message,
+        reset_gpu_peak=_reset_gpu_peak,
+        list_image_files=_list_image_files,
+        record_runtime_profile=_record_runtime_profile,
+    )
+    quality_stage = QualityStage(
+        paths=paths,
+        run_id=request.run_id,
+        device=request.device,
+        record_quality_pairs=_record_quality_pairs,
+        record_reused_quality_records=_record_reused_quality_records,
+        record_identity_quality_pairs=_record_identity_quality_pairs,
+    )
+    detection_stage = DetectionStage(
+        paths=paths,
+        run_id=request.run_id,
+        append_jsonl=_append_jsonl,
+        detection_record=_detection_record,
+    )
 
     def emit_cell(cell: JsonDict) -> None:
         record = dict(cell)
@@ -1171,6 +1216,7 @@ def run_local_experiment(
             record["attemptIndex"] = attempt_counts[cell_key]
             record["supersedesPreviousAttempt"] = attempt_counts[cell_key] > 1
         record["completedAt"] = _utc_timestamp()
+        record = CELL_MANIFEST_SCHEMA.apply(record)
 
         cells.append(record)
         _append_jsonl(paths["cellManifest"], record)
@@ -1191,46 +1237,15 @@ def run_local_experiment(
             break
         dataset = get_dataset_by_id(request.resources_root, dataset_id)
         cell_input_dir = run_root / "staging" / "samples" / safe_segment(dataset_id)
-        _stage_event(paths, request.run_id, "dataset", "started", datasetId=dataset_id)
         try:
-            staged_samples = _copy_samples(dataset.path, cell_input_dir, selection["maxSamples"])
-            copied_samples = [sample.path for sample in staged_samples]
-            if not staged_samples:
-                raise ValueError(f"Dataset has no supported image files: {dataset.path}")
-
-            for staged_sample in staged_samples:
-                sample_path = staged_sample.path
-                sample_id = _image_sample_id(sample_path, cell_input_dir)
-                sample_key = (dataset_id, sample_id)
-                if sample_key in existing_sample_keys:
-                    continue
-                original_size = staged_sample.metadata.get("originalSize") or [None, None]
-                canonical_size = staged_sample.metadata.get("canonicalSize") or [None, None]
-                _append_jsonl(
-                    paths["sampleManifest"],
-                    {
-                        "runId": request.run_id,
-                        "datasetId": dataset_id,
-                        "sampleId": sample_id,
-                        "sourcePath": str(staged_sample.source_path),
-                        "width": original_size[0],
-                        "height": original_size[1],
-                        "originalSize": original_size,
-                        "canonicalSize": canonical_size,
-                        "canonicalWidth": canonical_size[0],
-                        "canonicalHeight": canonical_size[1],
-                        "preprocessPolicy": staged_sample.metadata.get("preprocessPolicy"),
-                        "cropPolicy": staged_sample.metadata.get("cropPolicy"),
-                        "resizedContentSize": staged_sample.metadata.get("resizedContentSize"),
-                        "cropBox": staged_sample.metadata.get("cropBox"),
-                        "cropMargins": staged_sample.metadata.get("cropMargins"),
-                        "padding": staged_sample.metadata.get("padding"),
-                        "scale": staged_sample.metadata.get("scale"),
-                        "paddingColor": staged_sample.metadata.get("paddingColor"),
-                        "timestamp": _utc_timestamp(),
-                    },
-                )
-                existing_sample_keys.add(sample_key)
+            dataset_stage_result = dataset_stage.prepare(
+                dataset_id=dataset_id,
+                dataset_path=dataset.path,
+                input_dir=cell_input_dir,
+                max_samples=selection["maxSamples"],
+                existing_sample_keys=existing_sample_keys,
+            )
+            copied_samples = dataset_stage_result.copied_samples
 
             for algorithm_id in selection["algorithmIds"]:
                 if cancelled:
@@ -1298,91 +1313,26 @@ def run_local_experiment(
                     embed_results: list[Any] = []
                     embed_error = None
                     embed_elapsed_ms = 0.0
+                    embed_quality_records: list[JsonDict] = []
+                    watermark_method = None
 
                     try:
-                        _stage_event(
-                            paths,
-                            request.run_id,
-                            "watermark_embed",
-                            "started",
-                            cellKey=embed_key,
-                            datasetId=dataset_id,
-                            algorithmId=algorithm_id,
-                            seed=int(seed),
-                        )
-                        _reset_gpu_peak(request.device)
-                        embed_started = time.perf_counter()
-                        watermark_method = get_cached_watermark(
-                            algorithm["method"],
-                            algorithm_params,
-                            request.device,
-                        )
-                        embed_results = run_watermark_embed_dir_with_method(
-                            WatermarkEmbedJob(
-                                run_id=request.run_id,
-                                method_name=algorithm["method"],
-                                params=algorithm_params,
-                                input_dir=cell_input_dir,
-                                output_dir=watermarked_dir,
-                                message=request.message,
-                                device=request.device,
-                                seed=int(seed),
-                            ),
-                            watermark_method,
-                        )
-                        embed_elapsed_ms = (time.perf_counter() - embed_started) * 1000
-                        _record_watermark_embed_results(
-                            paths,
-                            run_id=request.run_id,
-                            cell_key=embed_key,
+                        watermark_stage_result = watermark_stage.embed(
+                            embed_key=embed_key,
                             dataset_id=dataset_id,
                             algorithm_id=algorithm_id,
-                            watermark_method=algorithm["method"],
+                            algorithm=algorithm,
+                            algorithm_params=algorithm_params,
                             seed=int(seed),
-                            input_root=cell_input_dir,
-                            results=embed_results,
+                            input_dir=cell_input_dir,
+                            output_dir=watermarked_dir,
+                            copied_samples=copied_samples,
                         )
-                        embed_errors = [result.error for result in embed_results if getattr(result, "error", None)]
-                        if not all(result.ok for result in embed_results):
-                            embed_error = "; ".join(embed_errors) or "one or more watermark embed operations failed"
-                        _record_runtime_profile(
-                            paths,
-                            run_id=request.run_id,
-                            cell_key=embed_key,
-                            stage="watermark_embed",
-                            method=algorithm["method"],
-                            device=request.device,
-                            elapsed_ms=embed_elapsed_ms,
-                            image_paths=copied_samples,
-                            status="failed" if embed_error else "succeeded",
-                            error=embed_error,
-                            metadata={"execution": summarize_execution_profiles(embed_results)},
-                        )
-                        if embed_error:
-                            raise RuntimeError(embed_error)
-                        embed_quality_records = _record_quality_pairs(
-                            paths,
-                            run_id=request.run_id,
-                            cell_key=embed_key,
-                            scope="original_vs_watermarked",
-                            dataset_id=dataset_id,
-                            algorithm_id=algorithm_id,
-                            attack_id=None,
-                            attack_method=None,
-                            attack_strength=None,
-                            seed=int(seed),
-                            reference_dir=cell_input_dir,
-                            target_dir=watermarked_dir,
-                            device=request.device,
-                        )
-                        _stage_event(
-                            paths,
-                            request.run_id,
-                            "watermark_embed",
-                            "succeeded",
-                            cellKey=embed_key,
-                            elapsedMs=embed_elapsed_ms,
-                        )
+                        watermark_method = watermark_stage_result.method
+                        embed_results = watermark_stage_result.results
+                        embed_quality_records = watermark_stage_result.quality_records
+                        embed_elapsed_ms = watermark_stage_result.elapsed_ms
+                        embed_error = watermark_stage_result.error
                     except Exception as exc:
                         embed_error = f"{type(exc).__name__}: {exc}"
                         _stage_event(
@@ -1484,229 +1434,62 @@ def run_local_experiment(
                             )
 
                             try:
-                                attack_instance = get_cached_attack(attack["method"], attack_params, request.device)
-
-                                _reset_gpu_peak(request.device)
-                                attack_started = time.perf_counter()
-                                attack_results = run_attack_dir_with_attack(
-                                    AttackJob(
-                                        run_id=request.run_id,
-                                        attack_name=attack["method"],
-                                        params=attack_params,
-                                        input_dir=watermarked_dir,
-                                        output_dir=attacked_dir,
-                                        device=request.device,
-                                        seed=int(seed),
-                                    ),
-                                    attack_instance,
-                                )
-                                attack_elapsed_ms = (time.perf_counter() - attack_started) * 1000
-                                _record_attack_results(
-                                    paths,
-                                    run_id=request.run_id,
+                                attack_instance, positive_attack = attack_stage.positive(
                                     cell_key=cell_key,
-                                    stage="attack",
                                     dataset_id=dataset_id,
                                     algorithm_id=algorithm_id,
                                     attack_id=attack_id,
-                                    attack_method=attack["method"],
-                                    attack_strength=strength,
+                                    attack=attack,
                                     attack_params=attack_params,
+                                    strength=strength,
                                     seed=int(seed),
-                                    label=1,
-                                    input_root=watermarked_dir,
-                                    results=attack_results,
+                                    input_dir=watermarked_dir,
+                                    output_dir=attacked_dir,
                                 )
-                                attack_error = "; ".join(
-                                    result.error for result in attack_results if getattr(result, "error", None)
-                                )
-                                _record_runtime_profile(
-                                    paths,
-                                    run_id=request.run_id,
-                                    cell_key=cell_key,
-                                    stage="attack",
-                                    method=attack["method"],
-                                    device=request.device,
-                                    elapsed_ms=attack_elapsed_ms,
-                                    image_paths=_list_image_files(watermarked_dir),
-                                    status="failed" if attack_error else "succeeded",
-                                    error=attack_error or None,
-                                    metadata={
-                                        "attackParams": attack_params,
-                                        "execution": summarize_execution_profiles(attack_results),
-                                    },
-                                )
+                                attack_results = positive_attack.results
 
-                                _reset_gpu_peak(request.device)
-                                extract_started = time.perf_counter()
-                                extract_results = run_watermark_extract_dir_with_method(
-                                    WatermarkExtractJob(
-                                        run_id=request.run_id,
-                                        method_name=algorithm["method"],
-                                        params=algorithm_params,
-                                        input_dir=attacked_dir,
-                                        output_dir=extracted_dir,
-                                        message=request.message,
-                                        device=request.device,
-                                        seed=int(seed),
-                                    ),
-                                    watermark_method,
-                                )
-                                extract_elapsed_ms = (time.perf_counter() - extract_started) * 1000
-                                extract_error = "; ".join(
-                                    result.error for result in extract_results if getattr(result, "error", None)
-                                )
-                                _record_runtime_profile(
-                                    paths,
-                                    run_id=request.run_id,
+                                positive_extract = extract_stage.run(
                                     cell_key=cell_key,
-                                    stage="watermark_extract_positive",
-                                    method=algorithm["method"],
-                                    device=request.device,
-                                    elapsed_ms=extract_elapsed_ms,
-                                    image_paths=_list_image_files(attacked_dir),
-                                    status="failed" if extract_error else "succeeded",
-                                    error=extract_error or None,
-                                    metadata={"execution": summarize_execution_profiles(extract_results)},
+                                    runtime_stage="watermark_extract_positive",
+                                    algorithm=algorithm,
+                                    algorithm_params=algorithm_params,
+                                    watermark_method=watermark_method,
+                                    seed=int(seed),
+                                    input_dir=attacked_dir,
+                                    output_dir=extracted_dir,
                                 )
+                                extract_results = positive_extract.results
 
-                                cached_negative_attack = negative_attack_cache.get(negative_attack_key)
-                                if cached_negative_attack is not None:
-                                    negative_attack_results = cached_negative_attack["results"]
-                                    negative_attack_elapsed_ms = 0.0
-                                    negative_attack_error = cached_negative_attack.get("error")
-                                    _record_attack_results(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        stage="attack_negative_control",
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        attack_params=attack_params,
-                                        seed=int(seed),
-                                        label=0,
-                                        input_root=cell_input_dir,
-                                        results=negative_attack_results,
-                                        cache_hit=True,
-                                    )
-                                    _record_runtime_profile(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        stage="attack_negative_control",
-                                        method=attack["method"],
-                                        device=request.device,
-                                        elapsed_ms=negative_attack_elapsed_ms,
-                                        image_paths=copied_samples,
-                                        status="reused" if not negative_attack_error else "failed",
-                                        error=negative_attack_error or None,
-                                        metadata={
-                                            "attackParams": attack_params,
-                                            "cacheKey": negative_attack_key,
-                                            "cacheHit": True,
-                                            "execution": summarize_execution_profiles(negative_attack_results),
-                                        },
-                                    )
-                                else:
-                                    _reset_gpu_peak(request.device)
-                                    negative_attack_started = time.perf_counter()
-                                    negative_attack_results = run_attack_dir_with_attack(
-                                        AttackJob(
-                                            run_id=request.run_id,
-                                            attack_name=attack["method"],
-                                            params=attack_params,
-                                            input_dir=cell_input_dir,
-                                            output_dir=negative_attacked_dir,
-                                            device=request.device,
-                                            seed=int(seed),
-                                        ),
-                                        attack_instance,
-                                    )
-                                    negative_attack_elapsed_ms = (time.perf_counter() - negative_attack_started) * 1000
-                                    _record_attack_results(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        stage="attack_negative_control",
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        attack_params=attack_params,
-                                        seed=int(seed),
-                                        label=0,
-                                        input_root=cell_input_dir,
-                                        results=negative_attack_results,
-                                        cache_hit=False,
-                                    )
-                                    negative_attack_error = "; ".join(
-                                        result.error
-                                        for result in negative_attack_results
-                                        if getattr(result, "error", None)
-                                    )
-                                    if not negative_attack_error:
-                                        negative_attack_cache[negative_attack_key] = {
-                                            "outputDir": negative_attacked_dir,
-                                            "results": negative_attack_results,
-                                            "error": None,
-                                        }
-                                    _record_runtime_profile(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        stage="attack_negative_control",
-                                        method=attack["method"],
-                                        device=request.device,
-                                        elapsed_ms=negative_attack_elapsed_ms,
-                                        image_paths=copied_samples,
-                                        status="failed" if negative_attack_error else "succeeded",
-                                        error=negative_attack_error or None,
-                                        metadata={
-                                            "attackParams": attack_params,
-                                            "cacheKey": negative_attack_key,
-                                            "cacheHit": False,
-                                            "execution": summarize_execution_profiles(negative_attack_results),
-                                        },
-                                    )
-
-                                _reset_gpu_peak(request.device)
-                                negative_extract_started = time.perf_counter()
-                                negative_extract_results = run_watermark_extract_dir_with_method(
-                                    WatermarkExtractJob(
-                                        run_id=request.run_id,
-                                        method_name=algorithm["method"],
-                                        params=algorithm_params,
-                                        input_dir=negative_attacked_dir,
-                                        output_dir=negative_extracted_dir,
-                                        message=request.message,
-                                        device=request.device,
-                                        seed=int(seed),
-                                    ),
-                                    watermark_method,
-                                )
-                                negative_extract_elapsed_ms = (time.perf_counter() - negative_extract_started) * 1000
-                                negative_extract_error = "; ".join(
-                                    result.error
-                                    for result in negative_extract_results
-                                    if getattr(result, "error", None)
-                                )
-                                _record_runtime_profile(
-                                    paths,
-                                    run_id=request.run_id,
+                                negative_attack = attack_stage.negative_control(
                                     cell_key=cell_key,
-                                    stage="watermark_extract_negative",
-                                    method=algorithm["method"],
-                                    device=request.device,
-                                    elapsed_ms=negative_extract_elapsed_ms,
-                                    image_paths=_list_image_files(negative_attacked_dir),
-                                    status="failed" if negative_extract_error else "succeeded",
-                                    error=negative_extract_error or None,
-                                    metadata={"execution": summarize_execution_profiles(negative_extract_results)},
+                                    dataset_id=dataset_id,
+                                    algorithm_id=algorithm_id,
+                                    attack_id=attack_id,
+                                    attack=attack,
+                                    attack_params=attack_params,
+                                    strength=strength,
+                                    seed=int(seed),
+                                    input_dir=cell_input_dir,
+                                    output_dir=negative_attacked_dir,
+                                    copied_samples=copied_samples,
+                                    cache_key=negative_attack_key,
+                                    cache=negative_attack_cache,
+                                    attack_instance=attack_instance,
                                 )
+                                negative_attack_results = negative_attack.results
+                                negative_attacked_dir = negative_attack.output_dir
+
+                                negative_extract = extract_stage.run(
+                                    cell_key=cell_key,
+                                    runtime_stage="watermark_extract_negative",
+                                    algorithm=algorithm,
+                                    algorithm_params=algorithm_params,
+                                    watermark_method=watermark_method,
+                                    seed=int(seed),
+                                    input_dir=negative_attacked_dir,
+                                    output_dir=negative_extracted_dir,
+                                )
+                                negative_extract_results = negative_extract.results
 
                                 operation_results = [
                                     *attack_results,
@@ -1723,109 +1506,47 @@ def run_local_experiment(
                                     ]
                                     error = "; ".join(errors) or "one or more image operations failed"
 
-                                if str(attack["method"]).lower() == "identity":
-                                    _record_reused_quality_records(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        scope="original_vs_attacked_watermarked",
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        seed=int(seed),
-                                        source_records=embed_quality_records,
-                                        source_scope="original_vs_watermarked",
-                                        target_dir=attacked_dir,
-                                        device=request.device,
-                                        reuse_policy="identity_attack_watermarked_copy",
-                                    )
-                                    _record_identity_quality_pairs(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        scope="watermarked_vs_attacked_watermarked",
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        seed=int(seed),
-                                        reference_dir=watermarked_dir,
-                                        target_dir=attacked_dir,
-                                        device=request.device,
-                                    )
-                                else:
-                                    _record_quality_pairs(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        scope="original_vs_attacked_watermarked",
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        seed=int(seed),
-                                        reference_dir=cell_input_dir,
-                                        target_dir=attacked_dir,
-                                        device=request.device,
-                                    )
-                                    _record_quality_pairs(
-                                        paths,
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        scope="watermarked_vs_attacked_watermarked",
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        seed=int(seed),
-                                        reference_dir=watermarked_dir,
-                                        target_dir=attacked_dir,
-                                        device=request.device,
-                                    )
+                                quality_stage.record_attack_quality(
+                                    is_identity=str(attack["method"]).lower() == "identity",
+                                    cell_key=cell_key,
+                                    dataset_id=dataset_id,
+                                    algorithm_id=algorithm_id,
+                                    attack_id=attack_id,
+                                    attack_method=attack["method"],
+                                    attack_strength=strength,
+                                    seed=int(seed),
+                                    canonical_input_dir=cell_input_dir,
+                                    watermarked_dir=watermarked_dir,
+                                    attacked_dir=attacked_dir,
+                                    embed_quality_records=embed_quality_records,
+                                )
 
-                                for result in extract_results:
-                                    record = _detection_record(
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        seed=int(seed),
-                                        label=1,
-                                        input_root=attacked_dir,
-                                        result=result,
-                                    )
-                                    detection_records.append(record)
-                                    _append_jsonl(
-                                        paths["imageDetection"],
-                                        record,
-                                    )
-                                for result in negative_extract_results:
-                                    record = _detection_record(
-                                        run_id=request.run_id,
-                                        cell_key=cell_key,
-                                        dataset_id=dataset_id,
-                                        algorithm_id=algorithm_id,
-                                        attack_id=attack_id,
-                                        attack_method=attack["method"],
-                                        attack_strength=strength,
-                                        seed=int(seed),
-                                        label=0,
-                                        input_root=negative_attacked_dir,
-                                        result=result,
-                                    )
-                                    detection_records.append(record)
-                                    _append_jsonl(
-                                        paths["imageDetection"],
-                                        record,
-                                    )
+                                detection_stage.append_results(
+                                    detection_records=detection_records,
+                                    cell_key=cell_key,
+                                    dataset_id=dataset_id,
+                                    algorithm_id=algorithm_id,
+                                    attack_id=attack_id,
+                                    attack_method=attack["method"],
+                                    attack_strength=strength,
+                                    seed=int(seed),
+                                    label=1,
+                                    input_root=attacked_dir,
+                                    results=extract_results,
+                                )
+                                detection_stage.append_results(
+                                    detection_records=detection_records,
+                                    cell_key=cell_key,
+                                    dataset_id=dataset_id,
+                                    algorithm_id=algorithm_id,
+                                    attack_id=attack_id,
+                                    attack_method=attack["method"],
+                                    attack_strength=strength,
+                                    seed=int(seed),
+                                    label=0,
+                                    input_root=negative_attacked_dir,
+                                    results=negative_extract_results,
+                                )
 
                                 elapsed_ms = (time.perf_counter() - cell_started) * 1000
                             except Exception as exc:

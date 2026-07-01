@@ -91,10 +91,26 @@ def _image_to_tensor(image: Image.Image, device: torch.device) -> torch.Tensor:
     return tensor.to(device=device, dtype=torch.float32)
 
 
+def _image_to_tensor_cpu(image: Image.Image) -> torch.Tensor:
+    array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    return torch.from_numpy(array).permute(2, 0, 1)
+
+
+def _move_batch_to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    non_blocking = False
+    if device.type == "cuda":
+        try:
+            tensor = tensor.pin_memory()
+            non_blocking = True
+        except Exception:
+            non_blocking = False
+    return tensor.to(device=device, dtype=torch.float32, non_blocking=non_blocking)
+
+
 def _tensor_to_image(tensor: torch.Tensor, size: tuple[int, int] | None = None) -> Image.Image:
     tensor = tensor.detach().float().clamp_(0.0, 1.0).squeeze(0).permute(1, 2, 0).cpu()
     array = (tensor.numpy() * 255.0).round().astype(np.uint8)
-    image = Image.fromarray(array, mode="RGB")
+    image = Image.fromarray(array).convert("RGB")
     if size is not None and image.size != size:
         image = image.resize(size, Image.Resampling.LANCZOS)
     return image
@@ -112,6 +128,13 @@ def _pad_to_multiple(tensor: torch.Tensor, multiple: int) -> tuple[torch.Tensor,
 def _crop_to_hw(tensor: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
     height, width = size
     return tensor[:, :, :height, :width]
+
+
+def _group_indices_by_shape(tensors: list[torch.Tensor]) -> dict[tuple[int, ...], list[int]]:
+    grouped: dict[tuple[int, ...], list[int]] = {}
+    for index, tensor in enumerate(tensors):
+        grouped.setdefault(tuple(tensor.shape), []).append(index)
+    return grouped
 
 
 class DeepWBDoubleConvBlock(nn.Module):
@@ -285,7 +308,49 @@ def run_deepwb_awb(
     output_array = output.detach().float().clamp(0.0, 1.0).squeeze(0).permute(1, 2, 0).cpu().numpy()
     mapping = _deepwb_get_mapping_func(resized_array, output_array)
     mapped = np.clip(_deepwb_apply_mapping_func(original, mapping), 0.0, 1.0)
-    return Image.fromarray((mapped * 255.0).round().astype(np.uint8), mode="RGB")
+    return Image.fromarray((mapped * 255.0).round().astype(np.uint8)).convert("RGB")
+
+
+def _deepwb_resized_size(image: Image.Image, max_size: int) -> tuple[int, int]:
+    scale = float(max_size) / float(max(image.size))
+    resized_size = (max(16, round(image.width * scale)), max(16, round(image.height * scale)))
+    return (
+        resized_size[0] if resized_size[0] % 16 == 0 else resized_size[0] + 16 - resized_size[0] % 16,
+        resized_size[1] if resized_size[1] % 16 == 0 else resized_size[1] + 16 - resized_size[1] % 16,
+    )
+
+
+def run_deepwb_awb_batch(
+    images: list[Image.Image],
+    weight_path: Path,
+    device_name: str | None = None,
+    max_size: int = 656,
+) -> list[Image.Image]:
+    if not images:
+        return []
+    device = _select_device(device_name)
+    model = _load_deepwb_awb(weight_path, device)
+
+    originals: list[np.ndarray] = []
+    resized_arrays: list[np.ndarray] = []
+    tensors: list[torch.Tensor] = []
+    for image in images:
+        original = np.asarray(image.convert("RGB"), dtype=np.float32)
+        resized = image.convert("RGB").resize(_deepwb_resized_size(image, max_size), Image.Resampling.BICUBIC)
+        originals.append(original)
+        resized_arrays.append(np.asarray(resized, dtype=np.float32))
+        tensors.append(_image_to_tensor_cpu(resized))
+
+    results: list[Image.Image | None] = [None] * len(images)
+    with torch.inference_mode():
+        for indices in _group_indices_by_shape(tensors).values():
+            batch = _move_batch_to_device(torch.stack([tensors[index] for index in indices], dim=0), device)
+            output = model(batch).detach().float().clamp(0.0, 1.0).permute(0, 2, 3, 1).cpu().numpy()
+            for batch_index, image_index in enumerate(indices):
+                mapping = _deepwb_get_mapping_func(resized_arrays[image_index], output[batch_index])
+                mapped = np.clip(_deepwb_apply_mapping_func(originals[image_index], mapping), 0.0, 1.0)
+                results[image_index] = Image.fromarray((mapped * 255.0).round().astype(np.uint8)).convert("RGB")
+    return [result for result in results if result is not None]
 
 
 def _lut_discriminator_block(in_filters: int, out_filters: int, normalization: bool = False) -> list[nn.Module]:
@@ -361,6 +426,29 @@ def _trilinear_lut(lut: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
     return output.squeeze(2)
 
 
+def _trilinear_lut_batch(luts: torch.Tensor, images: torch.Tensor) -> torch.Tensor:
+    if luts.ndim != 5:
+        raise ValueError(f"Unsupported batched LUT shape: {tuple(luts.shape)}")
+    batch, channels, dim_r, dim_g, dim_b = luts.shape
+    if channels != 3 or dim_r != dim_g or dim_r != dim_b:
+        raise ValueError(f"Unsupported batched LUT shape: {tuple(luts.shape)}")
+    if images.shape[0] != batch:
+        raise ValueError(f"LUT batch size {batch} does not match image batch size {images.shape[0]}")
+
+    images = images.clamp(0.0, 1.0)
+    coords = images.permute(0, 2, 3, 1)
+    grid = torch.stack(
+        (
+            coords[..., 2] * 2.0 - 1.0,
+            coords[..., 1] * 2.0 - 1.0,
+            coords[..., 0] * 2.0 - 1.0,
+        ),
+        dim=-1,
+    ).unsqueeze(1)
+    output = F.grid_sample(luts, grid, mode="bilinear", padding_mode="border", align_corners=True)
+    return output.squeeze(2)
+
+
 def run_image_adaptive_3dlut(
     image: Image.Image,
     weight_path: Path,
@@ -380,6 +468,33 @@ def run_image_adaptive_3dlut(
         if blend < 1.0:
             output = tensor * (1.0 - blend) + output * blend
     return _tensor_to_image(output, size=image.size)
+
+
+def run_image_adaptive_3dlut_batch(
+    images: list[Image.Image],
+    weight_path: Path,
+    device_name: str | None = None,
+    blend: float = 1.0,
+) -> list[Image.Image]:
+    if not images:
+        return []
+    device = _select_device(device_name)
+    classifier, luts = _load_3dlut(weight_path, device)
+    tensors = [_image_to_tensor_cpu(image) for image in images]
+    results: list[Image.Image | None] = [None] * len(images)
+
+    with torch.inference_mode():
+        for indices in _group_indices_by_shape(tensors).values():
+            batch = _move_batch_to_device(torch.stack([tensors[index] for index in indices], dim=0), device)
+            weights = classifier(batch).view(batch.shape[0], 3)
+            combined = torch.einsum("nk,kcrgb->ncrgb", weights, luts)
+            output = _trilinear_lut_batch(combined, batch)
+            if blend < 1.0:
+                output = batch * (1.0 - blend) + output * blend
+            output = output.detach().cpu()
+            for batch_index, image_index in enumerate(indices):
+                results[image_index] = _tensor_to_image(output[batch_index : batch_index + 1], size=images[image_index].size)
+    return [result for result in results if result is not None]
 
 
 def _no_grad_trunc_normal_(tensor: torch.Tensor, mean: float, std: float, a: float, b: float) -> torch.Tensor:
@@ -650,3 +765,31 @@ def run_retinexformer_low_light(
     with torch.inference_mode():
         output = _crop_to_hw(model(padded), original_hw)
     return _tensor_to_image(output, size=image.size)
+
+
+def run_retinexformer_low_light_batch(
+    images: list[Image.Image],
+    weight_path: Path,
+    device_name: str | None = None,
+    window_size: int = 4,
+) -> list[Image.Image]:
+    if not images:
+        return []
+    device = _select_device(device_name)
+    model = _load_retinexformer(weight_path, device)
+    padded_tensors: list[torch.Tensor] = []
+    original_hws: list[tuple[int, int]] = []
+    for image in images:
+        padded, original_hw = _pad_to_multiple(_image_to_tensor_cpu(image).unsqueeze(0), window_size)
+        padded_tensors.append(padded.squeeze(0))
+        original_hws.append(original_hw)
+
+    results: list[Image.Image | None] = [None] * len(images)
+    with torch.inference_mode():
+        for indices in _group_indices_by_shape(padded_tensors).values():
+            batch = _move_batch_to_device(torch.stack([padded_tensors[index] for index in indices], dim=0), device)
+            output = model(batch).detach().cpu()
+            for batch_index, image_index in enumerate(indices):
+                cropped = _crop_to_hw(output[batch_index : batch_index + 1], original_hws[image_index])
+                results[image_index] = _tensor_to_image(cropped, size=images[image_index].size)
+    return [result for result in results if result is not None]

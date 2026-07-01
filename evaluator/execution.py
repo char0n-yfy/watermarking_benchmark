@@ -9,11 +9,24 @@ from typing import Any, Iterable, Mapping
 JsonDict = dict[str, Any]
 
 EXECUTION_ENV_VARS = (
+    "APP_ENV",
     "WM_BENCH_DEVICE",
+    "WM_BENCH_DATA_ROOT",
+    "WM_BENCH_RESOURCES_ROOT",
+    "WM_BENCH_RUNS_ROOT",
+    "WM_BENCH_DB_PATH",
+    "WM_BENCH_DOTENV_PATH",
+    "WM_BENCH_VENV",
+    "WM_BENCH_VENV_SYSTEM_SITE_PACKAGES",
+    "WM_BENCH_WORKER_ID",
+    "WM_BENCH_WORKER_POLL_SECONDS",
+    "WM_BENCH_RUN_TIMEOUT_SECONDS",
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
     "NUMEXPR_NUM_THREADS",
+    "WM_BENCH_PNG_COMPRESS_LEVEL",
+    "WM_BENCH_WATERMARK_CACHE_MAX_ENTRIES",
     "WM_BENCH_WATERMARK_EMBED_BATCH_SIZE",
     "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
     "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZE",
@@ -22,13 +35,17 @@ EXECUTION_ENV_VARS = (
     "WM_BENCH_WATERMARK_BATCH_SIZES",
     "WM_BENCH_WATERMARK_CPU_WORKERS",
     "WM_BENCH_WATERMARK_CPU_WORKERS_BY_METHOD",
+    "WM_BENCH_ATTACK_CACHE_MAX_ENTRIES",
     "WM_BENCH_ATTACK_CPU_WORKERS",
     "WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD",
+    "WM_BENCH_ATTACK_BATCH_SIZE",
+    "WM_BENCH_ATTACK_BATCH_SIZES",
     "WM_BENCH_QUALITY_CPU_WORKERS",
     "WM_BENCH_PERCEPTUAL_DEVICE",
     "WM_BENCH_PERCEPTUAL_BATCH_SIZE",
     "WM_BENCH_PERCEPTUAL_BATCH_SIZES",
     "WM_BENCH_DISABLE_PERCEPTUAL_METRICS",
+    "WM_BENCH_LOG_DIR",
 )
 
 
@@ -52,6 +69,7 @@ class ExecutionProfile:
     cpu_workers: int = 1
     configured_batch_size: int | None = None
     actual_batch_size: int | None = None
+    batch_stage: str | None = None
     supports_batch: bool | None = None
     thread_safe_parallel: bool | None = None
     fallback: bool = False
@@ -70,6 +88,7 @@ class ExecutionProfile:
                 "cpuWorkers": self.cpu_workers,
                 "configuredBatchSize": self.configured_batch_size,
                 "actualBatchSize": self.actual_batch_size,
+                "batchStage": self.batch_stage,
                 "supportsBatch": self.supports_batch,
                 "threadSafeParallel": self.thread_safe_parallel,
                 "fallback": self.fallback,
@@ -257,6 +276,7 @@ def summarize_execution_profiles(results: Iterable[Any]) -> JsonDict:
                 "cpuWorkers",
                 "configuredBatchSize",
                 "actualBatchSize",
+                "batchStage",
                 "supportsBatch",
                 "threadSafeParallel",
                 "fallback",

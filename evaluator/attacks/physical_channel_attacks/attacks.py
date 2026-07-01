@@ -36,6 +36,8 @@ from typing import Any, Mapping
 import numpy as np
 from PIL import Image
 
+from evaluator.image_io import save_png_array
+
 if __name__ == "__main__":
     class AttackContext:  # type: ignore
         def __init__(self, run_id, sample_id, attack_name, params=None,
@@ -63,7 +65,10 @@ else:
     from evaluator.attacks.base import AttackContext, BaseAttack
     from evaluator.attacks.registry import register_attack
 
-import cv2  # noqa: E402
+try:
+    import cv2  # noqa: E402
+except Exception:  # pragma: no cover - optional dependency in lightweight test envs
+    cv2 = None  # type: ignore[assignment]
 
 
 # =============================================================================
@@ -73,13 +78,21 @@ def _rng(context: AttackContext) -> np.random.Generator:
     return np.random.default_rng(context.seed)
 
 
+def _require_cv2():
+    if cv2 is None:
+        raise RuntimeError("opencv-python is required for physical channel attacks")
+    return cv2
+
+
 def _load_bgr(path: Path) -> np.ndarray:
-    return cv2.cvtColor(np.asarray(Image.open(path).convert("RGB")), cv2.COLOR_RGB2BGR)
+    cv = _require_cv2()
+    return cv.cvtColor(np.asarray(Image.open(path).convert("RGB")), cv.COLOR_RGB2BGR)
 
 
 def _save_png(bgr: np.ndarray, path: Path) -> None:
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(cv2.cvtColor(np.clip(bgr, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)).save(path, "PNG")
+    cv = _require_cv2()
+    rgb = cv.cvtColor(np.clip(bgr, 0, 255).astype(np.uint8), cv.COLOR_BGR2RGB)
+    save_png_array(rgb, path)
 
 
 def _odd(k) -> int:
@@ -296,12 +309,17 @@ def _combined_hop_strengths(level, strength):
     return resolved_strength, print_strength, screen_strength
 
 
+class _PhysicalChannelAttack(BaseAttack):
+    thread_safe_parallel = True
+    batch_capability = False
+
+
 # =============================================================================
 # 组合攻击 1：屏摄 screen_shoot  （5 步，PIMoG 依据）
 # 透视 → 光照 → 摩尔纹 → 相机成像(轻模糊+噪声+近中性色彩) → JPEG → (可选)透视校正
 # =============================================================================
 @register_attack
-class ScreenShootAttack(BaseAttack):
+class ScreenShootAttack(_PhysicalChannelAttack):
     name = "screen_shoot"
     description = "Simulated screen-shooting (PIMoG-style: perspective+illumination+moire+imaging+jpeg)."
 
@@ -339,7 +357,7 @@ class ScreenShootAttack(BaseAttack):
 # 打印渲染(CMYK+半色调+纸纹) → 透视 → 光照 → 相机成像(模糊+噪声+AGC/AWB色彩) → JPEG → (可选)校正
 # =============================================================================
 @register_attack
-class PrintCameraAttack(BaseAttack):
+class PrintCameraAttack(_PhysicalChannelAttack):
     name = "print_camera"
     description = "Simulated print-camera (CamMark-style capture + halftone/CMYK; no screen moire)."
 
@@ -379,7 +397,7 @@ class PrintCameraAttack(BaseAttack):
 # 模拟真实多跳：打印→拍照→上网→屏幕显示→截屏/再拍。每跳降档，避免叠加损毁。
 # =============================================================================
 @register_attack
-class CombinedPhysicalAttack(BaseAttack):
+class CombinedPhysicalAttack(_PhysicalChannelAttack):
     name = "combined_physical"
     description = "Cross-media chain: print_camera then screen_shoot, reduced strength per hop."
 

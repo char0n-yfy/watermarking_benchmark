@@ -187,6 +187,7 @@ class BaseWatermark:
             cpu_workers=cpu_workers,
             configured_batch_size=configured_batch_size,
             actual_batch_size=actual_batch_size,
+            batch_stage=stage,
             supports_batch=supports_batch,
             thread_safe_parallel=bool(self.thread_safe_parallel),
             fallback=fallback,
