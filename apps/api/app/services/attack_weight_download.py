@@ -82,6 +82,13 @@ class AttackWeightDownloadService:
             raise KeyError(f"Unknown attack weight download job: {job_id}")
         return job
 
+    def list_jobs(self, method: str | None = None) -> list[AttackWeightDownloadJob]:
+        with self._lock:
+            jobs = list(self._jobs.values())
+        if method is not None:
+            jobs = [job for job in jobs if job.method == method]
+        return sorted(jobs, key=lambda job: job.created_at, reverse=True)
+
     def start_download(self, method: str) -> AttackWeightDownloadJob:
         if not attack_weights_need_download(method):
             raise ValueError(f"Attack method does not use packaged weights: {method}")

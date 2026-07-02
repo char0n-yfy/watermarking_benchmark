@@ -118,6 +118,10 @@ export function fetchDatasetDownloadJob(jobId: string): Promise<DatasetDownloadJ
   return requestJson<DatasetDownloadJob>(`/resources/datasets/downloads/${encodeURIComponent(jobId)}`);
 }
 
+export function fetchDatasetDownloadJobs(datasetId: string): Promise<DatasetDownloadJob[]> {
+  return requestJson<DatasetDownloadJob[]>(`/resources/datasets/${encodeURIComponent(datasetId)}/downloads`);
+}
+
 export function datasetDownloadArchiveUrl(jobId: string): string {
   return `${apiBaseUrl}/resources/datasets/downloads/${encodeURIComponent(jobId)}/archive`;
 }
@@ -146,6 +150,10 @@ export function startWeightDownload(identifier: string): Promise<WeightDownloadJ
   });
 }
 
+export function fetchWeightDownloadJobs(identifier: string): Promise<WeightDownloadJob[]> {
+  return requestJson<WeightDownloadJob[]>(`/resources/watermarks/${encodeURIComponent(identifier)}/downloads`);
+}
+
 export function fetchWeightDownloadJob(jobId: string): Promise<WeightDownloadJob> {
   return requestJson<WeightDownloadJob>(`/resources/watermarks/downloads/${encodeURIComponent(jobId)}`);
 }
@@ -160,6 +168,10 @@ export function startAttackWeightDownload(identifier: string): Promise<WeightDow
     method: "POST",
     body: JSON.stringify({})
   });
+}
+
+export function fetchAttackWeightDownloadJobs(identifier: string): Promise<WeightDownloadJob[]> {
+  return requestJson<WeightDownloadJob[]>(`/resources/attacks/${encodeURIComponent(identifier)}/downloads`);
 }
 
 export function fetchAttackWeightDownloadJob(jobId: string): Promise<WeightDownloadJob> {

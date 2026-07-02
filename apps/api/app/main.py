@@ -288,6 +288,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return job.to_json()
 
+    @app.get("/resources/watermarks/{identifier}/downloads")
+    def list_weight_downloads(identifier: str) -> list[dict[str, object]]:
+        try:
+            item = get_watermark_catalog_item(identifier)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        method = str(item["method"])
+        return [job.to_json() for job in weight_download_service.list_jobs(method)]
+
     @app.get("/resources/watermarks/downloads/{job_id}")
     def get_weight_download(job_id: str) -> dict[str, object]:
         try:
@@ -329,6 +338,15 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return job.to_json()
+
+    @app.get("/resources/attacks/{identifier}/downloads")
+    def list_attack_weight_downloads(identifier: str) -> list[dict[str, object]]:
+        try:
+            item = get_attack_catalog_item(identifier)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        method = str(item["method"])
+        return [job.to_json() for job in attack_weight_download_service.list_jobs(method)]
 
     @app.get("/resources/attacks/downloads/{job_id}")
     def get_attack_weight_download(job_id: str) -> dict[str, object]:
