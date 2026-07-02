@@ -45,6 +45,7 @@ from app.services.resources import (
     get_watermark_catalog_item,
     scan_dataset_resources,
 )
+from app.services.runtime_resource_manager import RuntimeResourceManager
 from app.services.scoring import compute_image_quality_pairs_with_profile
 
 
@@ -200,6 +201,14 @@ def _latest_cell_rows(cell_manifest_path: Path) -> list[JsonDict]:
             enriched.setdefault("supersedesPreviousAttempt", attempt_counts[cell_key] > 1)
             latest[cell_key] = enriched
     return list(latest.values())
+
+
+def _latest_cell_row_map(cell_manifest_path: Path) -> dict[str, JsonDict]:
+    return {
+        str(record["cellKey"]): record
+        for record in _latest_cell_rows(cell_manifest_path)
+        if isinstance(record.get("cellKey"), str)
+    }
 
 
 def _json_record_has_intermediate_artifact(record: JsonDict) -> bool:
@@ -1075,6 +1084,57 @@ def _progress(completed_cells: int, total_cells: int) -> int:
     return int(round((completed_cells / total_cells) * 100))
 
 
+def _pending_variant_groups(
+    selection: JsonDict,
+    latest_cells: dict[str, JsonDict],
+    *,
+    resume: bool,
+) -> tuple[dict[tuple[str, str, int], list[JsonDict]], dict[str, JsonDict], int]:
+    completed: dict[str, JsonDict] = {}
+    groups: dict[tuple[str, str, int], list[JsonDict]] = {}
+    skipped = 0
+
+    for dataset_id in selection["datasetIds"]:
+        for algorithm_id in selection["algorithmIds"]:
+            for seed in selection["seeds"]:
+                seed_int = int(seed)
+                group_key = (str(dataset_id), str(algorithm_id), seed_int)
+                variants: list[JsonDict] = []
+                for attack_id in selection["attackPresetIds"]:
+                    attack = get_attack_catalog_item(str(attack_id))
+                    for strength, attack_params, variant_key in _attack_variants_for_attack(
+                        selection,
+                        str(attack_id),
+                        attack,
+                    ):
+                        cell_key = _cell_key(
+                            str(dataset_id),
+                            str(algorithm_id),
+                            str(attack_id),
+                            float(strength),
+                            seed_int,
+                            variant_key,
+                        )
+                        latest = latest_cells.get(cell_key)
+                        if resume and latest is not None and latest.get("status") == "succeeded":
+                            completed[cell_key] = latest
+                            skipped += 1
+                            continue
+                        variants.append(
+                            {
+                                "cellKey": cell_key,
+                                "attackId": str(attack_id),
+                                "attack": attack,
+                                "strength": float(strength),
+                                "attackParams": attack_params,
+                                "variantKey": variant_key,
+                            }
+                        )
+                if variants:
+                    groups[group_key] = variants
+    return groups, completed, skipped
+
+
 def run_local_experiment(
     request: LocalRunRequest,
     on_cell: CellCallback | None = None,
@@ -1086,14 +1146,18 @@ def run_local_experiment(
     run_root = request.runs_root / safe_segment(request.run_id)
     run_root.mkdir(parents=True, exist_ok=True)
     paths = _artifact_paths(run_root)
-    existing_completed = _completed_cell_rows(paths["cellManifest"]) if request.resume else {}
+    latest_cells = _latest_cell_row_map(paths["cellManifest"]) if request.resume else {}
+    pending_groups, existing_completed, skipped_cells = _pending_variant_groups(
+        selection,
+        latest_cells,
+        resume=request.resume,
+    )
     attempt_counts = _cell_attempt_counts(paths["cellManifest"]) if request.resume else {}
     cells: list[JsonDict] = list(existing_completed.values())
     started = time.perf_counter()
     estimate = estimate_selection(selection, request.resources_root)
     expected_cells = int(estimate["cellCount"])
     cancelled = False
-    skipped_cells = 0
     negative_attack_cache: dict[str, dict[str, Any]] = {}
 
     attack_plan: list[JsonDict] = []
@@ -1132,6 +1196,9 @@ def run_local_experiment(
             },
             "executionPolicy": execution_environment_snapshot(),
             "resume": request.resume,
+            "resumeMode": "pending_cells_only",
+            "resumePendingCells": sum(len(variants) for variants in pending_groups.values()),
+            "resumeSkippedSucceededCells": skipped_cells,
             "createdAt": _utc_timestamp(),
         },
     )
@@ -1150,6 +1217,9 @@ def run_local_experiment(
         "started",
         expectedCells=expected_cells,
         resumedCells=len(cells),
+        pendingCells=sum(len(variants) for variants in pending_groups.values()),
+        skippedCells=skipped_cells,
+        resumeMode="pending_cells_only",
     )
 
     existing_sample_keys = {
@@ -1208,6 +1278,13 @@ def run_local_experiment(
         append_jsonl=_append_jsonl,
         detection_record=_detection_record,
     )
+    resource_manager = RuntimeResourceManager(
+        paths=paths,
+        run_id=request.run_id,
+        device=request.device,
+        append_jsonl=_append_jsonl,
+        stage_event=_stage_event,
+    )
 
     def emit_cell(cell: JsonDict) -> None:
         record = dict(cell)
@@ -1236,6 +1313,8 @@ def run_local_experiment(
         if should_cancel is not None and should_cancel():
             cancelled = True
             break
+        if not any(group_key[0] == str(dataset_id) for group_key in pending_groups):
+            continue
         dataset = get_dataset_by_id(request.resources_root, dataset_id)
         cell_input_dir = run_root / "staging" / "samples" / safe_segment(dataset_id)
         try:
@@ -1251,6 +1330,11 @@ def run_local_experiment(
             for algorithm_id in selection["algorithmIds"]:
                 if cancelled:
                     break
+                if not any(
+                    group_key[0] == str(dataset_id) and group_key[1] == str(algorithm_id)
+                    for group_key in pending_groups
+                ):
+                    continue
                 algorithm = get_watermark_catalog_item(algorithm_id)
                 algorithm_params = dict(algorithm.get("params") or {})
                 for seed in selection["seeds"]:
@@ -1258,47 +1342,7 @@ def run_local_experiment(
                         cancelled = True
                         break
 
-                    pending_variants: list[JsonDict] = []
-                    for attack_id in selection["attackPresetIds"]:
-                        attack = get_attack_catalog_item(attack_id)
-                        for strength, attack_params, variant_key in _attack_variants_for_attack(
-                            selection, attack_id, attack
-                        ):
-                            cell_key = _cell_key(
-                                dataset_id,
-                                algorithm_id,
-                                attack_id,
-                                float(strength),
-                                int(seed),
-                                variant_key,
-                            )
-                            if cell_key in existing_completed:
-                                skipped_cells += 1
-                                _stage_event(
-                                    paths,
-                                    request.run_id,
-                                    "cell",
-                                    "skipped",
-                                    cellKey=cell_key,
-                                    datasetId=dataset_id,
-                                    algorithmId=algorithm_id,
-                                    attackPresetId=attack_id,
-                                    attackStrength=float(strength),
-                                    attackParams=attack_params,
-                                    reason="resume_completed",
-                                )
-                                continue
-                            pending_variants.append(
-                                {
-                                    "cellKey": cell_key,
-                                    "attackId": attack_id,
-                                    "attack": attack,
-                                    "strength": float(strength),
-                                    "attackParams": attack_params,
-                                    "variantKey": variant_key,
-                                }
-                            )
-
+                    pending_variants = pending_groups.get((str(dataset_id), str(algorithm_id), int(seed)), [])
                     if not pending_variants:
                         continue
 
@@ -1385,7 +1429,7 @@ def run_local_experiment(
                         continue
 
                     try:
-                        for variant in pending_variants:
+                        for variant_index, variant in enumerate(pending_variants):
                             if should_cancel is not None and should_cancel():
                                 cancelled = True
                                 break
@@ -1451,6 +1495,21 @@ def run_local_experiment(
                                     output_dir=attacked_dir,
                                 )
                                 attack_results = positive_attack.results
+                                if request.device.startswith("cuda") and algorithm["method"] == "invisible-watermark-rivagan":
+                                    resource_manager.cleanup(
+                                        scope="pre_extract",
+                                        reason="positive_attack_finished",
+                                        cell_key=cell_key,
+                                        metadata={
+                                            "datasetId": dataset_id,
+                                            "algorithmId": algorithm_id,
+                                            "watermarkMethod": algorithm["method"],
+                                            "attackMethod": attack["method"],
+                                            "attackPresetId": attack_id,
+                                            "label": 1,
+                                            "seed": int(seed),
+                                        },
+                                    )
 
                                 positive_extract = extract_stage.run(
                                     cell_key=cell_key,
@@ -1482,6 +1541,21 @@ def run_local_experiment(
                                 )
                                 negative_attack_results = negative_attack.results
                                 negative_attacked_dir = negative_attack.output_dir
+                                if request.device.startswith("cuda") and algorithm["method"] == "invisible-watermark-rivagan":
+                                    resource_manager.cleanup(
+                                        scope="pre_extract",
+                                        reason="negative_attack_finished",
+                                        cell_key=cell_key,
+                                        metadata={
+                                            "datasetId": dataset_id,
+                                            "algorithmId": algorithm_id,
+                                            "watermarkMethod": algorithm["method"],
+                                            "attackMethod": attack["method"],
+                                            "attackPresetId": attack_id,
+                                            "label": 0,
+                                            "seed": int(seed),
+                                        },
+                                    )
 
                                 negative_extract = extract_stage.run(
                                     cell_key=cell_key,
@@ -1596,8 +1670,45 @@ def run_local_experiment(
                                 elapsedMs=elapsed_ms,
                                 error=error,
                             )
+                            next_variant = (
+                                pending_variants[variant_index + 1]
+                                if variant_index + 1 < len(pending_variants)
+                                else None
+                            )
+                            next_attack_method = (
+                                str(next_variant["attack"]["method"])
+                                if isinstance(next_variant, dict) and isinstance(next_variant.get("attack"), dict)
+                                else None
+                            )
+                            if next_attack_method != str(attack["method"]):
+                                resource_manager.cleanup(
+                                    scope="attack_method",
+                                    reason="attack_method_finished",
+                                    cell_key=cell_key,
+                                    release_attacks=True,
+                                    release_auxiliary=True,
+                                    metadata={
+                                        "datasetId": dataset_id,
+                                        "algorithmId": algorithm_id,
+                                        "attackMethod": attack["method"],
+                                        "attackPresetId": attack_id,
+                                        "seed": int(seed),
+                                    },
+                                )
                     finally:
                         shutil.rmtree(watermarked_dir, ignore_errors=True)
+
+                resource_manager.cleanup(
+                    scope="watermark_algorithm",
+                    reason="watermark_algorithm_finished",
+                    cell_key=f"{safe_segment(dataset_id)}__{safe_segment(algorithm_id)}__watermark_algorithm",
+                    release_watermarks=True,
+                    metadata={
+                        "datasetId": dataset_id,
+                        "algorithmId": algorithm_id,
+                        "watermarkMethod": algorithm["method"],
+                    },
+                )
 
                 if cancelled:
                     break
@@ -1608,7 +1719,27 @@ def run_local_experiment(
                 ignore_errors=True,
             )
             negative_attack_cache.clear()
+            resource_manager.cleanup(
+                scope="dataset",
+                reason="dataset_finished",
+                cell_key=f"{safe_segment(dataset_id)}__dataset",
+                release_attacks=True,
+                release_watermarks=True,
+                release_perceptual=True,
+                release_auxiliary=True,
+                metadata={"datasetId": dataset_id},
+            )
             _stage_event(paths, request.run_id, "dataset", "finished", datasetId=dataset_id)
+
+    resource_manager.cleanup(
+        scope="run",
+        reason="run_finished",
+        cell_key="run",
+        release_attacks=True,
+        release_watermarks=True,
+        release_perceptual=True,
+        release_auxiliary=True,
+    )
 
     failed = sum(1 for cell in cells if cell["status"] != "succeeded")
     status = (

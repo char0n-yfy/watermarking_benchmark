@@ -18,6 +18,19 @@ ModelKind = Literal["deepwb_awb", "3dlut_fivek", "retinexformer_lol"]
 _MODEL_CACHE: dict[tuple[ModelKind, str, str, tuple[Any, ...]], nn.Module | tuple[nn.Module, torch.Tensor]] = {}
 
 
+def clear_model_cache() -> None:
+    from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+    for cached in list(_MODEL_CACHE.values()):
+        if isinstance(cached, tuple):
+            for item in cached:
+                move_to_cpu(item)
+        else:
+            move_to_cpu(cached)
+    _MODEL_CACHE.clear()
+    torch_cleanup()
+
+
 def _select_device(requested: str | None) -> torch.device:
     requested = (requested or "cpu").lower()
     if requested.startswith("cuda") and torch.cuda.is_available():

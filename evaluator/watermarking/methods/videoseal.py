@@ -73,6 +73,16 @@ class VideoSealWatermark(BaseWatermark):
         self._loaded = True
         self._loaded_device = device_name
 
+    def release(self) -> None:
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._model is not None:
+            move_to_cpu(self._model)
+        self._model = None
+        self._loaded = False
+        self._loaded_device = None
+        torch_cleanup()
+
     def _message_tensor(self, context: WatermarkContext):
         assert self._torch is not None
         assert self._model is not None

@@ -514,6 +514,36 @@ def _perceptual_backend() -> JsonDict:
     return {"device": str(device), "models": models, "errors": errors}
 
 
+def clear_perceptual_backend() -> None:
+    cached = None
+    cache_info = _perceptual_backend.cache_info()
+    if cache_info.currsize > 0:
+        try:
+            cached = _perceptual_backend()
+        except Exception:
+            cached = None
+    if isinstance(cached, dict):
+        models = cached.get("models") or {}
+        for model in list(models.values()):
+            try:
+                to_fn = getattr(model, "to", None)
+                if callable(to_fn):
+                    to_fn("cpu")
+            except Exception:
+                pass
+        try:
+            models.clear()
+        except Exception:
+            pass
+    _perceptual_backend.cache_clear()
+    try:
+        from evaluator.runtime_cleanup import torch_cleanup
+
+        torch_cleanup()
+    except Exception:
+        pass
+
+
 def _resize_for_perceptual(image: Image.Image) -> Image.Image:
     width, height = image.size
     short_side = min(width, height)

@@ -18,14 +18,18 @@ _WATERMARK_INSTANCE_CACHE: OrderedDict[str, BaseWatermark] = OrderedDict()
 
 
 def _cache_max_entries() -> int:
-    raw = os.getenv("WM_BENCH_WATERMARK_CACHE_MAX_ENTRIES", "2")
+    raw = os.getenv("WM_BENCH_WATERMARK_CACHE_MAX_ENTRIES", "1")
     try:
         return max(0, int(raw))
     except (TypeError, ValueError):
-        return 2
+        return 1
 
 
 def _release_watermark_instance(method: BaseWatermark) -> None:
+    try:
+        method.release()
+    except Exception:
+        pass
     del method
     gc.collect()
     try:

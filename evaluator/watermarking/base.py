@@ -98,6 +98,10 @@ class BaseWatermark:
     def __init__(self, **params: Any) -> None:
         self.params: JsonDict = dict(params)
 
+    def release(self) -> None:
+        """Release heavyweight runtime state held by this watermark instance."""
+        return None
+
     def embed_impl(
         self,
         input_path: Path,

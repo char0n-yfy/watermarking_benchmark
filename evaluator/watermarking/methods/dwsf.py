@@ -126,6 +126,27 @@ class DWSFWatermark(BaseWatermark):
         self._loaded = True
         self._loaded_device = device_name
 
+    def release(self) -> None:
+        import sys
+
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._encoder_decoder is not None:
+            move_to_cpu(self._encoder_decoder)
+        self._encoder_decoder = None
+        self._loaded = False
+        self._loaded_device = None
+        self._obtain_wm_blocks = None
+        seg_module = sys.modules.get("utils.seg")
+        if seg_module is not None:
+            for attr in ("model", "device"):
+                if hasattr(seg_module, attr):
+                    try:
+                        setattr(seg_module, attr, None)
+                    except Exception:
+                        pass
+        torch_cleanup()
+
     def _prepare_tensor(self, input_path: Path):
         assert self._torch is not None
         assert self._tf is not None
