@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Braces, Check, Database, Edit3, Gauge, Loader2, Plus, Save, Search, Shield, Trash2, X } from "lucide-react";
+import { Archive, Braces, Check, Database, Edit3, Gauge, Loader2, Save, Search, Shield, Trash2, X } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
@@ -14,6 +14,7 @@ import {
   renameSavedConfig
 } from "@/lib/api";
 import { localizedName, type Language } from "@/lib/i18n";
+import { resolveWatermarkDisplayName, watermarkMethodSubtitle } from "@/lib/watermark-display";
 import { estimateMatrix } from "@/lib/matrix";
 import type {
   AlgorithmVersion,
@@ -139,18 +140,18 @@ type DisplayMeta = {
 };
 
 const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
-  "invisible-watermark-dwtdct": { en: "Invisible Watermark DWT-DCT", rank: 10, short: "DWT-DCT", zh: "Invisible Watermark DWT-DCT" },
+  "invisible-watermark-dwtdct": { en: "DWT-DCT", rank: 10, short: "DWT-DCT", zh: "DWT-DCT" },
   "invisible-watermark-dwtdctsvd": {
-    en: "Invisible Watermark DWT-DCT-SVD",
+    en: "DWT-DCT-SVD",
     rank: 11,
     short: "DWT-DCT-SVD",
-    zh: "Invisible Watermark DWT-DCT-SVD"
+    zh: "DWT-DCT-SVD"
   },
   "traditional-spread-dct": {
-    en: "Traditional Spread-DCT",
+    en: "DCT",
     rank: 12,
-    short: "Spread-DCT",
-    zh: "传统扩频 DCT 水印"
+    short: "DCT",
+    zh: "DCT"
   },
   hidden: { en: "HiDDeN", rank: 30, zh: "HiDDeN" },
   stegastamp: { en: "StegaStamp", rank: 31, zh: "StegaStamp" },
@@ -160,10 +161,10 @@ const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
   pimog: { en: "PIMoG", rank: 35, zh: "PIMoG" },
   invismark: { en: "InvisMark", rank: 36, zh: "InvisMark" },
   "invisible-watermark-rivagan": {
-    en: "Invisible Watermark RivaGAN",
+    en: "RivaGAN",
     rank: 37,
     short: "RivaGAN",
-    zh: "Invisible Watermark RivaGAN"
+    zh: "RivaGAN"
   },
   "trustmark-c": { en: "TrustMark-C", rank: 38, zh: "TrustMark-C" },
   "trustmark-q": { en: "TrustMark-Q", rank: 39, zh: "TrustMark-Q" },
@@ -440,9 +441,23 @@ function displayMethodToken(method: string) {
   return method;
 }
 
+function algorithmMethodLabel(algorithm: AlgorithmVersion) {
+  const method = algorithmMethod(algorithm);
+  const meta = ALGORITHM_DISPLAY[method];
+  if (meta?.short) {
+    return meta.short;
+  }
+  return displayMethodToken(method);
+}
+
+function algorithmMethodSubtitle(method: string) {
+  return watermarkMethodSubtitle(method);
+}
+
 function algorithmDisplayName(language: Language, algorithm: AlgorithmVersion) {
   const method = algorithmMethod(algorithm);
-  return displayText(language, ALGORITHM_DISPLAY[method], algorithm.name);
+  const labeled = displayText(language, ALGORITHM_DISPLAY[method], algorithm.name);
+  return resolveWatermarkDisplayName(method, labeled);
 }
 
 function algorithmCategoryDisplay(language: Language, category: string | undefined) {
@@ -536,7 +551,6 @@ function StrengthRangeAxis({ id, language, settings, onChange }: StrengthRangeAx
   const ticks = strengthLevelsForSettings(settings);
   const selectedLeft = `${lower * 100}%`;
   const selectedWidth = `${Math.max(0, upper - lower) * 100}%`;
-  const badgeLeft = `${Math.min(94, Math.max(6, ((lower + upper) / 2) * 100))}%`;
   const rangeLabel = language === "zh" ? "强度范围" : "Strength range";
   const levelLabel = language === "zh" ? "档位数" : "Levels";
   const levelSuffix = language === "zh" ? "档" : "levels";
@@ -550,53 +564,63 @@ function StrengthRangeAxis({ id, language, settings, onChange }: StrengthRangeAx
       <div className="strength-range-main">
         <div className="strength-range-heading">
           <span>{rangeLabel}</span>
-          <strong>
-            {formatStrength(lower)} - {formatStrength(upper)}
-          </strong>
+          <div className="strength-range-meta">
+            <strong>
+              {formatStrength(lower)} - {formatStrength(upper)}
+            </strong>
+            <span className="strength-level-pill">
+              {levelCount} {levelSuffix}
+            </span>
+          </div>
         </div>
         <div className="strength-axis">
-          <div className="strength-axis-track" />
-          <div className="strength-axis-selection" style={{ left: selectedLeft, width: selectedWidth }} />
-          <div className="strength-axis-ticks">
-            {ticks.map((strength, index) => (
-              <span
-                className="strength-axis-tick"
-                key={`${strength}-${index}`}
-                style={{ left: `${strength * 100}%` }}
-              />
-            ))}
+          <div className="strength-axis-rail">
+            <div className="strength-axis-track" />
+            <div className="strength-axis-selection" style={{ left: selectedLeft, width: selectedWidth }} />
+            <div className="strength-axis-ticks">
+              {ticks.map((strength, index) => {
+                if (index === 0 || index === ticks.length - 1) {
+                  return null;
+                }
+                return (
+                  <span
+                    className="strength-axis-tick"
+                    key={`${strength}-${index}`}
+                    style={{ left: `${strength * 100}%` }}
+                    title={formatStrength(strength)}
+                  />
+                );
+              })}
+            </div>
+            <input
+              aria-label={language === "zh" ? "强度范围下界" : "Strength range minimum"}
+              className="strength-range-input strength-range-input-min"
+              max={1}
+              min={0}
+              onChange={(event) => {
+                const strengthMin = Math.min(clampUnit(Number(event.target.value)), settings.strengthMax);
+                onChange({ ...settings, strengthMin });
+              }}
+              step={0.01}
+              type="range"
+              value={settings.strengthMin}
+            />
+            <input
+              aria-label={language === "zh" ? "强度范围上界" : "Strength range maximum"}
+              className="strength-range-input strength-range-input-max"
+              max={1}
+              min={0}
+              onChange={(event) => {
+                const strengthMax = Math.max(clampUnit(Number(event.target.value)), settings.strengthMin);
+                onChange({ ...settings, strengthMax });
+              }}
+              step={0.01}
+              type="range"
+              value={settings.strengthMax}
+            />
           </div>
-          <span className="strength-axis-badge" style={{ left: badgeLeft }}>
-            {levelCount} {levelSuffix}
-          </span>
-          <input
-            aria-label={language === "zh" ? "强度范围下界" : "Strength range minimum"}
-            className="strength-range-input strength-range-input-min"
-            max={1}
-            min={0}
-            onChange={(event) => {
-              const strengthMin = Math.min(clampUnit(Number(event.target.value)), settings.strengthMax);
-              onChange({ ...settings, strengthMin });
-            }}
-            step={0.01}
-            type="range"
-            value={settings.strengthMin}
-          />
-          <input
-            aria-label={language === "zh" ? "强度范围上界" : "Strength range maximum"}
-            className="strength-range-input strength-range-input-max"
-            max={1}
-            min={0}
-            onChange={(event) => {
-              const strengthMax = Math.max(clampUnit(Number(event.target.value)), settings.strengthMin);
-              onChange({ ...settings, strengthMax });
-            }}
-            step={0.01}
-            type="range"
-            value={settings.strengthMax}
-          />
         </div>
-        <div className="strength-axis-endpoints">
+        <div className="strength-axis-endpoints" aria-hidden="true">
           <span>0</span>
           <span>1</span>
         </div>
@@ -1105,6 +1129,12 @@ export default function ConfigsPage() {
 
     return (
       <label className="check-tile resource-check-tile method-check-tile" key={attack.id}>
+        <span className="tile-copy">
+          <strong>{title}</strong>
+          {subtitle ? <small translate="no">{subtitle}</small> : null}
+        </span>
+        {attack.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : <span className="badge">{t.common.cpu}</span>}
+        {attack.available === false ? <span className="badge">{t.resources.notInstalled}</span> : null}
         <input
           checked={selection.attackPresetIds.includes(attack.id)}
           disabled={attack.available === false}
@@ -1115,12 +1145,6 @@ export default function ConfigsPage() {
           }
           type="checkbox"
         />
-        <span className="tile-copy">
-          <strong>{title}</strong>
-          {subtitle ? <small translate="no">{subtitle}</small> : null}
-        </span>
-        {attack.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-        {attack.available === false ? <span className="badge error">Missing</span> : null}
       </label>
     );
   };
@@ -1285,7 +1309,6 @@ export default function ConfigsPage() {
           <p>{t.configs.subtitle}</p>
         </div>
         <button className="button surface-action configs-add-button" onClick={openCreateModal} type="button">
-          <Plus size={16} />
           {copy.addConfig}
         </button>
       </div>
@@ -1303,7 +1326,6 @@ export default function ConfigsPage() {
                 <h2>{t.configs.empty}</h2>
                 <p>{copy.draftEmpty}</p>
                 <button className="button surface-action configs-add-button" onClick={openCreateModal} type="button">
-                  <Plus size={16} />
                   {copy.addConfig}
                 </button>
               </div>
@@ -1439,6 +1461,12 @@ export default function ConfigsPage() {
                 <div className="option-grid dense-options">
                   {sortedDatasets.map((dataset) => (
                     <label className="check-tile resource-check-tile method-check-tile" key={dataset.id}>
+                      <span className="tile-copy">
+                        <strong>{localizedName(language, dataset.id, dataset.name)}</strong>
+                        <small>
+                          {dataset.sampleCount.toLocaleString()} {t.common.samples}
+                        </small>
+                      </span>
                       <input
                         checked={selection.datasetIds.includes(dataset.id)}
                         onChange={() =>
@@ -1449,12 +1477,6 @@ export default function ConfigsPage() {
                         }
                         type="checkbox"
                       />
-                      <span className="tile-copy">
-                        <strong>{localizedName(language, dataset.id, dataset.name)}</strong>
-                        <small>
-                          {dataset.sampleCount.toLocaleString()} {t.common.samples}
-                        </small>
-                      </span>
                     </label>
                   ))}
                 </div>
@@ -1513,6 +1535,15 @@ export default function ConfigsPage() {
                 <div className="option-grid dense-options">
                   {filteredAlgorithms.map((algorithm) => (
                     <label className="check-tile resource-check-tile method-check-tile" key={algorithm.id}>
+                      <span className="tile-copy">
+                        <strong>{algorithmDisplayName(language, algorithm)}</strong>
+                        <small>
+                          {algorithmCategoryDisplay(language, algorithm.category)} ·{" "}
+                          {algorithmMethodSubtitle(algorithmMethod(algorithm))}
+                        </small>
+                      </span>
+                      {algorithm.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : <span className="badge">{t.common.cpu}</span>}
+                      {algorithm.available === false ? <span className="badge">{t.resources.notInstalled}</span> : null}
                       <input
                         checked={selection.algorithmIds.includes(algorithm.id)}
                         disabled={algorithm.status !== "enabled" || algorithm.available === false}
@@ -1524,15 +1555,6 @@ export default function ConfigsPage() {
                         }
                         type="checkbox"
                       />
-                      <span className="tile-copy">
-                        <strong>{algorithmDisplayName(language, algorithm)}</strong>
-                        <small>
-                          {algorithmCategoryDisplay(language, algorithm.category)} ·{" "}
-                          {displayMethodToken(algorithmMethod(algorithm))}
-                        </small>
-                      </span>
-                      {algorithm.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-                      {algorithm.available === false ? <span className="badge error">Missing</span> : null}
                     </label>
                   ))}
                 </div>
@@ -2050,20 +2072,22 @@ export default function ConfigsPage() {
 
                                 return (
                                   <label className="check-tile resource-check-tile" key={motion}>
-                                    <input
-                                      checked={checked}
-                                      disabled={motionIds.length === 0}
-                                      onChange={() => toggleViewpointMotion(motion)}
-                                      type="checkbox"
-                                    />
                                     <span className="tile-copy">
                                       <strong>{motionTitle}</strong>
                                       {motionSubtitle ? <small translate="no">{motionSubtitle}</small> : null}
                                     </span>
                                     {motionAttacks.some((attack) => attack.requiresGpu) ? (
                                       <span className="badge warn">{t.common.gpu}</span>
-                                    ) : null}
-                                    {motionIds.length === 0 ? <span className="badge error">Missing</span> : null}
+                                    ) : (
+                                      <span className="badge">{t.common.cpu}</span>
+                                    )}
+                                    {motionIds.length === 0 ? <span className="badge">{t.resources.notInstalled}</span> : null}
+                                    <input
+                                      checked={checked}
+                                      disabled={motionIds.length === 0}
+                                      onChange={() => toggleViewpointMotion(motion)}
+                                      type="checkbox"
+                                    />
                                   </label>
                                 );
                               })}

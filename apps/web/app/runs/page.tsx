@@ -42,6 +42,7 @@ import {
   startParallelTuning
 } from "@/lib/api";
 import { localizedDate } from "@/lib/i18n";
+import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
   AlgorithmVersion,
   AttackPreset,
@@ -1382,7 +1383,10 @@ export default function RunsPage() {
         nextResourceNames[dataset.id] = language === "zh" ? dataset.nameZh || dataset.name : dataset.name || dataset.nameZh;
       });
       algorithms.forEach((algorithm) => {
-        nextResourceNames[algorithm.id] = algorithm.name;
+        nextResourceNames[algorithm.id] = resolveWatermarkDisplayName(
+          algorithm.method ?? algorithm.id,
+          algorithm.name
+        );
       });
       attacks.forEach((attack) => {
         nextResourceNames[attack.id] = attack.name;
