@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +28,13 @@ from .services.resources import (
     scan_dataset_resources,
 )
 from .services.weight_download import WeightDownloadService
-from .services.system_metrics import collect_system_metrics
+from .services.system_metrics import collect_system_metrics, warmup_cpu_power_sensors
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    warmup_cpu_power_sensors()
+    yield
 
 
 def create_app() -> FastAPI:
@@ -46,6 +53,7 @@ def create_app() -> FastAPI:
         title="Watermark Benchmark API",
         version="0.1.0",
         description="Local-first service for experiment metadata and small run orchestration.",
+        lifespan=_app_lifespan,
     )
     allow_all_cors = "*" in settings.cors_origins
     app.add_middleware(

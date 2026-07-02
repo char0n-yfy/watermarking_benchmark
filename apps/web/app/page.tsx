@@ -210,9 +210,10 @@ export default function ExperimentConsole() {
     ? runtime.workers.map((worker) => `${worker.status}:${worker.device}`).join(", ")
     : "no worker";
   const primaryGpu = systemMetrics?.gpu.devices[0] ?? null;
-  const loadAverageLabel = systemMetrics?.cpu.loadAverage.length
-    ? systemMetrics.cpu.loadAverage.map((value) => value.toFixed(2)).join(" / ")
-    : "n/a";
+  const cpuTemperatureLabel =
+    systemMetrics?.cpu.temperatureC == null ? "n/a" : `${systemMetrics.cpu.temperatureC}°C`;
+  const cpuPowerLabel =
+    systemMetrics?.cpu.powerDrawW == null ? "n/a" : `${systemMetrics.cpu.powerDrawW.toFixed(1)}W`;
   const gpuName = primaryGpu?.name ?? "未检测到 NVIDIA GPU 指标";
   const vramUsedBytes = primaryGpu?.memoryUsedMiB == null ? null : primaryGpu.memoryUsedMiB * 1024 * 1024;
   const vramTotalBytes = primaryGpu?.memoryTotalMiB == null ? null : primaryGpu.memoryTotalMiB * 1024 * 1024;
@@ -384,7 +385,10 @@ export default function ExperimentConsole() {
                 detail={`${systemMetrics?.cpu.logicalCores ?? "n/a"} logical cores`}
                 icon={<Cpu size={17} />}
                 label="CPU 占用率"
-                meta={[{ label: "Load avg", value: loadAverageLabel }]}
+                meta={[
+                  { label: "温度", value: cpuTemperatureLabel },
+                  { label: "功耗", value: cpuPowerLabel }
+                ]}
                 value={systemMetrics?.cpu.usagePercent}
               />
               <GaugeCard

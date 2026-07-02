@@ -426,6 +426,8 @@ export interface SystemMetrics {
     logicalCores: number;
     usagePercent: number | null;
     loadAverage: number[];
+    temperatureC: number | null;
+    powerDrawW: number | null;
   };
   memory: {
     totalBytes: number | null;

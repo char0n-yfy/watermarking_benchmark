@@ -36,8 +36,36 @@ if (-not $env:WM_BENCH_INSTALL_SHARP_DEPS) {
 
 & (Join-Path $PSScriptRoot "bootstrap-python.ps1") -VenvDir $VenvDir
 
-& corepack enable
-& corepack pnpm install
+function Initialize-Pnpm {
+  $PnpmStoreDir = Join-Path $RootDir ".pnpm-store"
+  New-Item -ItemType Directory -Force -Path $PnpmStoreDir | Out-Null
+
+  $PnpmVersion = ""
+  try {
+    $PnpmVersion = (& corepack pnpm --version 2>$null | Select-Object -First 1).ToString().Trim()
+  } catch {
+  }
+
+  if (-not $PnpmVersion) {
+    try {
+      & corepack enable 2>&1 | ForEach-Object {
+        if ($_ -match "EPERM|Internal Error") {
+          Write-Host "corepack enable warning (non-fatal): $_"
+        }
+      }
+    } catch {
+      Write-Host "corepack enable warning (non-fatal): $_"
+    }
+  }
+
+  $env:CI = "true"
+  & corepack pnpm install --store-dir $PnpmStoreDir
+  if ($LASTEXITCODE -ne 0) {
+    throw "pnpm install failed"
+  }
+}
+
+Initialize-Pnpm
 
 $env:APP_ENV = if ($env:APP_ENV) { $env:APP_ENV } else { "development" }
 $env:WM_BENCH_DATA_ROOT = if ($env:WM_BENCH_DATA_ROOT) { $env:WM_BENCH_DATA_ROOT } else { "$RootDir" }
@@ -91,6 +119,180 @@ function Wait-HttpOk {
 Stop-PidFile "api"
 Stop-PidFile "worker"
 Stop-PidFile "web"
+
+function Enable-LibreHardwareMonitorWebServer {
+  param([string]$ExecutablePath)
+
+  if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    return $false
+  }
+
+  $ParentDir = Split-Path -Path $ExecutablePath -Parent
+  if ([string]::IsNullOrWhiteSpace($ParentDir)) {
+    return $false
+  }
+
+  $ConfigPath = Join-Path $ParentDir "LibreHardwareMonitor.config"
+  if (-not (Test-Path -LiteralPath $ConfigPath)) {
+    return $false
+  }
+
+  $Config = Get-Content -LiteralPath $ConfigPath -Raw
+  $Updated = $Config
+  if ($Config -match 'key="runWebServerMenuItem"') {
+    $Updated = $Config -replace 'key="runWebServerMenuItem" value="false"', 'key="runWebServerMenuItem" value="true"'
+  } else {
+    $Updated = $Config -replace '(</appSettings>)', "    <add key=`"runWebServerMenuItem`" value=`"true`" />`r`n  `$1"
+  }
+
+  if ($Updated -eq $Config) {
+    return $false
+  }
+
+  Set-Content -LiteralPath $ConfigPath -Value $Updated -Encoding UTF8
+  Write-Host "Enabled LibreHardwareMonitor web server in config."
+  return $true
+}
+
+function Test-LibreHardwareMonitorHttpReady {
+  param([int]$Port = 8085)
+
+  try {
+    $Payload = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/data.json" -TimeoutSec 2
+    return [bool]$Payload
+  } catch {
+    return $false
+  }
+}
+
+function Test-LibreHardwareMonitorWmiReady {
+  try {
+    $Namespaces = Get-CimInstance -Namespace root -ClassName __NAMESPACE -ErrorAction Stop
+    if (-not ($Namespaces | Where-Object { $_.Name -eq "LibreHardwareMonitor" })) {
+      return $null
+    }
+
+    $Sensors = Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop
+    $Package = $Sensors |
+      Where-Object { $_.SensorType -eq "Power" -and $_.Name -eq "CPU Package" } |
+      Select-Object -First 1
+    if ($Package -and $Package.Value -gt 0) {
+      return [double]$Package.Value
+    }
+  } catch {
+  }
+  return $null
+}
+
+function Start-LibreHardwareMonitorIfAvailable {
+  if ($env:WM_BENCH_SKIP_LHM -eq "1") {
+    return
+  }
+
+  $Candidates = @()
+  if ($env:WM_BENCH_LHM_PATH) {
+    $Candidates += $env:WM_BENCH_LHM_PATH.Trim()
+  }
+  $Candidates += @(
+    (Join-Path $RootDir "LibreHardwareMonitor\LibreHardwareMonitor.exe"),
+    (Join-Path (Split-Path $RootDir -Parent) "LibreHardwareMonitor\LibreHardwareMonitor.exe"),
+    (Join-Path $env:ProgramFiles "LibreHardwareMonitor\LibreHardwareMonitor.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "LibreHardwareMonitor\LibreHardwareMonitor.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\LibreHardwareMonitor\LibreHardwareMonitor.exe")
+  )
+
+  foreach ($Candidate in $Candidates) {
+    if ([string]::IsNullOrWhiteSpace($Candidate)) {
+      continue
+    }
+    if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) {
+      continue
+    }
+
+    $Resolved = $null
+    try {
+      $Resolved = (Resolve-Path -LiteralPath $Candidate -ErrorAction Stop).Path
+    } catch {
+      continue
+    }
+    if ([string]::IsNullOrWhiteSpace($Resolved)) {
+      continue
+    }
+
+    $ConfigChanged = Enable-LibreHardwareMonitorWebServer -ExecutablePath $Resolved
+
+    $Existing = @(Get-Process -Name "LibreHardwareMonitor" -ErrorAction SilentlyContinue)
+    if ($Existing.Count -gt 1) {
+      Write-Host "Multiple LibreHardwareMonitor instances detected; restarting a single instance."
+      $Existing | Stop-Process -Force
+      Start-Sleep -Seconds 1
+      $Existing = @()
+      $ConfigChanged = $true
+    }
+
+    if ($ConfigChanged) {
+      if ($Existing) {
+        $Existing | Stop-Process -Force
+        Start-Sleep -Seconds 1
+      }
+      Start-Process -FilePath $Resolved -WindowStyle Minimized | Out-Null
+      Start-Sleep -Seconds 2
+      Write-Host "LibreHardwareMonitor started: $Resolved"
+    } elseif (-not $Existing) {
+      Start-Process -FilePath $Resolved -WindowStyle Minimized | Out-Null
+      Start-Sleep -Seconds 2
+      Write-Host "LibreHardwareMonitor started: $Resolved"
+    } elseif (-not (Test-LibreHardwareMonitorHttpReady) -and -not (Test-LibreHardwareMonitorWmiReady)) {
+      Write-Host "Restarting LibreHardwareMonitor to enable HTTP sensor API."
+      $Existing | Stop-Process -Force
+      Start-Sleep -Seconds 1
+      Start-Process -FilePath $Resolved -WindowStyle Minimized | Out-Null
+      Start-Sleep -Seconds 2
+      Write-Host "LibreHardwareMonitor restarted: $Resolved"
+    } else {
+      Write-Host "LibreHardwareMonitor already running."
+    }
+    return
+  }
+
+  Write-Host "Tip: install LibreHardwareMonitor for accurate CPU package power readings."
+}
+
+function Wait-LibreHardwareMonitorReady {
+  param([int]$TimeoutSeconds = 30)
+
+  $Port = if ($env:WM_BENCH_LHM_PORT) { [int]$env:WM_BENCH_LHM_PORT } else { 8085 }
+
+  if (Test-LibreHardwareMonitorHttpReady -Port $Port) {
+    Write-Host "LibreHardwareMonitor HTTP API ready on port $Port."
+    return
+  }
+
+  $ReadyWatts = Test-LibreHardwareMonitorWmiReady
+  if ($null -ne $ReadyWatts) {
+    Write-Host "LibreHardwareMonitor WMI ready (CPU Package: $([math]::Round($ReadyWatts, 1)) W)."
+    return
+  }
+
+  for ($i = 0; $i -lt $TimeoutSeconds; $i++) {
+    Start-Sleep -Seconds 1
+    if (Test-LibreHardwareMonitorHttpReady -Port $Port) {
+      Write-Host "LibreHardwareMonitor HTTP API ready on port $Port."
+      return
+    }
+    $ReadyWatts = Test-LibreHardwareMonitorWmiReady
+    if ($null -ne $ReadyWatts) {
+      Write-Host "LibreHardwareMonitor WMI ready (CPU Package: $([math]::Round($ReadyWatts, 1)) W)."
+      return
+    }
+  }
+
+  Write-Host "LibreHardwareMonitor sensor API not ready yet; API will retry during startup."
+  Write-Host "In LHM: Options -> Remote Web Server -> Run (default port 8085)."
+}
+
+Start-LibreHardwareMonitorIfAvailable
+Wait-LibreHardwareMonitorReady
 
 $ApiProcess = Start-Process -FilePath $PythonExe `
   -ArgumentList @("-m", "uvicorn", "app.main:app", "--app-dir", "apps/api", "--host", $ApiHost, "--port", "$ApiPort") `
