@@ -234,6 +234,19 @@ export function fetchRuns(options?: { scope?: "active" | "unfinished" }): Promis
   return requestJson<DemoRunRecord[]>(`/runs${query}`);
 }
 
+/** Prefer unfinished runs; fall back when an older API build rejects that scope. */
+export async function fetchManageableRuns(): Promise<DemoRunRecord[]> {
+  try {
+    return await fetchRuns({ scope: "unfinished" });
+  } catch {
+    try {
+      return await fetchRuns({ scope: "active" });
+    } catch {
+      return await fetchRuns();
+    }
+  }
+}
+
 export function fetchRun(runId: string): Promise<DemoRunRecord> {
   return requestJson<DemoRunRecord>(`/runs/${encodeURIComponent(runId)}`);
 }

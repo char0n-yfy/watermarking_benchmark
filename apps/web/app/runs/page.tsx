@@ -35,7 +35,7 @@ import {
   fetchRun,
   fetchRunEvents,
   fetchRunLogs,
-  fetchRuns,
+  fetchManageableRuns,
   fetchSavedConfigs,
   pauseRun,
   resumeRun,
@@ -1435,11 +1435,29 @@ export default function RunsPage() {
   }, []);
 
   const refreshBase = async () => {
-    const [loadedConfigs, loadedRuns, latestTuning] = await Promise.all([
-      fetchSavedConfigs(),
-      fetchRuns({ scope: "unfinished" }),
-      fetchLatestParallelTuning().catch(() => null)
-    ]);
+    let loadedConfigs: SavedExperimentConfig[] = [];
+    let loadedRuns: DemoRunRecord[] = [];
+    let latestTuning: ParallelTuningJob | null = null;
+    let configsFailed = false;
+
+    try {
+      loadedConfigs = await fetchSavedConfigs();
+    } catch {
+      configsFailed = true;
+    }
+
+    try {
+      loadedRuns = await fetchManageableRuns();
+    } catch {
+      loadedRuns = [];
+    }
+
+    try {
+      latestTuning = await fetchLatestParallelTuning();
+    } catch {
+      latestTuning = null;
+    }
+
     const manageableRuns = loadedRuns.filter((run) => isActiveRun(run.status) || isResumableRun(run.status));
     setConfigs(loadedConfigs);
     setActiveRuns(manageableRuns);
@@ -1458,6 +1476,10 @@ export default function RunsPage() {
       }
       return manageableRuns[0]?.id ?? "";
     });
+
+    if (configsFailed) {
+      throw new Error("experiment-configs unavailable");
+    }
     return { loadedConfigs, manageableRuns };
   };
 
@@ -1538,11 +1560,17 @@ export default function RunsPage() {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      refreshBase().catch(() => {
-        if (!cancelled) {
-          setNotice(t.runs.apiUnavailable);
-        }
-      });
+      refreshBase()
+        .then(() => {
+          if (!cancelled) {
+            setNotice("");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setNotice(t.runs.apiUnavailable);
+          }
+        });
     };
     load();
     const timer = window.setInterval(load, 2500);
