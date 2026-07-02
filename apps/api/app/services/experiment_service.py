@@ -18,10 +18,14 @@ from app.core.planner import ExperimentCell, ExperimentSpec, materialize_cells
 from app.core.storage import safe_segment
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
 from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
+from app.services.runtime_parallel_config import apply_runtime_parallel_env
 from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols
 
 
-TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "partially_failed"}
+TERMINAL_STATUSES = {"succeeded", "failed", "paused", "cancelled", "partially_failed"}
+RESUMABLE_STATUSES = {"paused", "failed", "partially_failed"}
+STOP_INTENT_CANCEL = "cancel"
+STOP_INTENT_PAUSE = "pause"
 HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
 
 
@@ -272,8 +276,9 @@ class ExperimentService:
         if run["status"] in TERMINAL_STATUSES:
             return run
         if run["cancelRequested"]:
-            return self._finish_cancelled_run(run_id)
+            return self._finish_stopped_run(run_id, self._stop_intent(run))
 
+        apply_runtime_parallel_env(self.runs_root)
         config = self.get_config(run["configId"])
         now = utc_now()
         log_path_value = str(log_path) if log_path is not None else run.get("logPath")
@@ -364,7 +369,7 @@ class ExperimentService:
                 on_cell=record_cell,
                 should_cancel=should_cancel,
             )
-            status = summary["status"]
+            status = self._run_status_from_summary(run_id, summary["status"])
             error = None
         except Exception as exc:
             summary = None
@@ -388,8 +393,8 @@ class ExperimentService:
         run = self.get_run(run_id)
         if run["status"] in {"queued", "running"}:
             return run
-        if run["status"] == "succeeded":
-            return run
+        if run["status"] not in RESUMABLE_STATUSES:
+            raise ValueError(f"Run cannot be resumed from status: {run['status']}")
         existing_completed = sum(
             1 for cell in self.list_run_cells(run_id) if cell.get("status") == "succeeded"
         )
@@ -400,27 +405,34 @@ class ExperimentService:
                 """
                 UPDATE experiment_runs
                 SET status = ?, progress = ?, cancel_requested = 0, error = NULL,
-                    worker_id = NULL, finished_at = NULL, updated_at = ?
+                    stop_intent = NULL, worker_id = NULL, finished_at = NULL, updated_at = ?
                 WHERE id = ?
                 """,
                 ("queued", progress, now, run_id),
             )
         return self.get_run(run_id)
 
+    def pause_run(self, run_id: str) -> dict[str, Any]:
+        return self._request_stop_run(run_id, STOP_INTENT_PAUSE)
+
     def cancel_run(self, run_id: str) -> dict[str, Any]:
+        return self._request_stop_run(run_id, STOP_INTENT_CANCEL)
+
+    def _request_stop_run(self, run_id: str, intent: str) -> dict[str, Any]:
         run = self.get_run(run_id)
         now = utc_now()
         if run["status"] in TERMINAL_STATUSES:
             return run
         if run["status"] == "queued":
+            status = "paused" if intent == STOP_INTENT_PAUSE else "cancelled"
             with self.database.connect() as connection:
                 connection.execute(
                     """
                     UPDATE experiment_runs
-                    SET status = ?, cancel_requested = 1, finished_at = ?, updated_at = ?
+                    SET status = ?, cancel_requested = 1, stop_intent = ?, finished_at = ?, updated_at = ?
                     WHERE id = ?
                     """,
-                    ("cancelled", now, now, run_id),
+                    (status, intent, now, now, run_id),
                 )
             return self.get_run(run_id)
 
@@ -428,15 +440,16 @@ class ExperimentService:
             connection.execute(
                 """
                 UPDATE experiment_runs
-                SET cancel_requested = 1, updated_at = ?
+                SET cancel_requested = 1, stop_intent = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (now, run_id),
+                (intent, now, run_id),
             )
         return self.get_run(run_id)
 
     def list_runs(self, *, scope: str | None = None) -> list[dict[str, Any]]:
         active_statuses = ["queued", "running"]
+        unfinished_statuses = ["queued", "running", "paused", "failed", "partially_failed"]
         with self.database.connect() as connection:
             if scope == "active":
                 rows = connection.execute(
@@ -452,6 +465,25 @@ class ExperimentService:
                       updated_at DESC
                     """,
                     tuple(active_statuses),
+                ).fetchall()
+                return [row_to_run(row) for row in rows]
+            if scope == "unfinished":
+                rows = connection.execute(
+                    """
+                    SELECT * FROM experiment_runs
+                    WHERE status IN (?, ?, ?, ?, ?)
+                    ORDER BY
+                      CASE status
+                        WHEN 'running' THEN 0
+                        WHEN 'queued' THEN 1
+                        WHEN 'paused' THEN 2
+                        WHEN 'failed' THEN 3
+                        WHEN 'partially_failed' THEN 4
+                        ELSE 5
+                      END,
+                      updated_at DESC
+                    """,
+                    tuple(unfinished_statuses),
                 ).fetchall()
                 return [row_to_run(row) for row in rows]
             rows = connection.execute(
@@ -616,19 +648,32 @@ class ExperimentService:
             for row in rows
         ]
 
-    def _finish_cancelled_run(self, run_id: str) -> dict[str, Any]:
+    def _finish_stopped_run(self, run_id: str, intent: str) -> dict[str, Any]:
         now = utc_now()
+        status = "paused" if intent == STOP_INTENT_PAUSE else "cancelled"
         with self.database.connect() as connection:
             connection.execute(
                 """
                 UPDATE experiment_runs
-                SET status = ?, cancel_requested = 1, finished_at = COALESCE(finished_at, ?),
+                SET status = ?, cancel_requested = 1, stop_intent = ?, finished_at = COALESCE(finished_at, ?),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                ("cancelled", now, now, run_id),
+                (status, intent, now, now, run_id),
             )
         return self.get_run(run_id)
+
+    def _run_status_from_summary(self, run_id: str, summary_status: str) -> str:
+        run = self.get_run(run_id)
+        if summary_status == "cancelled" and run["cancelRequested"]:
+            return "paused" if self._stop_intent(run) == STOP_INTENT_PAUSE else "cancelled"
+        return summary_status
+
+    def _stop_intent(self, run: dict[str, Any]) -> str:
+        intent = run.get("stopIntent")
+        if intent in {STOP_INTENT_CANCEL, STOP_INTENT_PAUSE}:
+            return str(intent)
+        return STOP_INTENT_PAUSE
 
     def _score_from_summary_or_cells(
         self,

@@ -594,6 +594,11 @@ a.button {
   color: #6f4505;
 }
 
+.risk.error {
+  background: #fff1ee;
+  color: #9b352b;
+}
+
 .json-preview {
   max-height: 390px;
   overflow: auto;
@@ -834,6 +839,112 @@ a.button {
 .progress-cell span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.tuning-panel {
+  margin-bottom: 12px;
+}
+
+.panel-subtitle {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tuning-body {
+  display: grid;
+  gap: 12px;
+}
+
+.tuning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tuning-progress-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(180px, 2fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tuning-progress-row strong {
+  color: var(--ink);
+}
+
+.tuning-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+}
+
+.tuning-box {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.tuning-box h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.tuning-event-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tuning-event-list li {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tuning-event-list strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.env-suggestion-list {
+  display: grid;
+  max-height: 220px;
+  overflow-y: auto;
+  gap: 8px;
+}
+
+.env-suggestion-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.55fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+  font-size: 12px;
+}
+
+.env-suggestion-row code,
+.env-suggestion-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.env-suggestion-row code {
+  color: var(--teal);
+  font-weight: 700;
 }
 
 .console-bottom-grid,
@@ -3537,6 +3648,233 @@ a.button {
   max-width: 1180px;
 }
 
+.run-tuning-panel {
+  max-width: 1180px;
+  margin-bottom: 12px;
+}
+
+.run-tuning-body {
+  display: grid;
+  gap: 12px;
+}
+
+.run-tuning-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-tuning-progress-card,
+.run-tuning-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 14px;
+}
+
+.run-tuning-progress-card {
+  border-color: color-mix(in srgb, var(--teal) 28%, var(--line));
+  background: linear-gradient(180deg, #f5fbf8 0%, #fbfcfa 86%);
+}
+
+.run-tuning-progress-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-tuning-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.25fr) minmax(280px, 0.75fr);
+  gap: 12px;
+}
+
+.run-tuning-card.chart {
+  min-height: 340px;
+}
+
+.run-tuning-card.env {
+  background: var(--panel-soft);
+}
+
+.run-tuning-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-tuning-card-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.run-tuning-card-head strong {
+  font-size: 15px;
+}
+
+.run-tuning-card-head span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-tuning-card-head svg {
+  flex: 0 0 auto;
+  color: var(--teal);
+}
+
+.run-tuning-events {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.run-env-suggestion-list {
+  max-height: 280px;
+}
+
+.throughput-chart {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.throughput-chart svg {
+  width: 100%;
+  height: 260px;
+  overflow: visible;
+}
+
+.chart-axis {
+  stroke: #9aa8a1;
+  stroke-width: 1;
+}
+
+.chart-grid-line {
+  stroke: #e5ebe6;
+  stroke-width: 1;
+}
+
+.chart-bar {
+  fill: var(--teal);
+}
+
+.chart-bar.workers {
+  fill: var(--blue);
+}
+
+.chart-label,
+.chart-x-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.throughput-chart-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.throughput-chart-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.throughput-chart-meta i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--teal);
+}
+
+.throughput-chart-meta i.workers {
+  background: var(--blue);
+}
+
+.throughput-chart-meta strong {
+  margin-left: auto;
+  color: var(--ink);
+}
+
+.tuning-config-modal {
+  width: min(920px, calc(100vw - 28px));
+}
+
+.tuning-config-body {
+  display: grid;
+  gap: 14px;
+}
+
+.tuning-mode-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tuning-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tuning-config-grid h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.tuning-stage-section label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.tuning-stage-section label > span:not(.tuning-stage-option-copy) {
+  line-height: 1.3;
+}
+
+.tuning-stage-option-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tuning-stage-option-copy strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.tuning-stage-option-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tuning-stage-section input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--teal);
+}
+
+.tuning-effective-section {
+  grid-column: 1 / -1;
+}
+
+.tuning-effective-section code {
+  overflow-wrap: anywhere;
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .run-start-body {
   display: grid;
   gap: 18px;
@@ -3609,7 +3947,11 @@ a.button {
 }
 
 .run-summary-modal {
-  width: min(720px, calc(100vw - 28px));
+  width: min(860px, calc(100vw - 28px));
+}
+
+.run-confirm-modal {
+  width: min(520px, calc(100vw - 28px));
 }
 
 .run-start-modal-body {
@@ -3645,6 +3987,11 @@ a.button {
   border-color: color-mix(in srgb, var(--teal) 58%, var(--line));
   background: var(--teal-soft);
   box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.run-mode-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .run-mode-card svg {
@@ -3743,6 +4090,14 @@ a.button {
   gap: 4px;
 }
 
+.run-monitor-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .run-monitor-toolbar span {
   color: var(--muted);
   font-size: 12px;
@@ -3757,6 +4112,27 @@ a.button {
 .run-monitor-toolbar code {
   color: var(--muted);
   font-size: 12px;
+}
+
+.run-pause-state {
+  width: fit-content;
+  border-radius: 999px;
+  background: #fff7df;
+  color: #8a6325;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.run-confirm-body {
+  display: grid;
+  gap: 12px;
+}
+
+.run-confirm-body code {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .run-monitor-overview {
@@ -4088,6 +4464,48 @@ a.button {
   background: var(--panel-soft);
 }
 
+.run-summary-section {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.run-summary-compact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.summary-event-row {
+  background: #fff;
+}
+
+.run-summary-log-tail {
+  display: grid;
+  gap: 6px;
+}
+
+.run-summary-log-tail span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.run-summary-log-tail pre {
+  max-height: 150px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #10211d;
+  color: #dbf7ec;
+  padding: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .log-panel,
 .results-detail-panel {
   margin-top: 12px;
@@ -4142,6 +4560,8 @@ a.button {
   .runs-workbench,
   .run-control-grid,
   .run-detail-grid,
+  .run-tuning-grid,
+  .tuning-config-grid,
   .run-monitor-grid,
   .run-monitor-overview,
   .run-attack-status-grid,
@@ -4154,6 +4574,21 @@ a.button {
     height: auto;
     min-height: 0;
     max-height: none;
+  }
+
+  .run-monitor-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .run-monitor-actions {
+    justify-content: flex-start;
+  }
+
+  .tuning-grid,
+  .tuning-progress-row,
+  .env-suggestion-row {
+    grid-template-columns: 1fr;
   }
 
   .resources-browser-grid > .panel {

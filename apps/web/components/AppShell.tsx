@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import {
   Activity,
@@ -45,14 +44,14 @@ export function AppShell({ active, children }: { active: ActiveNav; children: Re
             {nav.map((item) => {
               const Icon = item.icon;
               return (
-                <Link
+                <a
                   className={`nav-link ${active === item.key ? "active" : ""}`}
                   href={item.href}
                   key={item.href}
                 >
                   <Icon size={16} />
                   {t.nav[item.key]}
-                </Link>
+                </a>
               );
             })}
           </nav>

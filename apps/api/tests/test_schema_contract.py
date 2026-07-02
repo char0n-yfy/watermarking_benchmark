@@ -32,7 +32,7 @@ class SchemaContractTest(unittest.TestCase):
     def test_status_enums_are_declared(self) -> None:
         schema = Path("apps/api/app/db/schema.sql").read_text(encoding="utf-8")
 
-        for status in ("draft", "queued", "running", "succeeded", "failed", "cancelled", "partially_failed"):
+        for status in ("draft", "queued", "running", "succeeded", "failed", "paused", "cancelled", "partially_failed"):
             self.assertIn(f"'{status}'", schema)
 
 

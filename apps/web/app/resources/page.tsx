@@ -269,13 +269,11 @@ function getResponsiveResourcePageSize(width: number, height: number): number {
 
 function useResponsiveResourcePageSize() {
   const [pageSize, setPageSize] = useState(DEFAULT_RESOURCE_PAGE_SIZE);
-  const [responsivePageSize, setResponsivePageSize] = useState(DEFAULT_RESOURCE_PAGE_SIZE);
 
   useEffect(() => {
     function updatePageSize() {
       const nextPageSize = getResponsiveResourcePageSize(window.innerWidth, window.innerHeight);
-      setResponsivePageSize(nextPageSize);
-      setPageSize(nextPageSize);
+      setPageSize((current) => (current === nextPageSize ? current : nextPageSize));
     }
 
     updatePageSize();
@@ -283,7 +281,7 @@ function useResponsiveResourcePageSize() {
     return () => window.removeEventListener("resize", updatePageSize);
   }, []);
 
-  return [pageSize, setPageSize, responsivePageSize] as const;
+  return pageSize;
 }
 
 function compareText(left: string, right: string) {
@@ -354,8 +352,7 @@ export default function ResourcesPage() {
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [page, setPage] = useState(1);
   const [catalogLoading, setCatalogLoading] = useState(true);
-  const [pageSize, setPageSize, responsivePageSize] = useResponsiveResourcePageSize();
-  const pageListRef = useRef<HTMLDivElement | null>(null);
+  const pageSize = useResponsiveResourcePageSize();
   const detailPanelBodyRef = useRef<HTMLDivElement | null>(null);
   const preservedDetailScrollRef = useRef<number | null>(null);
 
@@ -473,8 +470,10 @@ export default function ResourcesPage() {
 
   const pageCount = Math.max(1, Math.ceil(filteredResources.length / pageSize));
   const usesPagination = pageCount > 1;
-  const visibleResources = filteredResources.slice((page - 1) * pageSize, page * pageSize);
-  const visibleResourceKey = visibleResources.map((resource) => resource.id).join("|");
+  const visibleResources = useMemo(
+    () => filteredResources.slice((page - 1) * pageSize, page * pageSize),
+    [filteredResources, page, pageSize]
+  );
 
   const groupedResources = useMemo(() => {
     const groups = new Map<string, { label: string; resources: BrowserResource[] }>();
@@ -536,12 +535,8 @@ export default function ResourcesPage() {
   }, [activeType]);
 
   useEffect(() => {
-    setPage(1);
+    setPage((current) => (current === 1 ? current : 1));
   }, [availableOnly, categoryFilter, deviceFilter, query, recommendedOnly]);
-
-  useEffect(() => {
-    setPageSize(responsivePageSize);
-  }, [activeType, availableOnly, categoryFilter, deviceFilter, query, recommendedOnly, responsivePageSize, setPageSize]);
 
   useEffect(() => {
     if (page > pageCount) {
@@ -549,22 +544,12 @@ export default function ResourcesPage() {
     }
   }, [page, pageCount]);
 
-  useLayoutEffect(() => {
-    const pageList = pageListRef.current;
-    if (!pageList || pageSize <= 1 || visibleResources.length <= 1) {
-      return;
-    }
-    if (pageList.scrollHeight > pageList.clientHeight + 1) {
-      setPageSize(pageSize - 1);
-    }
-  }, [pageSize, setPageSize, visibleResourceKey, visibleResources.length]);
-
   useEffect(() => {
     if (visibleResources.length === 0) {
       return;
     }
     if (!visibleResources.some((resource) => resource.id === selectedResourceId)) {
-      setSelectedResourceId(visibleResources[0].id);
+      setSelectedResourceId((current) => (current === visibleResources[0].id ? current : visibleResources[0].id));
     }
   }, [selectedResourceId, visibleResources]);
 
@@ -587,8 +572,9 @@ export default function ResourcesPage() {
   }
 
   const handleCatalogItemUpdate = useCallback((item: DatasetCatalogItem) => {
-    setCatalogItems((items) =>
-      items.map((entry) => {
+    setCatalogItems((items) => {
+      let changed = false;
+      const nextItems = items.map((entry) => {
         if (entry.id !== item.id) {
           return entry;
         }
@@ -601,9 +587,11 @@ export default function ResourcesPage() {
         ) {
           return entry;
         }
+        changed = true;
         return item;
-      })
-    );
+      });
+      return changed ? nextItems : items;
+    });
   }, []);
 
   async function refreshAlgorithms() {
@@ -747,7 +735,7 @@ export default function ResourcesPage() {
               </span>
             </div>
             {groupedResources.length > 0 ? (
-              <div className="resource-page-list" ref={pageListRef}>
+              <div className="resource-page-list">
                 {groupedResources.map((group) => (
                   <div className="dataset-category-group" key={group.category}>
                     <div className="dataset-category-heading">
@@ -937,6 +925,14 @@ function ResourceDetail({
     upstreamRepos: t.resources.referenceUpstreamRepos,
     noUpstream: t.resources.referenceNoUpstream
   };
+  const referencePanel = reference ? (
+    <ResourceReferencePanel
+      forceLayeredRepos={resource.type === "watermarks" || resource.type === "attacks"}
+      language={language}
+      labels={referenceLabels}
+      reference={reference}
+    />
+  ) : null;
   const referenceOverview = referenceOverviewText(reference, language);
   const rawSummary = resourcePurposeSummary(resource, language);
   const summary =
@@ -982,11 +978,19 @@ function ResourceDetail({
           {attackDetail ? (
             <>
               <DetailMetric
+                label={language === "zh" ? "攻击 ID" : "Attack ID"}
+                value={resource.method ?? resource.id}
+              />
+              <DetailMetric
+                label={language === "zh" ? "类别" : "Category"}
+                value={resource.categoryLabel ?? resource.category}
+              />
+              <DetailMetric
                 label={language === "zh" ? "底层 preset" : "Presets"}
                 value={attackDetail.presetCount.toString()}
               />
               <DetailMetric
-                label={language === "zh" ? "权重" : "Weights"}
+                label={language === "zh" ? "权重 / 模型" : "Weights / models"}
                 value={
                   attackDetail.weights.length > 0
                     ? attackDetail.weights.length.toString()
@@ -1031,9 +1035,7 @@ function ResourceDetail({
         />
       ) : null}
 
-      {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
-
-      {resource.strengths && resource.type !== "attacks" ? (
+      {resource.strengths && resource.strengths.length > 0 && resource.type !== "datasets" ? (
         <div className="detail-section">
           <strong>{t.resources.strengthGrid}</strong>
           <div className="strength-chip-row">
@@ -1060,14 +1062,11 @@ function ResourceDetail({
         </div>
       ) : null}
 
-      {reference ? (
-        <ResourceReferencePanel
-          forceLayeredRepos={resource.type === "watermarks"}
-          language={language}
-          labels={referenceLabels}
-          reference={reference}
-        />
-      ) : null}
+      {resource.type === "attacks" ? referencePanel : null}
+
+      {attackDetail ? <AttackResourceDetailPanel detail={attackDetail} language={language} /> : null}
+
+      {resource.type !== "attacks" ? referencePanel : null}
 
     </div>
   );
@@ -1909,6 +1908,7 @@ function attackMethodToResource(
     method,
     path: methodAttacks[0]?.categoryPath ?? `evaluator/attacks/${category}`,
     description: attackMethodDescription(category, method, methodAttacks, language),
+    strengths: attackResourceStrengths(methodAttacks),
     requiresGpu,
     recommended: methodAttacks.some((attack) => attack.recommended),
     attack: singleAttack,
@@ -2006,6 +2006,16 @@ function buildAttackResourceDetail(
     weights: attackResourceWeights(category, method, attacks, language),
     notes: attackResourceNotes(category, method, language)
   };
+}
+
+function attackResourceStrengths(attacks: AttackPreset[]) {
+  const values = new Set<number>();
+  for (const attack of attacks) {
+    for (const strength of attack.strengths) {
+      values.add(strength);
+    }
+  }
+  return Array.from(values).sort((left, right) => left - right);
 }
 
 function attackResourceVariants(

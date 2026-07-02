@@ -51,6 +51,7 @@ interface ScoringSummary {
 }
 
 const RESULT_TABS: ResultsTab[] = ["overview", "attack", "quality", "debug"];
+const EMPTY_SCORE_ROWS: BenchmarkLeaderboardRow[] = [];
 
 export default function ResultsPage() {
   const { language, t } = useLanguage();
@@ -66,13 +67,14 @@ export default function ResultsPage() {
   const [failedOnly, setFailedOnly] = useState(false);
 
   const legacyRanking = useMemo(() => rankAggregates(results?.aggregates ?? []), [results]);
-  const scoreRows = score?.leaderboardRows ?? [];
+  const scoreRows = score?.leaderboardRows ?? EMPTY_SCORE_ROWS;
   const algorithmIds = useMemo(() => collectAlgorithmIds(results, scoreRows, legacyRanking), [legacyRanking, results, scoreRows]);
 
   useEffect(() => {
     setSelectedAlgorithmIds((current) => {
       const next = current.filter((id) => algorithmIds.includes(id));
-      return next.length > 0 ? next : algorithmIds.slice(0, 3);
+      const normalized = next.length > 0 ? next : algorithmIds.slice(0, 3);
+      return sameStringArray(current, normalized) ? current : normalized;
     });
   }, [algorithmIds]);
 
@@ -861,6 +863,10 @@ function collectAlgorithmIds(
   results?.aggregates.forEach((item) => ids.add(item.algorithmId));
   results?.cells.forEach((cell) => ids.add(cell.algorithmId));
   return Array.from(ids).sort();
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function cellScoring(cell: RunResultCell): ScoringSummary | undefined {

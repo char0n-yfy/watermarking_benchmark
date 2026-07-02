@@ -322,7 +322,7 @@ class ResourceCatalogTest(unittest.TestCase):
         self.assertEqual(_attack_params(get_attack_catalog_item("combined_physical"), 1.0), {"strength": 1.0})
         self.assertEqual(
             _attack_params(get_attack_catalog_item("3d_viewpoint_rerendering_rotate_point"), 1.0),
-            {"strength": 1.0},
+            {"save_intermediates": False, "strength": 1.0},
         )
 
     def test_attack_strength_overrides_are_used_by_runner(self) -> None:

@@ -4,6 +4,7 @@ export type RunStatus =
   | "running"
   | "succeeded"
   | "failed"
+  | "paused"
   | "cancelled"
   | "partially_failed";
 
@@ -197,6 +198,7 @@ export interface DemoRunRecord {
   logPath?: string | null;
   workerId?: string | null;
   cancelRequested?: boolean;
+  stopIntent?: "pause" | "cancel" | string | null;
   error?: string | null;
   createdAt?: string;
   startedAt?: string | null;
@@ -368,6 +370,50 @@ export interface RunEvents {
   eventPath: string;
   exists: boolean;
   events: RunStageEvent[];
+}
+
+export interface ParallelTuningEvent {
+  timestamp?: string;
+  stage?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface ParallelTuningSummary {
+  envUpdates?: Record<string, string>;
+  reportPath?: string;
+  watermarkEmbedOverrides?: string[];
+  watermarkExtractOverrides?: string[];
+  attackBatchOverrides?: string[];
+  attackCpuWorkerOverrides?: string[];
+  watermarkCpuWorkerOverrides?: string[];
+  qualityBestCpuWorkers?: Record<string, unknown> | null;
+  qualityBestPerceptualBatch?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface ParallelTuningJob {
+  id: string;
+  status: "running" | "succeeded" | "failed" | "cancelled" | string;
+  progress: number;
+  message?: string | null;
+  request?: Record<string, unknown>;
+  artifactRoot?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  events?: ParallelTuningEvent[];
+  report?: Record<string, unknown> | null;
+  summary?: ParallelTuningSummary | null;
+  error?: string | null;
+  traceback?: string | null;
+}
+
+export interface ParallelTuningSaveResult {
+  jobId: string;
+  envPath: string;
+  runtimePath?: string;
+  savedKeys: string[];
+  appliedKeys?: string[];
 }
 
 export interface WorkerHeartbeat {

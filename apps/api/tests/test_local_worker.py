@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from app.core.config import get_settings
 from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
+from app.services.runtime_parallel_config import write_runtime_parallel_env
 from apps.worker.local_worker import run_once
 
 
@@ -48,13 +49,29 @@ class LocalWorkerTest(unittest.TestCase):
                 },
             )
             queued = service.create_run(config["id"])
+            previous_png_level = os.environ.pop("WM_BENCH_PNG_COMPRESS_LEVEL", None)
+            write_runtime_parallel_env(
+                root / "runs",
+                {"WM_BENCH_PNG_COMPRESS_LEVEL": "3"},
+                job_id="test-tuning",
+                env_path=root / ".env.autodl",
+            )
 
-            processed = run_once("test-worker")
-            finished = service.get_run(queued["id"])
+            applied_png_level = None
+            try:
+                processed = run_once("test-worker")
+                finished = service.get_run(queued["id"])
+                applied_png_level = os.environ.get("WM_BENCH_PNG_COMPRESS_LEVEL")
+            finally:
+                if previous_png_level is None:
+                    os.environ.pop("WM_BENCH_PNG_COMPRESS_LEVEL", None)
+                else:
+                    os.environ["WM_BENCH_PNG_COMPRESS_LEVEL"] = previous_png_level
 
             self.assertEqual(processed, 1)
             self.assertEqual(finished["status"], "succeeded")
             self.assertTrue(Path(finished["logPath"]).exists())
+            self.assertEqual(applied_png_level, "3")
 
 
 if __name__ == "__main__":
