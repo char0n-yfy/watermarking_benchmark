@@ -152,6 +152,36 @@ type TuningPoint = {
   ok: boolean;
 };
 
+type TuningCatalogStats = {
+  watermarkMethods: number;
+  attackMethods: number;
+  attackVariants: number;
+  weightedAttackVariants: number;
+  viewpointVariants: number;
+};
+
+type TuningStageDetail = {
+  key: "watermarks" | "attacks" | "viewpoint3d" | "quality";
+  title: string;
+  badge: string;
+  checked: boolean;
+  disabled?: boolean;
+  description: string;
+  scope: string;
+  candidates: string;
+  estimate: string;
+  parameters: string[];
+  result: string;
+};
+
+const emptyTuningCatalogStats: TuningCatalogStats = {
+  watermarkMethods: 0,
+  attackMethods: 0,
+  attackVariants: 0,
+  weightedAttackVariants: 0,
+  viewpointVariants: 0
+};
+
 const terminalStatuses = new Set<DemoRunRecord["status"]>(["succeeded", "failed", "paused", "cancelled", "partially_failed"]);
 const resumableStatuses = new Set<DemoRunRecord["status"]>(["paused", "failed", "partially_failed"]);
 const finalCellStatuses = new Set(["succeeded", "failed", "skipped", "paused", "cancelled"]);
@@ -197,6 +227,8 @@ const fullTuningDefaults: TuningForm = {
   includeViewpoint3dAttacks: false,
   tuneQuality: true
 };
+
+const tuningDraftStorageKey = "wm-bench-tuning-form-draft";
 
 function badgeClass(status: DemoRunRecord["status"]) {
   if (status === "running" || status === "succeeded") {
@@ -306,6 +338,182 @@ function buildTuningPayload(form: TuningForm) {
     includeViewpoint3dAttacks: form.tuneAttacks && form.includeViewpoint3dAttacks,
     tuneQuality: form.tuneQuality
   };
+}
+
+function buildTuningCatalogStats(
+  algorithms: Array<{ id: string; method?: string | null }>,
+  attacks: Array<{
+    id: string;
+    method: string;
+    executionMethod?: string | null;
+    displayMethod?: string | null;
+    displayGroup?: string | null;
+    category?: string | null;
+    categoryPath?: string | null;
+    viewpointMotion?: string | null;
+    viewpointPhase?: number | null;
+    weightsDir?: string | null;
+    weightsPackId?: string | null;
+    weightsPath?: string | null;
+  }>
+): TuningCatalogStats {
+  const watermarkMethods = new Set(algorithms.map((algorithm) => algorithm.method || algorithm.id).filter(Boolean));
+  const attackMethods = new Set(attacks.map((attack) => attack.executionMethod || attack.method).filter(Boolean));
+  const weightedAttackVariants = attacks.filter((attack) => attack.weightsPackId || attack.weightsDir || attack.weightsPath).length;
+  const viewpointVariants = attacks.filter((attack) => {
+    const text = [
+      attack.method,
+      attack.executionMethod,
+      attack.displayMethod,
+      attack.displayGroup,
+      attack.category,
+      attack.categoryPath,
+      attack.viewpointMotion
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return Boolean(attack.viewpointMotion || attack.viewpointPhase != null || text.includes("viewpoint") || text.includes("3d"));
+  }).length;
+  return {
+    watermarkMethods: watermarkMethods.size,
+    attackMethods: attackMethods.size,
+    attackVariants: attacks.length,
+    weightedAttackVariants,
+    viewpointVariants
+  };
+}
+
+function tuningStageCount(payload: ReturnType<typeof buildTuningPayload>) {
+  return [payload.tuneWatermarks, payload.tuneAttacks, payload.tuneQuality].filter(Boolean).length;
+}
+
+function tuningParameterSegmentCount(payload: ReturnType<typeof buildTuningPayload>) {
+  let total = 0;
+  if (payload.tuneWatermarks) {
+    total += 3;
+  }
+  if (payload.tuneAttacks) {
+    total += 2;
+  }
+  if (payload.includeViewpoint3dAttacks) {
+    total += 1;
+  }
+  if (payload.tuneQuality) {
+    total += 2;
+  }
+  return total;
+}
+
+function tuningCombinationCount(payload: ReturnType<typeof buildTuningPayload>) {
+  return payload.batchCandidates.length * payload.workerCandidates.length;
+}
+
+function tuningEstimateText(payload: ReturnType<typeof buildTuningPayload>) {
+  const combinations = tuningCombinationCount(payload);
+  if (payload.mode === "full") {
+    return combinations >= 49 ? "约 10-20 分钟" : "约 6-12 分钟";
+  }
+  return combinations >= 35 ? "约 3-5 分钟" : "约 1-3 分钟";
+}
+
+function tuningPreviewLines(payload: ReturnType<typeof buildTuningPayload>) {
+  return [
+    `sampleCount=${payload.sampleCount}`,
+    `warmupCount=${payload.warmupCount}`,
+    `maxBatch=${payload.maxBatchSize}`,
+    `maxWorkers=${payload.maxWorkerCount}`,
+    `repeatCount=${payload.repeatCount}`,
+    `minImprovementRatio=${payload.minImprovementRatio}`,
+    `boundaryPatience=${payload.boundaryPatience}`,
+    `autoExpandCandidates=${payload.autoExpandCandidates ? "true" : "false"}`,
+    `batchCandidates=${payload.batchCandidates.join(",")}`,
+    `workerCandidates=${payload.workerCandidates.join(",")}`,
+    `tuneWatermarks=${payload.tuneWatermarks ? "true" : "false"}`,
+    `tuneAttacks=${payload.tuneAttacks ? "true" : "false"}`,
+    `tuneQuality=${payload.tuneQuality ? "true" : "false"}`,
+    `includeViewpoint3dAttacks=${payload.includeViewpoint3dAttacks ? "true" : "false"}`
+  ];
+}
+
+function formatCandidatePreview(values: number[], unit: string) {
+  const preview = values.length > 6 ? `${values.slice(0, 6).join(", ")} ...` : values.join(", ");
+  return `${values.length} 个 ${unit}：${preview}`;
+}
+
+function formatKnownCount(count: number, suffix: string, fallback: string) {
+  return count > 0 ? `${count} ${suffix}` : fallback;
+}
+
+function buildTuningStageDetails(
+  payload: ReturnType<typeof buildTuningPayload>,
+  stats: TuningCatalogStats
+): TuningStageDetail[] {
+  const batchPreview = formatCandidatePreview(payload.batchCandidates, "batch");
+  const workerPreview = formatCandidatePreview(payload.workerCandidates, "workers");
+  const repeated = `repeat x ${payload.repeatCount}`;
+  const attackScope = [
+    formatKnownCount(stats.attackMethods, "个攻击 method", "全部已注册攻击 method"),
+    stats.attackVariants > 0 ? `${stats.attackVariants} 个攻击配置` : "",
+    stats.weightedAttackVariants > 0 ? `${stats.weightedAttackVariants} 个含权重配置` : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return [
+    {
+      key: "watermarks",
+      title: "水印嵌入/解码",
+      badge: payload.tuneWatermarks ? "生成 3 类覆盖" : "跳过",
+      checked: payload.tuneWatermarks,
+      description: "按水印 method 分别测 embed、extract 与 CPU 并发能力，完成后写入每个 method 的最佳覆盖值。",
+      scope: formatKnownCount(stats.watermarkMethods, "个水印 method", "全部已注册水印 method"),
+      candidates: `${batchPreview}；${workerPreview}`,
+      estimate: `每个可并行阶段最多 ${payload.batchCandidates.length + payload.workerCandidates.length} 组候选，${repeated}`,
+      parameters: [
+        "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
+        "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES",
+        "WM_BENCH_WATERMARK_CPU_WORKERS_BY_METHOD"
+      ],
+      result: "适合解决不同水印算法 embed/extract 批量能力差异较大的情况。"
+    },
+    {
+      key: "attacks",
+      title: "攻击方法",
+      badge: payload.tuneAttacks ? "生成 2 类覆盖" : "跳过",
+      checked: payload.tuneAttacks,
+      description: "按攻击 method 测 batch 或 CPU workers。含多套权重的攻击会先依赖资源页安装状态，这里调执行参数。",
+      scope: attackScope,
+      candidates: `${batchPreview}；${workerPreview}`,
+      estimate: `每个攻击 method 按能力选择 batch 或 workers，${repeated}`,
+      parameters: ["WM_BENCH_ATTACK_BATCH_SIZES", "WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD"],
+      result: "完成后输出 method=batch 或 method=workers，供正式实验直接复用。"
+    },
+    {
+      key: "viewpoint3d",
+      title: "3D 视角重渲染",
+      badge: !payload.tuneAttacks ? "需先启用攻击" : payload.includeViewpoint3dAttacks ? "代表项启用" : "默认排除",
+      checked: payload.includeViewpoint3dAttacks,
+      disabled: !payload.tuneAttacks,
+      description: "只调 3D 视角攻击的代表项，再把最优 batch 应用到同类 3D 变体，避免多视角组合把搜索时间放大。",
+      scope: formatKnownCount(stats.viewpointVariants, "个 3D 攻击配置", "同类 3D 视角变体"),
+      candidates: batchPreview,
+      estimate: `代表项最多 ${payload.batchCandidates.length} 组 batch 候选，${repeated}`,
+      parameters: ["WM_BENCH_ATTACK_BATCH_SIZES", "inheritedAttackBatchOverrides"],
+      result: "适合服务器资源足够、并且正式实验包含 3D 视角重渲染攻击时开启。"
+    },
+    {
+      key: "quality",
+      title: "quality 指标",
+      badge: payload.tuneQuality ? "生成 2 类覆盖" : "跳过",
+      checked: payload.tuneQuality,
+      description: "单独测 CPU 质量指标 workers 与感知指标 batch，避免评估阶段成为正式实验瓶颈。",
+      scope: "质量评估阶段",
+      candidates: `${workerPreview}；${batchPreview}`,
+      estimate: `quality CPU + perceptual batch 两条路径，${repeated}`,
+      parameters: ["WM_BENCH_QUALITY_CPU_WORKERS", "WM_BENCH_PERCEPTUAL_BATCH_SIZE"],
+      result: "完成后会把质量评估的 CPU 并发和感知指标 batch 写入运行环境。"
+    }
+  ];
 }
 
 function percent(current: number, total: number) {
@@ -838,6 +1046,8 @@ export default function RunsPage() {
   const [tuningForm, setTuningForm] = useState<TuningForm>(quickTuningDefaults);
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningNotice, setTuningNotice] = useState("");
+  const [tuningDraftNotice, setTuningDraftNotice] = useState("");
+  const [tuningCatalogStats, setTuningCatalogStats] = useState<TuningCatalogStats>(emptyTuningCatalogStats);
 
   const selectedConfig = useMemo(
     () => configs.find((config) => config.id === selectedConfigId),
@@ -890,6 +1100,34 @@ export default function RunsPage() {
   const tuningChartPoints = useMemo(() => tuningPoints(tuningJob).slice(-28), [tuningJob]);
   const tuningEvents = (tuningJob?.events ?? []).slice(-8).reverse();
   const effectiveTuningPayload = useMemo(() => buildTuningPayload(tuningForm), [tuningForm]);
+  const effectiveTuningCombinations = tuningCombinationCount(effectiveTuningPayload);
+  const effectiveTuningStages = tuningStageCount(effectiveTuningPayload);
+  const effectiveTuningSegments = tuningParameterSegmentCount(effectiveTuningPayload);
+  const tuningStageDetails = useMemo(
+    () => buildTuningStageDetails(effectiveTuningPayload, tuningCatalogStats),
+    [effectiveTuningPayload, tuningCatalogStats]
+  );
+  const experimentActive = Boolean(monitorRun);
+  const tuningActive = tuningRunning && !experimentActive;
+  const showTuningSection = !experimentActive;
+  const showExperimentSection = !tuningActive;
+
+  useEffect(() => {
+    try {
+      const rawDraft = window.localStorage.getItem(tuningDraftStorageKey);
+      if (!rawDraft) {
+        return;
+      }
+      const draft = JSON.parse(rawDraft) as Partial<TuningForm>;
+      if (draft.mode !== "quick" && draft.mode !== "full") {
+        return;
+      }
+      const defaults = draft.mode === "full" ? fullTuningDefaults : quickTuningDefaults;
+      setTuningForm({ ...defaults, ...draft, mode: draft.mode });
+    } catch {
+      // Ignore stale local UI drafts.
+    }
+  }, []);
 
   const refreshBase = async () => {
     const [loadedConfigs, loadedRuns, latestTuning] = await Promise.all([
@@ -943,6 +1181,7 @@ export default function RunsPage() {
         nextResourceNames[attack.id] = attack.name;
       });
       setResourceNames(nextResourceNames);
+      setTuningCatalogStats(buildTuningCatalogStats(algorithms, attacks));
     };
     loadResourceNames().catch(() => undefined);
     return () => {
@@ -1193,6 +1432,7 @@ export default function RunsPage() {
   const openTuningDialog = () => {
     setTuningDialogOpen(true);
     setTuningNotice("");
+    setTuningDraftNotice("");
   };
 
   const setTuningMode = (mode: TuningMode) => {
@@ -1201,6 +1441,32 @@ export default function RunsPage() {
 
   const updateTuningForm = (updates: Partial<TuningForm>) => {
     setTuningForm((current) => ({ ...current, ...updates }));
+    setTuningDraftNotice("");
+  };
+
+  const updateTuningStage = (key: TuningStageDetail["key"], checked: boolean) => {
+    if (key === "watermarks") {
+      updateTuningForm({ tuneWatermarks: checked });
+      return;
+    }
+    if (key === "attacks") {
+      updateTuningForm({ tuneAttacks: checked, includeViewpoint3dAttacks: checked ? tuningForm.includeViewpoint3dAttacks : false });
+      return;
+    }
+    if (key === "viewpoint3d") {
+      updateTuningForm({ includeViewpoint3dAttacks: checked });
+      return;
+    }
+    updateTuningForm({ tuneQuality: checked });
+  };
+
+  const saveTuningDraft = () => {
+    try {
+      window.localStorage.setItem(tuningDraftStorageKey, JSON.stringify(tuningForm));
+      setTuningDraftNotice("配置已保存到本地草稿。");
+    } catch {
+      setTuningDraftNotice("保存失败，请检查浏览器存储权限。");
+    }
   };
 
   const submitTuningDialog = async () => {
@@ -1294,19 +1560,20 @@ export default function RunsPage() {
         </div>
       </div>
 
-      <section className="panel run-tuning-panel">
-        <div className="panel-header">
-          <div>
-            <h2>并行参数自动调优</h2>
-            <p>
-              {tuningJob
-                ? `${tuningJob.id} · ${tuningJob.message ?? tuningJob.status}`
-                : "在开始实验之外单独搜索 batch size 与 CPU worker 参数。"}
-            </p>
+      {showTuningSection ? (
+        <section className="panel run-tuning-panel">
+          <div className="panel-header">
+            <div>
+              <h2>并行参数自动调优</h2>
+              <p>
+                {tuningJob
+                  ? `${tuningJob.id} · ${tuningJob.message ?? tuningJob.status}`
+                  : "在开始实验之外单独搜索 batch size 与 CPU worker 参数。"}
+              </p>
+            </div>
+            <span className={tuningStatusClass(tuningJob?.status)}>{tuningJob?.status ?? "idle"}</span>
           </div>
-          <span className={tuningStatusClass(tuningJob?.status)}>{tuningJob?.status ?? "idle"}</span>
-        </div>
-        <div className="panel-body run-tuning-body">
+          <div className="panel-body run-tuning-body">
           <div className="run-tuning-toolbar">
             <button className="button primary" disabled={tuningBusy || tuningRunning} onClick={openTuningDialog} type="button">
               <SlidersHorizontal size={16} />
@@ -1405,10 +1672,11 @@ export default function RunsPage() {
               <div className="empty compact-empty">完成搜索后显示 summary。</div>
             )}
           </section>
-        </div>
-      </section>
+          </div>
+        </section>
+      ) : null}
 
-      {monitorRun ? (
+      {showExperimentSection ? (monitorRun ? (
         <section className="panel run-execution-panel">
           <div className="panel-header">
             <div>
@@ -1578,37 +1846,41 @@ export default function RunsPage() {
 
           </div>
         </section>
-      )}
+      )) : null}
 
       {tuningDialogOpen ? (
         <div className="modal-backdrop" role="presentation">
           <div aria-modal="true" className="config-modal tuning-config-modal" role="dialog">
-            <div className="modal-header">
+            <div className="modal-header tuning-modal-header">
               <div>
                 <h2>并行参数搜索</h2>
-                <p>配置搜索范围和搜索模式。sampleCount 会自动不小于最大 batch。</p>
+                <p>配置搜索范围与搜索模式。sampleCount 会自动不小于最大 batch。</p>
               </div>
-              <button className="icon-button" onClick={() => setTuningDialogOpen(false)} title="关闭" type="button">
+              <button className="icon-button tuning-close-button" onClick={() => setTuningDialogOpen(false)} title="关闭" type="button">
                 ×
               </button>
             </div>
             <div className="modal-body tuning-config-body">
               <div className="run-mode-grid tuning-mode-grid">
                 <button
-                  className={tuningForm.mode === "quick" ? "run-mode-card selected" : "run-mode-card"}
+                  className={tuningForm.mode === "quick" ? "run-mode-card tuning-mode-card selected" : "run-mode-card tuning-mode-card"}
                   onClick={() => setTuningMode("quick")}
                   type="button"
                 >
-                  <SlidersHorizontal size={18} />
+                  <span className="tuning-mode-icon">
+                    <SlidersHorizontal size={18} />
+                  </span>
                   <strong>快速模式</strong>
                   <span>固定候选集合，单次测量，适合快速得到一版可用参数。</span>
                 </button>
                 <button
-                  className={tuningForm.mode === "full" ? "run-mode-card selected" : "run-mode-card"}
+                  className={tuningForm.mode === "full" ? "run-mode-card tuning-mode-card selected" : "run-mode-card tuning-mode-card"}
                   onClick={() => setTuningMode("full")}
                   type="button"
                 >
-                  <BarChart3 size={18} />
+                  <span className="tuning-mode-icon">
+                    <BarChart3 size={18} />
+                  </span>
                   <strong>完整模式</strong>
                   <span>自动扩展候选、检测吞吐边界、重复测量并用中位数选最优。</span>
                 </button>
@@ -1620,44 +1892,56 @@ export default function RunsPage() {
                   <div className="field-grid">
                     <div className="field">
                       <label htmlFor="tuning-samples">sampleCount</label>
-                      <input
-                        id="tuning-samples"
-                        min={2}
-                        onChange={(event) => updateTuningForm({ sampleCount: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.sampleCount}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-samples"
+                          min={2}
+                          onChange={(event) => updateTuningForm({ sampleCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.sampleCount}
+                        />
+                        <span>count</span>
+                      </div>
                     </div>
                     <div className="field">
                       <label htmlFor="tuning-warmup">warmupCount</label>
-                      <input
-                        id="tuning-warmup"
-                        min={1}
-                        onChange={(event) => updateTuningForm({ warmupCount: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.warmupCount}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-warmup"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ warmupCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.warmupCount}
+                        />
+                        <span>count</span>
+                      </div>
                     </div>
                     <div className="field">
                       <label htmlFor="tuning-repeat">repeatCount</label>
-                      <input
-                        id="tuning-repeat"
-                        min={1}
-                        onChange={(event) => updateTuningForm({ repeatCount: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.repeatCount}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-repeat"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ repeatCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.repeatCount}
+                        />
+                        <span>count</span>
+                      </div>
                     </div>
                     <div className="field">
                       <label htmlFor="tuning-improve">最小提升比例</label>
-                      <input
-                        id="tuning-improve"
-                        min={0}
-                        onChange={(event) => updateTuningForm({ minImprovementRatio: Number(event.target.value) })}
-                        step={0.01}
-                        type="number"
-                        value={tuningForm.minImprovementRatio}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-improve"
+                          min={0}
+                          onChange={(event) => updateTuningForm({ minImprovementRatio: Number(event.target.value) })}
+                          step={0.01}
+                          type="number"
+                          value={tuningForm.minImprovementRatio}
+                        />
+                        <span>ratio</span>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -1667,109 +1951,208 @@ export default function RunsPage() {
                   <div className="field-grid">
                     <div className="field">
                       <label htmlFor="tuning-batch-min">最小 batch</label>
-                      <input
-                        id="tuning-batch-min"
-                        min={1}
-                        onChange={(event) => updateTuningForm({ minBatchSize: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.minBatchSize}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-batch-min"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ minBatchSize: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.minBatchSize}
+                        />
+                        <span>batch</span>
+                      </div>
                     </div>
                     <div className="field">
                       <label htmlFor="tuning-batch-max">最大 batch</label>
-                      <input
-                        id="tuning-batch-max"
-                        min={1}
-                        onChange={(event) => updateTuningForm({ maxBatchSize: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.maxBatchSize}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-batch-max"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ maxBatchSize: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.maxBatchSize}
+                        />
+                        <span>batch</span>
+                      </div>
                     </div>
                     <div className="field">
                       <label htmlFor="tuning-worker-min">最小 workers</label>
-                      <input
-                        id="tuning-worker-min"
-                        min={1}
-                        onChange={(event) => updateTuningForm({ minWorkerCount: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.minWorkerCount}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-worker-min"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ minWorkerCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.minWorkerCount}
+                        />
+                        <span>workers</span>
+                      </div>
                     </div>
                     <div className="field">
                       <label htmlFor="tuning-worker-max">最大 workers</label>
-                      <input
-                        id="tuning-worker-max"
-                        min={1}
-                        onChange={(event) => updateTuningForm({ maxWorkerCount: Number(event.target.value) })}
-                        type="number"
-                        value={tuningForm.maxWorkerCount}
-                      />
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-worker-max"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ maxWorkerCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.maxWorkerCount}
+                        />
+                        <span>workers</span>
+                      </div>
                     </div>
                   </div>
                 </section>
 
                 <section className="run-dialog-section tuning-stage-section">
-                  <h3>调参阶段</h3>
-                  <label>
-                    <input
-                      checked={tuningForm.tuneWatermarks}
-                      onChange={(event) => updateTuningForm({ tuneWatermarks: event.target.checked })}
-                      type="checkbox"
-                    />
-                    水印嵌入/解码
-                  </label>
-                  <label>
-                    <input
-                      checked={tuningForm.tuneAttacks}
-                      onChange={(event) => updateTuningForm({ tuneAttacks: event.target.checked })}
-                      type="checkbox"
-                    />
-                    攻击方法
-                  </label>
-                  <label>
-                    <input
-                      checked={tuningForm.tuneAttacks && tuningForm.includeViewpoint3dAttacks}
-                      disabled={!tuningForm.tuneAttacks}
-                      onChange={(event) => updateTuningForm({ includeViewpoint3dAttacks: event.target.checked })}
-                      type="checkbox"
-                    />
-                    <span className="tuning-stage-option-copy">
-                      <strong>3D 视角重渲染</strong>
-                      <small>默认排除；勾选后只调 rotate + 看向中心代表项，并应用到全部 3D 变体。</small>
-                    </span>
-                  </label>
-                  <label>
-                    <input
-                      checked={tuningForm.tuneQuality}
-                      onChange={(event) => updateTuningForm({ tuneQuality: event.target.checked })}
-                      type="checkbox"
-                    />
-                    quality 指标
-                  </label>
+                  <div className="tuning-section-heading">
+                    <div>
+                      <h3>调参阶段</h3>
+                      <p>按调参完成后会写入的参数分项组织，便于确认每个阶段影响正式实验的哪一部分。</p>
+                    </div>
+                    <span>{effectiveTuningStages} 阶段 · {effectiveTuningSegments} 分项</span>
+                  </div>
+                  <div className="tuning-stage-detail-grid">
+                    {tuningStageDetails.map((detail) => (
+                      <label
+                        className={[
+                          "tuning-stage-detail",
+                          detail.checked ? "enabled" : "muted",
+                          detail.disabled ? "disabled" : ""
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={detail.key}
+                      >
+                        <span className="tuning-stage-detail-switch">
+                          <input
+                            checked={detail.checked}
+                            disabled={detail.disabled}
+                            onChange={(event) => updateTuningStage(detail.key, event.target.checked)}
+                            type="checkbox"
+                          />
+                        </span>
+                        <span className="tuning-stage-detail-copy">
+                          <span className="tuning-stage-title-line">
+                            <strong>{detail.title}</strong>
+                            <em>{detail.badge}</em>
+                          </span>
+                          <small>{detail.description}</small>
+                          <span className="tuning-stage-metrics">
+                            <span>
+                              <small>覆盖范围</small>
+                              <strong>{detail.scope}</strong>
+                            </span>
+                            <span>
+                              <small>候选空间</small>
+                              <strong>{detail.candidates}</strong>
+                            </span>
+                            <span>
+                              <small>测量策略</small>
+                              <strong>{detail.estimate}</strong>
+                            </span>
+                          </span>
+                          <span className="tuning-stage-param-row">
+                            {detail.parameters.map((parameter) => (
+                              <code key={`${detail.key}-${parameter}`}>{parameter}</code>
+                            ))}
+                          </span>
+                          <span className="tuning-stage-note">{detail.result}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="run-dialog-section tuning-estimate-section">
+                  <h3>搜索预估</h3>
+                  <div className="tuning-estimate-list">
+                    <div>
+                      <span>当前模式</span>
+                      <strong>{effectiveTuningPayload.mode === "quick" ? "快速模式" : "完整模式"}</strong>
+                    </div>
+                    <div>
+                      <span>候选 batch</span>
+                      <strong>{effectiveTuningPayload.batchCandidates.length} 个</strong>
+                    </div>
+                    <div>
+                      <span>候选 workers</span>
+                      <strong>{effectiveTuningPayload.workerCandidates.length} 个</strong>
+                    </div>
+                    <div>
+                      <span>候选组合</span>
+                      <strong>{effectiveTuningCombinations} 组</strong>
+                    </div>
+                    <div>
+                      <span>调参阶段</span>
+                      <strong>{effectiveTuningStages} 个</strong>
+                    </div>
+                    <div>
+                      <span>输出分项</span>
+                      <strong>{effectiveTuningSegments} 类</strong>
+                    </div>
+                    <div>
+                      <span>预计耗时</span>
+                      <strong>{tuningEstimateText(effectiveTuningPayload)}</strong>
+                    </div>
+                    <div>
+                      <span>sampleCount 已校正</span>
+                      <strong>{effectiveTuningPayload.sampleCount}</strong>
+                    </div>
+                  </div>
                 </section>
 
                 <section className="run-dialog-section tuning-effective-section">
-                  <h3>实际提交参数</h3>
-                  <div className="run-meta-grid">
-                    <Metric label="sampleCount" value={String(effectiveTuningPayload.sampleCount)} />
-                    <Metric label="最大 batch" value={String(effectiveTuningPayload.maxBatchSize)} />
-                    <Metric label="最大 workers" value={String(effectiveTuningPayload.maxWorkerCount)} />
-                    <Metric label="重复次数" value={String(effectiveTuningPayload.repeatCount)} />
-                    <Metric label="3D 攻击" value={effectiveTuningPayload.includeViewpoint3dAttacks ? "包含" : "排除"} />
+                  <h3>实际提交参数 Preview</h3>
+                  <div className="tuning-preview-grid">
+                    <div className="tuning-preview-stat">
+                      <span>sampleCount</span>
+                      <strong>{effectiveTuningPayload.sampleCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>最大 batch</span>
+                      <strong>{effectiveTuningPayload.maxBatchSize}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>最大 workers</span>
+                      <strong>{effectiveTuningPayload.maxWorkerCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>重复次数</span>
+                      <strong>{effectiveTuningPayload.repeatCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>3D 攻击</span>
+                      <strong>{effectiveTuningPayload.includeViewpoint3dAttacks ? "包含" : "排除"}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>输出分项</span>
+                      <strong>{effectiveTuningSegments}</strong>
+                    </div>
                   </div>
-                  <code>batchCandidates={effectiveTuningPayload.batchCandidates.join(",")}</code>
-                  <code>workerCandidates={effectiveTuningPayload.workerCandidates.join(",")}</code>
+                  <pre className="tuning-preview-code">
+                    <code>{tuningPreviewLines(effectiveTuningPayload).join("\n")}</code>
+                  </pre>
                 </section>
               </div>
             </div>
-            <div className="modal-footer">
-              <button className="button" onClick={() => setTuningDialogOpen(false)} type="button">
-                取消
-              </button>
-              <button className="button primary" disabled={tuningBusy} onClick={submitTuningDialog} type="button">
-                <Zap size={16} />
-                开始搜索
-              </button>
+            <div className="modal-footer tuning-modal-footer">
+              <span className={tuningDraftNotice ? "tuning-footer-note saved" : "tuning-footer-note"}>
+                {tuningDraftNotice || `预计将测试 ${effectiveTuningCombinations} 组候选参数，覆盖 ${effectiveTuningSegments} 类输出分项`}
+              </span>
+              <div className="toolbar">
+                <button className="button" onClick={() => setTuningDialogOpen(false)} type="button">
+                  取消
+                </button>
+                <button className="button" disabled={tuningBusy} onClick={saveTuningDraft} type="button">
+                  <Save size={16} />
+                  保存配置
+                </button>
+                <button className="button primary" disabled={tuningBusy} onClick={submitTuningDialog} type="button">
+                  <Zap size={16} />
+                  开始搜索
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -61,16 +61,6 @@ python3 scripts/check-deploy-readiness.py
 
 该脚本会检查资源目录、数据集目录、权重目录、运行目录可写性、SQLite、算法/攻击目录扫描和 worker 心跳。缺数据集或 worker 未启动会显示 WARN；SQLite、运行目录、资源目录扫描失败会显示 FAIL。服务运行后也可以访问 `/system/readiness` 查看同一份检查结果。
 
-## Docker 参考
-
-Docker Compose 是单机部署参考：
-
-```bash
-docker compose -f infra/docker-compose.yml up --build
-```
-
-Web 容器会构建静态前端并通过 Nginx 暴露 `http://localhost:3000`，前端请求 `/api/*` 会代理到 FastAPI 容器。实际生产数据仍应挂载到 `wmbench-data` 或替换为宿主机持久化卷。
-
 ## 验证
 
 前端构建：

@@ -45,16 +45,6 @@ class RunCreatePayload(BaseModel):
         return stripped or None
 
 
-class ExperimentSpecDraft(BaseModel):
-    name: str
-    dataset_version_ids: list[str]
-    algorithm_version_ids: list[str]
-    attack_preset_ids: list[str]
-    seeds: list[int]
-    parameter_grid: dict[str, Any] = Field(default_factory=dict)
-    max_samples_per_dataset: Optional[int] = None
-
-
 class ExperimentRunSummary(BaseModel):
     run_id: str
     spec_id: str

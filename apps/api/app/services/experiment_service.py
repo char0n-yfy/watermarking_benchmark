@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +13,6 @@ from app.core.local_db import (
     row_to_config,
     row_to_run,
 )
-from app.core.planner import ExperimentCell, ExperimentSpec, materialize_cells
 from app.core.storage import safe_segment
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
 from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
@@ -27,12 +25,6 @@ RESUMABLE_STATUSES = {"paused", "failed", "partially_failed"}
 STOP_INTENT_CANCEL = "cancel"
 STOP_INTENT_PAUSE = "pause"
 HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
-
-
-@dataclass(frozen=True)
-class MaterializedExperiment:
-    spec: ExperimentSpec
-    cells: list[ExperimentCell]
 
 
 def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
@@ -102,9 +94,6 @@ class ExperimentService:
         self.resources_root = resources_root
         self.runs_root = runs_root
         self.database.initialize()
-
-    def materialize(self, spec: ExperimentSpec) -> MaterializedExperiment:
-        return MaterializedExperiment(spec=spec, cells=materialize_cells(spec))
 
     def create_config(self, name: str, selection: dict[str, Any]) -> dict[str, Any]:
         now = utc_now()
@@ -238,6 +227,7 @@ class ExperimentService:
         self.reconcile_stale_runs()
         now = utc_now()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
                 SELECT * FROM experiment_runs
@@ -250,7 +240,7 @@ class ExperimentService:
             if row is None:
                 return None
 
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE experiment_runs
                 SET status = ?, worker_id = ?, started_at = COALESCE(started_at, ?),
@@ -259,6 +249,8 @@ class ExperimentService:
                 """,
                 ("running", worker_id, now, now, row["id"], "queued"),
             )
+            if cursor.rowcount != 1:
+                return None
             claimed = connection.execute(
                 "SELECT * FROM experiment_runs WHERE id = ?",
                 (row["id"],),
@@ -301,11 +293,14 @@ class ExperimentService:
 
         completed = existing_completed
 
-        def should_cancel() -> bool:
+        def stop_intent() -> str | None:
             try:
-                return bool(self.get_run(run_id)["cancelRequested"])
+                current_run = self.get_run(run_id)
             except KeyError:
-                return True
+                return STOP_INTENT_CANCEL
+            if current_run["cancelRequested"]:
+                return self._stop_intent(current_run)
+            return None
 
         def record_cell(cell: dict[str, Any]) -> None:
             nonlocal completed
@@ -368,7 +363,7 @@ class ExperimentService:
                     resume=True,
                 ),
                 on_cell=record_cell,
-                should_cancel=should_cancel,
+                should_cancel=stop_intent,
             )
             status = self._run_status_from_summary(run_id, summary["status"])
             error = None
@@ -378,7 +373,11 @@ class ExperimentService:
             error = f"{type(exc).__name__}: {exc}"
 
         finished = utc_now()
-        final_progress = summary["progress"] if summary is not None else 0
+        final_progress = (
+            summary["progress"]
+            if summary is not None
+            else int(round((len(self.list_run_cells(run_id)) / max(1, run["cells"])) * 100))
+        )
         with self.database.connect() as connection:
             connection.execute(
                 """
@@ -518,6 +517,15 @@ class ExperimentService:
         summary = None
         if summary_path.exists():
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            if isinstance(summary, dict):
+                summary = {
+                    **summary,
+                    "runId": run["id"],
+                    "status": run["status"],
+                    "progress": run["progress"],
+                    "completedProgress": run["completedProgress"],
+                    "progressKind": run["progressKind"],
+                }
         return {
             "run": run,
             "cells": cells,

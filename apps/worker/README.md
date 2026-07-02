@@ -1,11 +1,10 @@
 # Worker
 
-The worker package owns asynchronous CPU/GPU execution and Docker sandbox orchestration.
+The worker package owns local SQLite-queued experiment execution for the
+local/AutoDL runtime profile.
 
 Current scope:
 
-- define Celery queues;
-- provide a dry-run attack task that reuses `evaluator.attacks.runner`;
-- construct Docker sandbox commands for reviewed algorithm packages.
-
-Concrete watermark algorithm execution is intentionally left for the next stage.
+- claim queued experiment runs from the SQLite metadata database;
+- execute runs through `app.services.experiment_service`;
+- provide a dry-run attack helper that reuses `evaluator.attacks.runner`.

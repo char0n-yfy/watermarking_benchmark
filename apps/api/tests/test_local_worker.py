@@ -42,7 +42,7 @@ class LocalWorkerTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,

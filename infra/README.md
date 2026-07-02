@@ -5,13 +5,9 @@ The active development profile is local/AutoDL:
 - FastAPI stores demo metadata in SQLite.
 - Runs and image artifacts are written under `runs/local` locally or
   `WM_BENCH_RUNS_ROOT` on AutoDL.
-- The local worker is a plain Python process, not Celery.
+- The local worker is a plain Python process.
 - Datasets live under `resources/datasets`.
 - Model weights live under `resources/weights`.
-
-Docker files are kept as a future single-server deployment reference. They are
-not the primary path for AutoDL because AutoDL instances are not a good fit for
-custom Docker Compose deployments.
 
 ## Local start
 

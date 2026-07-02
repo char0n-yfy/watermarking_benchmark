@@ -25,11 +25,3 @@ def run_attack_dry_run(
         seed=seed,
     )
     return [result.to_json() for result in run_attack_dir(job)]
-
-
-def prepare_sandbox_build(algorithm_version_id: str) -> dict[str, str]:
-    return {
-        "algorithm_version_id": algorithm_version_id,
-        "status": "review_required",
-        "message": "Sandbox build is reserved for reviewed algorithm packages.",
-    }

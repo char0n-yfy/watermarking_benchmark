@@ -31,7 +31,7 @@ class ExperimentServiceTest(unittest.TestCase):
             )
             valid_selection = {
                 "datasetIds": ["smoke"],
-                "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                "algorithmIds": ["alg-traditional-spread-dct"],
                 "attackPresetIds": ["atk-jpeg"],
                 "seeds": [42],
                 "maxSamples": 1,
@@ -66,7 +66,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-jpeg"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -92,7 +92,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -141,7 +141,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke Config",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -153,6 +153,39 @@ class ExperimentServiceTest(unittest.TestCase):
 
             self.assertEqual(named_run["taskName"], "Task A")
             self.assertEqual(default_run["taskName"], "Smoke Config")
+
+    def test_claim_next_run_only_allows_one_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
+
+            claimed = service.claim_next_run("worker-a")
+            duplicate = service.claim_next_run("worker-b")
+            current = service.get_run(run["id"])
+
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed["id"], run["id"])
+            self.assertIsNone(duplicate)
+            self.assertEqual(current["status"], "running")
+            self.assertEqual(current["workerId"], "worker-a")
 
     def test_pause_queued_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +202,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -205,7 +238,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -237,7 +270,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -247,8 +280,8 @@ class ExperimentServiceTest(unittest.TestCase):
 
             def fake_runner(request, on_cell, should_cancel):
                 service.pause_run(run["id"])
-                self.assertTrue(should_cancel())
-                return {"status": "cancelled", "progress": 0}
+                self.assertEqual(should_cancel(), "pause")
+                return {"status": "paused", "progress": 0}
 
             with patch("app.services.experiment_service.run_local_experiment", side_effect=fake_runner):
                 finished = service.execute_run(run["id"])
@@ -271,7 +304,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,
@@ -281,7 +314,7 @@ class ExperimentServiceTest(unittest.TestCase):
 
             def fake_runner(request, on_cell, should_cancel):
                 service.cancel_run(run["id"])
-                self.assertTrue(should_cancel())
+                self.assertEqual(should_cancel(), "cancel")
                 return {"status": "cancelled", "progress": 0}
 
             with patch("app.services.experiment_service.run_local_experiment", side_effect=fake_runner):
@@ -290,6 +323,105 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(finished["status"], "cancelled")
             self.assertTrue(finished["cancelRequested"])
             self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="unfinished")])
+
+    def test_runner_exception_preserves_recorded_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
+
+            def fake_runner(request, on_cell, should_cancel):
+                manifest = root / "cell_detection_manifest.json"
+                manifest.write_text("[]", encoding="utf-8")
+                on_cell(
+                    {
+                        "runId": run["id"],
+                        "cellKey": "smoke__alg-traditional-spread-dct__atk-identity__0__42",
+                        "status": "succeeded",
+                        "datasetId": "smoke",
+                        "algorithmId": "alg-traditional-spread-dct",
+                        "watermarkMethod": "traditional-spread-dct",
+                        "attackPresetId": "atk-identity",
+                        "attackMethod": "identity",
+                        "attackStrength": 0.0,
+                        "seed": 42,
+                        "sampleCount": 1,
+                        "manifestPath": str(manifest),
+                        "outputDir": str(root / "cell"),
+                        "error": None,
+                        "elapsedMs": 1.0,
+                    }
+                )
+                raise RuntimeError("boom")
+
+            with patch("app.services.experiment_service.run_local_experiment", side_effect=fake_runner):
+                finished = service.execute_run(run["id"])
+
+            self.assertEqual(finished["status"], "failed")
+            self.assertEqual(finished["progress"], 100)
+            self.assertIn("RuntimeError: boom", finished["error"])
+
+    def test_run_results_use_sqlite_lifecycle_over_artifact_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
+            paused = service.pause_run(run["id"])
+            summary_path = Path(paused["artifactRoot"]) / "run_summary.json"
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "runId": paused["id"],
+                        "status": "cancelled",
+                        "progress": 0,
+                        "completedProgress": 0,
+                        "progressKind": "completedCells",
+                        "cells": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            results = service.get_run_results(run["id"])
+
+            self.assertEqual(results["run"]["status"], "paused")
+            self.assertEqual(results["summary"]["status"], "paused")
+            self.assertEqual(results["summary"]["progress"], paused["progress"])
 
     def test_reconcile_stale_runs_marks_orphaned_running_as_paused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -306,7 +438,7 @@ class ExperimentServiceTest(unittest.TestCase):
                 "Smoke",
                 {
                     "datasetIds": ["smoke"],
-                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
                     "attackPresetIds": ["atk-identity"],
                     "seeds": [42],
                     "maxSamples": 1,

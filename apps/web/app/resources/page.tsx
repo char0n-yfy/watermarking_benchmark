@@ -14,7 +14,7 @@ import { AppShell } from "@/components/AppShell";
 import { ResourcePagination } from "@/components/ResourcePagination";
 import { ResourceReferencePanel } from "@/components/ResourceReferencePanel";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchDatasetCatalog, fetchDatasetDetail, fetchDatasetDownloadJob, fetchWeightDownloadJob, startAttackWeightDownload, startDatasetDownload, startWeightDownload, uninstallAttackInstallation, uninstallDatasetInstallation, uninstallWatermarkInstallation } from "@/lib/api";
+import { fetchAlgorithms, fetchAttacks, fetchAttackWeightDownloadJob, fetchAttackWeightDownloadJobs, fetchDatasetCatalog, fetchDatasetDetail, fetchDatasetDownloadJob, fetchDatasetDownloadJobs, fetchWeightDownloadJob, fetchWeightDownloadJobs, startAttackWeightDownload, startDatasetDownload, startWeightDownload, uninstallAttackInstallation, uninstallDatasetInstallation, uninstallWatermarkInstallation } from "@/lib/api";
 import { localizedName } from "@/lib/i18n";
 import {
   algorithms as fallbackAlgorithms,
@@ -1216,6 +1216,40 @@ function catalogToResource(item: DatasetCatalogItem, language: "zh" | "en"): Bro
   };
 }
 
+function isWeightDownloadInFlight(job: WeightDownloadJob | null | undefined) {
+  return job?.status === "queued" || job?.status === "running";
+}
+
+function isDatasetDownloadInFlight(job: DatasetDownloadJob | null | undefined) {
+  return job?.status === "queued" || job?.status === "running";
+}
+
+function resumableWeightDownloadJob(jobs: WeightDownloadJob[]) {
+  return (
+    jobs.find(isWeightDownloadInFlight) ??
+    jobs.find((job) => job.status === "failed") ??
+    jobs.find((job) => job.status === "succeeded") ??
+    null
+  );
+}
+
+function resumableDatasetDownloadJob(jobs: DatasetDownloadJob[]) {
+  return (
+    jobs.find(isDatasetDownloadInFlight) ??
+    jobs.find((job) => job.status === "failed") ??
+    jobs.find((job) => job.status === "succeeded") ??
+    null
+  );
+}
+
+function applyDatasetJobSelection(job: DatasetDownloadJob, setMode: (mode: DatasetDownloadMode) => void, setSeed: (seed: number) => void, setSampleCount: (count: number) => void) {
+  setMode(job.mode);
+  if (job.mode === "custom") {
+    setSeed(job.seed ?? 42);
+    setSampleCount(job.sampleCount ?? 100);
+  }
+}
+
 function WeightDownloadPanel({
   algorithm,
   attack,
@@ -1233,21 +1267,62 @@ function WeightDownloadPanel({
 }) {
   const resource = variant === "watermark" ? algorithm : attack;
   const identifier = resource?.id ?? "";
+  const resourceMethod = resource?.method ?? "";
   const [job, setJob] = useState<WeightDownloadJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [uninstallBusy, setUninstallBusy] = useState(false);
   const [uninstallError, setUninstallError] = useState<string | null>(null);
   const [uninstallNotice, setUninstallNotice] = useState<string | null>(null);
   const installedJobRef = useRef<string | null>(null);
+  const onInstalledRef = useRef(onInstalled);
+  const resourceInstalled = variant === "attack" ? packInstalled === true : resource?.weightsInstalled === true;
 
   useEffect(() => {
-    if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+    onInstalledRef.current = onInstalled;
+  }, [onInstalled]);
+
+  useEffect(() => {
+    if (!identifier) {
+      setJob(null);
       return;
     }
+    const fetchJobs = variant === "watermark" ? fetchWeightDownloadJobs : fetchAttackWeightDownloadJobs;
+    const currentMethod = resourceMethod;
+    let cancelled = false;
+    fetchJobs(identifier)
+      .then((jobs) => {
+        if (cancelled) {
+          return;
+        }
+        const restored = resumableWeightDownloadJob(jobs);
+        if (jobs.some((candidate) => candidate.status === "succeeded")) {
+          void onInstalledRef.current();
+        }
+        setJob((current) => {
+          if (current?.id === restored?.id) {
+            return current;
+          }
+          if (currentMethod && current?.method === currentMethod && isWeightDownloadInFlight(current)) {
+            return current;
+          }
+          return restored;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [identifier, resourceMethod, variant]);
+
+  useEffect(() => {
+    if (!job || !isWeightDownloadInFlight(job)) {
+      return;
+    }
+    const jobId = job.id;
     const fetchJob = variant === "watermark" ? fetchWeightDownloadJob : fetchAttackWeightDownloadJob;
     let cancelled = false;
     const poll = () => {
-      fetchJob(job.id)
+      fetchJob(jobId)
         .then((next) => {
           if (!cancelled) {
             setJob(next);
@@ -1275,12 +1350,11 @@ function WeightDownloadPanel({
   }, [job, onInstalled]);
 
   useEffect(() => {
-    const inFlight = job?.status === "queued" || job?.status === "running";
-    if (resource?.weightsInstalled !== true || inFlight || job?.status === "succeeded") {
+    if (!resourceInstalled || isWeightDownloadInFlight(job) || job?.status === "succeeded") {
       return;
     }
     setJob(null);
-  }, [resource?.weightsInstalled, resource?.id, job?.status]);
+  }, [resourceInstalled, resource?.id, job?.status]);
 
   useEffect(() => {
     setUninstallError(null);
@@ -1291,10 +1365,8 @@ function WeightDownloadPanel({
     return null;
   }
 
-  const installed =
-    (variant === "attack" ? packInstalled === true : resource.weightsInstalled === true) ||
-    job?.status === "succeeded";
-  const jobInFlight = job?.status === "queued" || job?.status === "running";
+  const installed = resourceInstalled || job?.status === "succeeded";
+  const jobInFlight = isWeightDownloadInFlight(job);
   const canStart = resource.weightsDownloadReady === true && !installed && !jobInFlight;
   const progressPercent =
     job && job.totalBytes && job.totalBytes > 0
@@ -1444,8 +1516,30 @@ function DatasetDownloadPanel({
     setDetail(catalog);
     setDetailLoading(false);
     setJob(null);
+    installedJobRef.current = null;
     setUninstallError(null);
     setUninstallNotice(null);
+  }, [catalog.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDatasetDownloadJobs(catalog.id)
+      .then((jobs) => {
+        if (cancelled) {
+          return;
+        }
+        const restored = resumableDatasetDownloadJob(jobs);
+        if (!restored) {
+          setJob(null);
+          return;
+        }
+        applyDatasetJobSelection(restored, setMode, setSeed, setSampleCount);
+        setJob(restored);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [catalog.id]);
 
   useEffect(() => {
@@ -1481,7 +1575,7 @@ function DatasetDownloadPanel({
   }, [catalog.id, catalog.installed, catalog.compactAvailable, catalog.remoteCompactAvailable, onCatalogUpdate]);
 
   useEffect(() => {
-    if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+    if (!job || !isDatasetDownloadInFlight(job)) {
       return;
     }
     const timer = window.setInterval(() => {
@@ -1520,7 +1614,7 @@ function DatasetDownloadPanel({
   const ossProbing = detailLoading && !compactReady && !installedForMode;
   const progressPercent =
     job && job.totalItems > 0 ? Math.round((job.completedItems / job.totalItems) * 100) : job?.progress ?? 0;
-  const jobInFlight = job?.status === "queued" || job?.status === "running";
+  const jobInFlight = isDatasetDownloadInFlight(job);
   const canUninstall = installedForMode && !busy && !uninstallBusy && !jobInFlight;
   const showUninstallOnly = Boolean(uninstallNotice);
   const compactState = compactInstalledForOption

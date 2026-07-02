@@ -386,7 +386,7 @@ export const translations = {
       title: "数据结构",
       subtitle: "元数据实体",
       coreTables: "核心表",
-      tableDescription: "PostgreSQL 元数据表"
+      tableDescription: "SQLite 本地元数据表"
     },
     resourceNames: {
       "ds-coco-v1": "MS-COCO 验证集切片",
@@ -788,7 +788,7 @@ export const translations = {
       title: "Schema",
       subtitle: "Metadata entities",
       coreTables: "Core tables",
-      tableDescription: "PostgreSQL metadata table"
+      tableDescription: "SQLite local metadata table"
     },
     resourceNames: {},
     dates: {}

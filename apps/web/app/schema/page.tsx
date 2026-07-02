@@ -4,21 +4,10 @@ import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
 
 const entities = [
-  "users",
-  "datasets",
-  "dataset_versions",
-  "samples",
-  "algorithm_packages",
-  "algorithm_versions",
-  "model_artifacts",
-  "attack_methods",
-  "attack_presets",
-  "experiment_specs",
+  "experiment_configs",
   "experiment_runs",
   "experiment_cells",
-  "artifacts",
-  "metric_summaries",
-  "sandbox_builds"
+  "worker_heartbeats"
 ];
 
 export default function SchemaPage() {

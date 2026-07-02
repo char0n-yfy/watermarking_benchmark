@@ -78,5 +78,5 @@ export const recentRuns: Array<{
 }> = [
   { id: "run_20260626_001", name: "JPEG baseline sweep", status: "running", cells: 18, updatedAt: "19:45" },
   { id: "run_20260625_004", name: "Demo smoke set", status: "succeeded", cells: 3, updatedAt: "Yesterday" },
-  { id: "run_20260624_002", name: "Uploaded package sandbox", status: "failed", cells: 6, updatedAt: "Jun 24" }
+  { id: "run_20260624_002", name: "Uploaded package review", status: "failed", cells: 6, updatedAt: "Jun 24" }
 ];

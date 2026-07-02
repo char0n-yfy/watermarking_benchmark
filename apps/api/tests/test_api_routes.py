@@ -18,6 +18,59 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 @unittest.skipIf(importlib.util.find_spec("fastapi") is None, "FastAPI is not installed")
 class ApiRoutesTest(unittest.TestCase):
+    def test_resource_weight_download_jobs_can_be_listed_by_resource(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
+            os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
+            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
+
+            from app.core.config import get_settings
+
+            get_settings.cache_clear()
+            from app.main import create_app
+            from fastapi.testclient import TestClient
+
+            client = TestClient(create_app())
+
+            watermark_job = client.post("/resources/watermarks/alg-hidden/downloads")
+            self.assertEqual(watermark_job.status_code, 200)
+            watermark_jobs = client.get("/resources/watermarks/alg-hidden/downloads")
+            self.assertEqual(watermark_jobs.status_code, 200)
+            self.assertIn(watermark_job.json()["id"], [job["id"] for job in watermark_jobs.json()])
+
+            attack_job = client.post("/resources/attacks/atk-regen-diffusion/downloads")
+            self.assertEqual(attack_job.status_code, 200)
+            attack_jobs = client.get("/resources/attacks/atk-regen-diffusion/downloads")
+            self.assertEqual(attack_jobs.status_code, 200)
+            self.assertIn(attack_job.json()["id"], [job["id"] for job in attack_jobs.json()])
+
+    def test_dataset_download_jobs_can_be_listed_by_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
+            os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
+            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
+
+            from app.core.config import get_settings
+
+            get_settings.cache_clear()
+            from app.main import create_app
+            from fastapi.testclient import TestClient
+
+            client = TestClient(create_app())
+
+            created = client.post(
+                "/resources/datasets/ms-coco/downloads",
+                json={"mode": "custom", "seed": 7, "sampleCount": 2},
+            )
+            self.assertEqual(created.status_code, 200)
+            listed = client.get("/resources/datasets/ms-coco/downloads")
+            self.assertEqual(listed.status_code, 200)
+            self.assertIn(created.json()["id"], [job["id"] for job in listed.json()])
+
     def test_post_run_queues_and_runtime_is_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -123,7 +176,10 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(save_tuning_response.status_code, 200)
             saved_tuning = save_tuning_response.json()
             self.assertEqual(saved_tuning["envPath"], str(root / ".env.autodl"))
-            self.assertEqual(saved_tuning["runtimePath"], str(root / "runs" / "parallel_tuning" / "active_env.json"))
+            self.assertEqual(
+                Path(saved_tuning["runtimePath"]).resolve(),
+                (root / "runs" / "parallel_tuning" / "active_env.json").resolve(),
+            )
             self.assertIn("WM_BENCH_PNG_COMPRESS_LEVEL", saved_tuning["savedKeys"])
             self.assertEqual(os.environ["WM_BENCH_PNG_COMPRESS_LEVEL"], "1")
             active_runtime = json.loads(Path(saved_tuning["runtimePath"]).read_text(encoding="utf-8"))
