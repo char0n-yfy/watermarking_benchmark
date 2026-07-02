@@ -291,6 +291,46 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertTrue(finished["cancelRequested"])
             self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="unfinished")])
 
+    def test_reconcile_stale_runs_marks_orphaned_running_as_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
+            service = ExperimentService(
+                database=LocalDatabase(root / "state.sqlite"),
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            config = service.create_config(
+                "Smoke",
+                {
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 1,
+                },
+            )
+            run = service.create_run(config["id"])
+            stale_time = "2020-01-01T00:00:00+00:00"
+            with service.database.connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE experiment_runs
+                    SET status = ?, worker_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    ("running", "dead-worker", stale_time, run["id"]),
+                )
+
+            reconciled = service.reconcile_stale_runs(stale_seconds=1)
+            refreshed = service.get_run(run["id"])
+
+            self.assertEqual(reconciled, 1)
+            self.assertEqual(refreshed["status"], "paused")
+            self.assertIn("auto-paused", refreshed["error"] or "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,10 +18,8 @@ export const terminalRunStatuses = new Set<RunStatus>([
 ]);
 
 export interface RunStats {
-  queued: number;
   running: number;
   completed: number;
-  failed: number;
 }
 
 export interface ActiveRunRow {
@@ -58,12 +56,8 @@ export interface CurveSeries {
 
 export function summarizeRuns(runs: DemoRunRecord[]): RunStats {
   return {
-    queued: runs.filter((run) => run.status === "queued").length,
     running: runs.filter((run) => run.status === "running").length,
-    completed: runs.filter((run) => run.status === "succeeded").length,
-    failed: runs.filter(
-      (run) => run.status === "failed" || run.status === "partially_failed" || run.status === "cancelled"
-    ).length
+    completed: runs.filter((run) => run.status === "succeeded").length
   };
 }
 
@@ -80,7 +74,7 @@ export function buildActiveRunRows(
   const attackMap = new Map(attacks.map((attack) => [attack.id, attack.name]));
 
   return runs
-    .filter((run) => run.status === "queued" || run.status === "running")
+    .filter((run) => run.status === "queued" || run.status === "running" || run.status === "paused")
     .map((run) => {
       const config = configMap.get(run.configId);
       return {

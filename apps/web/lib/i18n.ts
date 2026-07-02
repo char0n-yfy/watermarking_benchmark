@@ -94,8 +94,9 @@ export const translations = {
       systemDegraded: "系统异常",
       autoRefresh: "自动刷新",
       filters: "筛选",
-      activeRuns: "活动运行",
+      activeRuns: "未完成任务",
       queuedRuns: "排队运行",
+      pausedRuns: "已暂停",
       runningRuns: "运行中任务",
       completedRuns: "已完成运行",
       failedRuns: "失败运行",
@@ -105,7 +106,7 @@ export const translations = {
       datasetsSummary: "数据集摘要",
       officialLeaderboardPending: "正式天梯图等待固定评测协议和批量结果。",
       needMultipleStrengths: "需要同一算法在多个攻击强度下的结果才能绘制曲线。",
-      noActiveRuns: "当前没有排队或运行中的实验。"
+      noActiveRuns: "当前没有运行中、等待执行或已暂停的实验。"
     },
     configs: {
       title: "实验配置",
@@ -495,8 +496,9 @@ export const translations = {
       systemDegraded: "System degraded",
       autoRefresh: "Auto-refresh",
       filters: "Filters",
-      activeRuns: "Active runs",
+      activeRuns: "Open tasks",
       queuedRuns: "Queued runs",
+      pausedRuns: "paused",
       runningRuns: "Running runs",
       completedRuns: "Completed runs",
       failedRuns: "Failed runs",
@@ -506,7 +508,7 @@ export const translations = {
       datasetsSummary: "Datasets summary",
       officialLeaderboardPending: "The official leaderboard is waiting for a fixed benchmark protocol and batch results.",
       needMultipleStrengths: "Multiple attack strengths for the same algorithm are required to draw curves.",
-      noActiveRuns: "No queued or running experiments right now."
+      noActiveRuns: "No running, queued, or paused experiments right now."
     },
     configs: {
       title: "Experiment Configs",

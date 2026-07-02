@@ -1280,12 +1280,12 @@ export default function ConfigsPage() {
 
   return (
     <AppShell active="configs">
-      <div className="topbar">
+      <div className="configs-page-header">
         <div className="title-block">
           <h1>{t.configs.title}</h1>
           <p>{t.configs.subtitle}</p>
         </div>
-        <button className="button primary" onClick={openCreateModal} type="button">
+        <button className="button surface-action configs-add-button" onClick={openCreateModal} type="button">
           <Plus size={16} />
           {copy.addConfig}
         </button>
@@ -1303,7 +1303,7 @@ export default function ConfigsPage() {
                 <Braces size={34} />
                 <h2>{t.configs.empty}</h2>
                 <p>{copy.draftEmpty}</p>
-                <button className="button primary" onClick={openCreateModal} type="button">
+                <button className="button surface-action configs-add-button" onClick={openCreateModal} type="button">
                   <Plus size={16} />
                   {copy.addConfig}
                 </button>

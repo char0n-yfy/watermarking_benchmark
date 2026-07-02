@@ -235,6 +235,7 @@ class ExperimentService:
         return self.get_run(run_id)
 
     def claim_next_run(self, worker_id: str) -> dict[str, Any] | None:
+        self.reconcile_stale_runs()
         now = utc_now()
         with self.database.connect() as connection:
             row = connection.execute(
@@ -448,6 +449,7 @@ class ExperimentService:
         return self.get_run(run_id)
 
     def list_runs(self, *, scope: str | None = None) -> list[dict[str, Any]]:
+        self.reconcile_stale_runs()
         active_statuses = ["queued", "running"]
         unfinished_statuses = ["queued", "running", "paused", "failed", "partially_failed"]
         with self.database.connect() as connection:
@@ -648,6 +650,59 @@ class ExperimentService:
             for row in rows
         ]
 
+    def reconcile_stale_runs(self, *, stale_seconds: float | None = None) -> int:
+        """Mark orphaned running tasks as paused when no fresh worker is executing them."""
+        poll_seconds = _worker_poll_seconds()
+        threshold = stale_seconds if stale_seconds is not None else max(120.0, poll_seconds * 15)
+        workers = self.list_worker_heartbeats()
+        active_run_ids = {
+            worker["currentRunId"]
+            for worker in workers
+            if worker.get("currentRunId") and _is_fresh_worker(worker, poll_seconds)
+        }
+
+        now = datetime.now(timezone.utc)
+        reconciled = 0
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id, updated_at FROM experiment_runs WHERE status = ?",
+                ("running",),
+            ).fetchall()
+            for row in rows:
+                run_id = row["id"]
+                if run_id in active_run_ids:
+                    continue
+                try:
+                    updated_at = datetime.fromisoformat(str(row["updated_at"]))
+                except ValueError:
+                    updated_at = now
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                if (now - updated_at).total_seconds() < threshold:
+                    continue
+
+                timestamp = utc_now()
+                connection.execute(
+                    """
+                    UPDATE experiment_runs
+                    SET status = ?, progress = progress, error = ?, worker_id = NULL,
+                        stop_intent = ?, cancel_requested = 1,
+                        finished_at = COALESCE(finished_at, ?), updated_at = ?
+                    WHERE id = ? AND status = ?
+                    """,
+                    (
+                        "paused",
+                        "Worker stopped before completion; run auto-paused for resume.",
+                        STOP_INTENT_PAUSE,
+                        timestamp,
+                        timestamp,
+                        run_id,
+                        "running",
+                    ),
+                )
+                reconciled += 1
+        return reconciled
+
     def _finish_stopped_run(self, run_id: str, intent: str) -> dict[str, Any]:
         now = utc_now()
         status = "paused" if intent == STOP_INTENT_PAUSE else "cancelled"
@@ -693,3 +748,23 @@ class ExperimentService:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _worker_poll_seconds() -> float:
+    import os
+
+    return float(os.getenv("WM_BENCH_WORKER_POLL_SECONDS", "2"))
+
+
+def _is_fresh_worker(worker: dict[str, Any], poll_seconds: float) -> bool:
+    raw_last_seen = worker.get("lastSeenAt")
+    if not isinstance(raw_last_seen, str):
+        return False
+    try:
+        last_seen = datetime.fromisoformat(raw_last_seen)
+    except ValueError:
+        return False
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    max_age_seconds = max(30.0, poll_seconds * 5)
+    return (datetime.now(timezone.utc) - last_seen).total_seconds() <= max_age_seconds

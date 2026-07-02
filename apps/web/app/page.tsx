@@ -3,15 +3,11 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  AlertTriangle,
   CheckCircle2,
-  Clock3,
   Cpu,
-  Filter,
   HardDrive,
   MemoryStick,
   PlayCircle,
-  RefreshCw,
   Zap
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
@@ -189,11 +185,6 @@ export default function ExperimentConsole() {
       });
     };
     load();
-    if (autoRefreshSeconds <= 0) {
-      return () => {
-        cancelled = true;
-      };
-    }
     const timer = window.setInterval(load, autoRefreshSeconds * 1000);
     return () => {
       cancelled = true;
@@ -207,9 +198,6 @@ export default function ExperimentConsole() {
     [runs, configs, datasets, algorithms, attacks]
   );
   const systemHealthy = Boolean(runtime) && !(runtime?.workers ?? []).some((worker) => worker.status === "error");
-  const workerLabel = runtime?.workers.length
-    ? runtime.workers.map((worker) => `${worker.status}:${worker.device}`).join(", ")
-    : "no worker";
   const primaryGpu = systemMetrics?.gpu.devices[0] ?? null;
   const cpuTemperatureLabel =
     systemMetrics?.cpu.temperatureC == null ? "n/a" : `${systemMetrics.cpu.temperatureC}°C`;
@@ -234,36 +222,23 @@ export default function ExperimentConsole() {
           </span>
         </div>
         <div className="toolbar">
-          <button className="button" onClick={loadDashboard} type="button">
-            <RefreshCw size={16} />
-            {t.common.refresh}
-          </button>
-          <label className="select-button">
+          <label className="select-button refresh-slider-control">
             <span>{t.console.autoRefresh}</span>
-            <select
+            <input
+              className="refresh-slider"
+              max={30}
+              min={1}
               onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))}
+              step={1}
+              type="range"
               value={autoRefreshSeconds}
-            >
-              <option value={10}>10s</option>
-              <option value={30}>30s</option>
-              <option value={0}>Off</option>
-            </select>
+            />
+            <strong>{autoRefreshSeconds}s</strong>
           </label>
-          <button className="button" disabled type="button">
-            <Filter size={16} />
-            {t.console.filters}
-          </button>
         </div>
       </div>
 
-      <section className="metric-card-grid">
-        <div className="metric-card">
-          <div>
-            <span>{t.console.queuedRuns}</span>
-            <strong>{stats.queued}</strong>
-          </div>
-          <Clock3 size={20} />
-        </div>
+      <section className="metric-card-grid metric-card-grid-console">
         <div className="metric-card">
           <div>
             <span>{t.console.runningRuns}</span>
@@ -277,13 +252,6 @@ export default function ExperimentConsole() {
             <strong>{stats.completed}</strong>
           </div>
           <CheckCircle2 size={20} />
-        </div>
-        <div className="metric-card danger">
-          <div>
-            <span>{t.console.failedRuns}</span>
-            <strong>{stats.failed}</strong>
-          </div>
-          <AlertTriangle size={20} />
         </div>
       </section>
 
@@ -405,11 +373,6 @@ export default function ExperimentConsole() {
           </div>
         </div>
       </section>
-
-      <p className="dashboard-note">
-        {t.console.monitorNote} {workerLabel ? `(${workerLabel})` : ""}
-        {systemMetrics?.timestamp ? ` · Metrics ${systemMetrics.timestamp}` : ""}
-      </p>
     </AppShell>
   );
 }

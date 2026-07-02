@@ -180,17 +180,65 @@ button {
   justify-content: center;
   gap: 8px;
   min-height: 36px;
+  margin: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
   color: var(--ink);
-  padding: 0 12px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.button svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 .button.primary {
   border-color: var(--teal);
-  background: var(--teal);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--teal) 92%, white) 0%, var(--teal) 100%);
   color: white;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--teal) 28%, transparent);
+}
+
+.button.primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--teal) 88%, black);
+  background: linear-gradient(180deg, var(--teal) 0%, color-mix(in srgb, var(--teal) 88%, black) 100%);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--teal) 34%, transparent);
+}
+
+.button.primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.button.surface-action {
+  border-color: rgba(47, 125, 104, 0.5);
+  background: linear-gradient(180deg, #ffffff, #f2f8f5);
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 800;
+}
+
+.button.surface-action:hover:not(:disabled) {
+  border-color: rgba(47, 125, 104, 0.72);
+  background: linear-gradient(180deg, #ffffff, #eaf4ef);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    0 4px 12px rgb(15 35 30 / 6%);
+  transform: none;
+}
+
+.button.surface-action:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .button.danger {
@@ -279,6 +327,23 @@ a.button {
   border: 0;
   background: transparent;
   color: var(--ink);
+}
+
+.refresh-slider-control {
+  min-width: 220px;
+}
+
+.refresh-slider-control strong {
+  min-width: 32px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.refresh-slider {
+  width: 120px;
+  accent-color: var(--teal);
+  cursor: pointer;
 }
 
 .console-grid {
@@ -692,6 +757,10 @@ a.button {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.metric-card-grid-console {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .metric-card {
@@ -2304,6 +2373,7 @@ a.button {
   border-color: rgba(47, 125, 104, 0.5);
   background: linear-gradient(180deg, #ffffff, #f2f8f5);
   box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--ink);
 }
 
 .dataset-download-selected {
@@ -2730,33 +2800,67 @@ a.button {
   gap: 12px;
 }
 
+.configs-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.configs-page-header .title-block p {
+  max-width: 640px;
+}
+
+.configs-add-button {
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
 .config-empty-state {
   display: grid;
-  min-height: 310px;
+  min-height: 320px;
   place-items: center;
-  gap: 12px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  background: #fbfcfa;
-  padding: 32px 20px;
+  gap: 14px;
+  border: 1px dashed color-mix(in srgb, var(--teal) 24%, var(--line));
+  border-radius: calc(var(--radius) + 2px);
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--teal-soft) 70%, white) 0%, transparent 58%),
+    #fbfcfa;
+  padding: 36px 24px;
   text-align: center;
 }
 
 .config-empty-state svg {
   color: var(--teal);
+  padding: 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal-soft) 72%, white);
 }
 
 .config-empty-state h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .config-empty-state p {
-  max-width: 560px;
+  max-width: 520px;
   margin: 0;
   color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.config-empty-state .button.surface-action {
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 0 20px;
+  border-radius: 8px;
   font-size: 13px;
-  line-height: 1.6;
 }
 
 .config-page-message {
@@ -2766,6 +2870,12 @@ a.button {
 .config-list-item {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.config-list-item:hover {
+  border-color: color-mix(in srgb, var(--teal) 22%, var(--line));
+  box-shadow: 0 4px 14px rgb(15 35 30 / 6%);
 }
 
 .config-actions {
@@ -4755,6 +4865,15 @@ a.button {
   .topbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .configs-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .configs-add-button {
+    width: 100%;
   }
 
   .toolbar {
