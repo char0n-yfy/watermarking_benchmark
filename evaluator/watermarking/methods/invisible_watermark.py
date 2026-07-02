@@ -22,8 +22,22 @@ from evaluator.watermarking.utils import (
 )
 
 
+JsonDict = dict[str, Any]
 _IMWATERMARK_IMPORT_LOCK = threading.RLock()
 _IMWATERMARK_MODULES: dict[Path, ModuleType] = {}
+
+
+def clear_imwatermark_runtime() -> None:
+    with _IMWATERMARK_IMPORT_LOCK:
+        for module in list(_IMWATERMARK_MODULES.values()):
+            try:
+                riva_module = importlib.import_module(f"{module.__name__}.rivaGan")
+                RivaWatermark = getattr(riva_module, "RivaWatermark")
+                RivaWatermark.encoder = None
+                RivaWatermark.decoder = None
+                RivaWatermark.onnx_providers = None
+            except Exception:
+                pass
 
 
 def _load_imwatermark_package(repo_dir: Path) -> ModuleType:
@@ -153,6 +167,11 @@ class _InvisibleWatermarkBase(BaseWatermark):
             else:
                 os.environ[key] = old_value
 
+    def release(self) -> None:
+        if self.algorithm == "rivaGan":
+            clear_imwatermark_runtime()
+        self._model_loaded = False
+
     def embed_impl(self, input_path: Path, output_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
         import cv2
         import numpy as np
@@ -275,6 +294,137 @@ class InvisibleWatermarkRivaGan(_InvisibleWatermarkBase):
     algorithm_dir = "rivaGan"
     weight_dir_name = "rivaGan"
     default_payload_bits = 32
+    _ONNX_ALLOCATION_MARKERS = (
+        "AllocateRawInternal",
+        "BFCArena",
+        "Failed to allocate memory",
+        "CUDA out of memory",
+        "CUBLAS_STATUS_ALLOC_FAILED",
+    )
+
+    @staticmethod
+    def _is_onnx_allocation_error(exc: BaseException) -> bool:
+        text = f"{type(exc).__name__}: {exc}"
+        return any(marker in text for marker in InvisibleWatermarkRivaGan._ONNX_ALLOCATION_MARKERS)
+
+    @contextmanager
+    def _onnx_provider_override(self, providers: str) -> Iterator[None]:
+        key = "IMWATERMARK_RIVAGAN_ONNX_PROVIDERS"
+        old_value = os.environ.get(key)
+        os.environ[key] = providers
+        try:
+            yield
+        finally:
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+    def _cleanup_onnx_runtime(self) -> None:
+        clear_imwatermark_runtime()
+        self._model_loaded = False
+        try:
+            from evaluator.runtime_cleanup import torch_cleanup
+
+            torch_cleanup(reset_peak=False)
+        except Exception:
+            pass
+
+    def _reload_rivagan_model(self) -> Any:
+        self._cleanup_onnx_runtime()
+        RivaWatermark = self._ensure_model_loaded()
+        if RivaWatermark.decoder is None:
+            raise RuntimeError("RivaGAN decoder session is not loaded")
+        return RivaWatermark
+
+    @staticmethod
+    def _short_error(exc: BaseException) -> str:
+        return f"{type(exc).__name__}: {exc}"[:500]
+
+    @staticmethod
+    def _frame_input(frames: list[Any]) -> Any:
+        import numpy as np
+
+        batch_frames = np.stack(frames).astype(np.float32) / 127.5 - 1.0
+        return batch_frames.transpose(0, 3, 1, 2)[:, :, None, :, :]
+
+    def _decode_frame_input_with_retry(self, RivaWatermark: Any, frame_input: Any) -> tuple[Any, Mapping[str, Any] | None, list[JsonDict]]:
+        retry_events: list[JsonDict] = []
+        try:
+            return RivaWatermark.decoder.run(None, {"frame": frame_input}), getattr(RivaWatermark, "onnx_providers", None), retry_events
+        except Exception as exc:
+            if not self._is_onnx_allocation_error(exc):
+                raise
+            retry_events.append(
+                {
+                    "providerPolicy": "same_after_cleanup",
+                    "reason": self._short_error(exc),
+                }
+            )
+
+        RivaWatermark = self._reload_rivagan_model()
+        try:
+            return RivaWatermark.decoder.run(None, {"frame": frame_input}), getattr(RivaWatermark, "onnx_providers", None), retry_events
+        except Exception as exc:
+            if not self._is_onnx_allocation_error(exc):
+                raise
+            retry_events.append(
+                {
+                    "providerPolicy": "cpu_fallback",
+                    "reason": self._short_error(exc),
+                }
+            )
+
+        with self._onnx_provider_override("CPUExecutionProvider"):
+            RivaWatermark = self._reload_rivagan_model()
+            outputs = RivaWatermark.decoder.run(None, {"frame": frame_input})
+            provider_info = getattr(RivaWatermark, "onnx_providers", None)
+        self._cleanup_onnx_runtime()
+        return outputs, provider_info, retry_events
+
+    def _metadata_from_bits(
+        self,
+        bits: list[int],
+        *,
+        decode_bits: int,
+        decode_bytes: int,
+        expected_payload: bytes | None,
+        provider_info: Mapping[str, Any] | None,
+        retry_events: list[JsonDict] | None = None,
+    ) -> dict[str, Any]:
+        import numpy as np
+
+        decoded_payload = bytes(np.packbits(np.asarray(bits, dtype=np.uint8)))[:decode_bytes].ljust(
+            decode_bytes,
+            b"\0",
+        )
+        decoded = decoded_payload.decode("utf-8", errors="ignore").rstrip("\0")
+        decoded_bits = _bytes_to_bits(decoded_payload, decode_bits)
+        metadata: dict[str, Any] = {
+            "message": decoded,
+            "bits": bits_to_string(decoded_bits),
+            "decoded_bits": bits_to_string(decoded_bits),
+            "payload_bits": decode_bits,
+            "algorithm": self.algorithm,
+            "weights_dir": None if self.weights_dir is None else str(self.weights_dir),
+            "encoder_path": None if self.encoder_path is None else str(self.encoder_path),
+            "decoder_path": None if self.decoder_path is None else str(self.decoder_path),
+            "onnx_providers": provider_info,
+        }
+        if retry_events:
+            metadata["onnxRetry"] = retry_events
+        if expected_payload is not None:
+            expected_payload = expected_payload[:decode_bytes].ljust(decode_bytes, b"\0")
+            expected = expected_payload.decode("utf-8", errors="ignore").rstrip("\0")
+            expected_bits = _bytes_to_bits(expected_payload, decode_bits)
+            metadata["expected_message"] = expected
+            metadata["expected_bits"] = bits_to_string(expected_bits)
+            metadata["match"] = decoded == expected
+            metadata["bit_accuracy"] = bit_accuracy(expected_bits, decoded_bits)
+        else:
+            metadata["expected_message"] = None
+            metadata["match"] = None
+        return metadata
 
     @staticmethod
     def _payload_bits(payload: bytes) -> list[int]:
@@ -353,6 +503,36 @@ class InvisibleWatermarkRivaGan(_InvisibleWatermarkBase):
                 )
             return metadatas
 
+    def extract_impl(self, input_path: Path, context: WatermarkContext) -> Mapping[str, Any]:
+        import cv2
+        import numpy as np
+
+        expected_payload = self._message_bytes(context) if context.message else None
+        decode_bits = len(expected_payload) * 8 if expected_payload is not None else self.payload_bits
+        decode_bytes = max(1, (decode_bits + 7) // 8)
+
+        with self._runtime_env():
+            RivaWatermark = self._ensure_model_loaded()
+            if RivaWatermark.decoder is None:
+                raise RuntimeError("RivaGAN decoder session is not loaded")
+            data = np.fromfile(str(input_path), dtype=np.uint8)
+            bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            if bgr is None:
+                raise ValueError(f"Cannot read image: {input_path}")
+            frame_input = self._frame_input([bgr])
+            outputs, provider_info, retry_events = self._decode_frame_input_with_retry(RivaWatermark, frame_input)
+            decoded = (outputs[0] > 0.52).astype(np.uint8)[0]
+            bits = [int(bit) for bit in decoded[:decode_bits]]
+
+        return self._metadata_from_bits(
+            bits,
+            decode_bits=decode_bits,
+            decode_bytes=decode_bytes,
+            expected_payload=expected_payload,
+            provider_info=provider_info,
+            retry_events=retry_events,
+        )
+
     def extract_batch_impl(
         self,
         jobs: list[tuple[Path, WatermarkContext]],
@@ -390,13 +570,20 @@ class InvisibleWatermarkRivaGan(_InvisibleWatermarkBase):
                 groups.setdefault((h, w), []).append(index)
 
             decoded_bits_by_index: list[list[int] | None] = [None] * len(jobs)
+            retry_by_index: list[list[JsonDict]] = [[] for _ in jobs]
+            provider_info_by_index: list[Mapping[str, Any] | None] = [provider_info for _ in jobs]
             for indexes in groups.values():
-                batch_frames = np.stack([frames[index] for index in indexes]).astype(np.float32) / 127.5 - 1.0
-                frame_input = batch_frames.transpose(0, 3, 1, 2)[:, :, None, :, :]
-                outputs = RivaWatermark.decoder.run(None, {"frame": frame_input})
+                RivaWatermark = self._ensure_model_loaded()
+                frame_input = self._frame_input([frames[index] for index in indexes])
+                outputs, active_provider_info, retry_events = self._decode_frame_input_with_retry(
+                    RivaWatermark,
+                    frame_input,
+                )
                 decoded = (outputs[0] > 0.52).astype(np.uint8)
                 for index, bits in zip(indexes, decoded):
                     decoded_bits_by_index[index] = [int(bit) for bit in bits[: decode_bits_by_index[index]]]
+                    provider_info_by_index[index] = active_provider_info
+                    retry_by_index[index] = list(retry_events)
 
             metadatas: list[Mapping[str, Any]] = []
             for index, bits in enumerate(decoded_bits_by_index):
@@ -405,34 +592,14 @@ class InvisibleWatermarkRivaGan(_InvisibleWatermarkBase):
                     raise RuntimeError(f"RivaGAN batch decode produced no output for {input_path}")
                 decode_bits = decode_bits_by_index[index]
                 decode_bytes = decode_bytes_by_index[index]
-                decoded_payload = bytes(np.packbits(np.asarray(bits, dtype=np.uint8)))[:decode_bytes].ljust(
-                    decode_bytes,
-                    b"\0",
+                metadatas.append(
+                    self._metadata_from_bits(
+                        bits,
+                        decode_bits=decode_bits,
+                        decode_bytes=decode_bytes,
+                        expected_payload=expected_payloads[index],
+                        provider_info=provider_info_by_index[index],
+                        retry_events=retry_by_index[index],
+                    )
                 )
-                decoded = decoded_payload.decode("utf-8", errors="ignore").rstrip("\0")
-                decoded_bits = _bytes_to_bits(decoded_payload, decode_bits)
-                metadata: dict[str, Any] = {
-                    "message": decoded,
-                    "bits": bits_to_string(decoded_bits),
-                    "decoded_bits": bits_to_string(decoded_bits),
-                    "payload_bits": decode_bits,
-                    "algorithm": self.algorithm,
-                    "weights_dir": None if self.weights_dir is None else str(self.weights_dir),
-                    "encoder_path": None if self.encoder_path is None else str(self.encoder_path),
-                    "decoder_path": None if self.decoder_path is None else str(self.decoder_path),
-                    "onnx_providers": provider_info,
-                }
-                expected_payload = expected_payloads[index]
-                if expected_payload is not None:
-                    expected_payload = expected_payload[:decode_bytes].ljust(decode_bytes, b"\0")
-                    expected = expected_payload.decode("utf-8", errors="ignore").rstrip("\0")
-                    expected_bits = _bytes_to_bits(expected_payload, decode_bits)
-                    metadata["expected_message"] = expected
-                    metadata["expected_bits"] = bits_to_string(expected_bits)
-                    metadata["match"] = decoded == expected
-                    metadata["bit_accuracy"] = bit_accuracy(expected_bits, decoded_bits)
-                else:
-                    metadata["expected_message"] = None
-                    metadata["match"] = None
-                metadatas.append(metadata)
             return metadatas

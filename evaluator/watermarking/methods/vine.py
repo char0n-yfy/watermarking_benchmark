@@ -168,6 +168,21 @@ class VineWatermark(BaseWatermark):
         self._decoder_loaded = True
         self._decoder_device = device_name
 
+    def release(self) -> None:
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._encoder is not None:
+            move_to_cpu(self._encoder)
+        if self._decoder is not None:
+            move_to_cpu(self._decoder)
+        self._encoder = None
+        self._decoder = None
+        self._encoder_loaded = False
+        self._decoder_loaded = False
+        self._encoder_device = None
+        self._decoder_device = None
+        torch_cleanup()
+
     @staticmethod
     def _crop_to_square(image: Image.Image) -> Image.Image:
         width, height = image.size

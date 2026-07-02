@@ -23,6 +23,15 @@ ModelKind = Literal[
 _MODEL_CACHE: dict[tuple[ModelKind, str, str], nn.Module] = {}
 
 
+def clear_model_cache() -> None:
+    from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+    for model in list(_MODEL_CACHE.values()):
+        move_to_cpu(model)
+    _MODEL_CACHE.clear()
+    torch_cleanup()
+
+
 def find_checkpoint(path: Path) -> Path:
     path = Path(path).expanduser()
     if path.is_file():

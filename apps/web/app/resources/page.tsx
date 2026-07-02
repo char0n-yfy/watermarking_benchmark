@@ -188,7 +188,6 @@ const WATERMARK_METHOD_ORDER: Record<string, number> = {
   "invisible-watermark-rivagan": 37,
   "trustmark-c": 38,
   "trustmark-q": 39,
-  rawatermark: 40,
   "maskwm-d32": 41,
   wam: 42,
   videoseal: 60,

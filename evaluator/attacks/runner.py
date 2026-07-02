@@ -33,14 +33,18 @@ _ATTACK_INSTANCE_CACHE: OrderedDict[str, BaseAttack] = OrderedDict()
 
 
 def _cache_max_entries() -> int:
-    raw = os.getenv("WM_BENCH_ATTACK_CACHE_MAX_ENTRIES", "8")
+    raw = os.getenv("WM_BENCH_ATTACK_CACHE_MAX_ENTRIES", "1")
     try:
         return max(0, int(raw))
     except (TypeError, ValueError):
-        return 8
+        return 1
 
 
 def _release_attack_instance(attack: BaseAttack) -> None:
+    try:
+        attack.release()
+    except Exception:
+        pass
     del attack
     gc.collect()
     try:

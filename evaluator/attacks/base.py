@@ -91,6 +91,10 @@ class BaseAttack:
     def __init__(self, **params: Any) -> None:
         self.params: JsonDict = dict(params)
 
+    def release(self) -> None:
+        """Release heavyweight runtime state held by this attack instance."""
+        return None
+
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
         """Write the attacked image to output_path and return extra metadata."""
         raise NotImplementedError

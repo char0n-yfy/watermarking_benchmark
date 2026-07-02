@@ -640,6 +640,20 @@ class CEWAttack(BaseAttack):
         super().__init__(**merged)
         self.config = merged
 
+    def release(self) -> None:
+        try:
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import deep_enhance
+
+            deep_enhance.clear_model_cache()
+        except Exception:
+            pass
+        try:
+            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import restoration_sr
+
+            restoration_sr.clear_model_cache()
+        except Exception:
+            pass
+
     def _apply_image(self, image: Image.Image, context: AttackContext) -> tuple[Image.Image, dict[str, Any]]:
         operation = self.operation
         if operation == "edit_auto_tone":

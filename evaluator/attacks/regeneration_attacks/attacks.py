@@ -726,6 +726,15 @@ class RegenVAEAttack(BaseAttack):
         self._weight_url = url
         self._downloaded = downloaded
 
+    def release(self) -> None:
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._model is not None:
+            move_to_cpu(self._model)
+        self._model = None
+        self._model_device = None
+        torch_cleanup()
+
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
         import torch
         from torchvision import transforms
@@ -931,6 +940,16 @@ class _BaseRegenDiffusionAttack(BaseAttack):
         self._model_downloaded = downloaded
         self._model_repo_id = repo_id
         self._torch_dtype = torch_dtype
+
+    def release(self) -> None:
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._pipe is not None:
+            move_to_cpu(self._pipe)
+        self._pipe = None
+        self._pipe_device = None
+        self._torch_dtype = None
+        torch_cleanup()
 
     def _seed_for_context(self, context: AttackContext) -> int:
         if self.seed is not None:
@@ -1442,6 +1461,18 @@ class NoiseToImageAttack(BaseAttack):
         self._resolved_paths = assets
         self._resolved_paths["dtype"] = str(torch_dtype).replace("torch.", "")
 
+    def release(self) -> None:
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._pipe is not None:
+            move_to_cpu(self._pipe)
+        self._pipe = None
+        self._pipe_device = None
+        self._canny_impl = None
+        self._color_match = None
+        self._resolved_paths = {}
+        torch_cleanup()
+
     def apply(self, input_path: Path, output_path: Path, context: AttackContext) -> Mapping[str, Any]:
         if self.noise_step <= 0:
             image = Image.open(input_path).convert("RGB")
@@ -1792,6 +1823,19 @@ class ImageToVedioAttack(BaseAttack):
         self._model_image_size = model_image_size
         self._torch_dtype = torch_dtype
         self._source_root = source_root
+
+    def release(self) -> None:
+        from evaluator.runtime_cleanup import move_to_cpu, torch_cleanup
+
+        if self._pipe is not None:
+            move_to_cpu(self._pipe)
+        self._pipe = None
+        self._pipe_device = None
+        self._ddim_scheduler_cls = None
+        self._ddim_inverse_cls = None
+        self._torch_dtype = None
+        self._source_root = None
+        torch_cleanup()
 
     def _invert_latents(self, image_tensor: Any, seed: int) -> Any:
         import torch

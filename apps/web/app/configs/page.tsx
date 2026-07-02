@@ -167,7 +167,6 @@ const ALGORITHM_DISPLAY: Record<string, DisplayMeta> = {
   },
   "trustmark-c": { en: "TrustMark-C", rank: 38, zh: "TrustMark-C" },
   "trustmark-q": { en: "TrustMark-Q", rank: 39, zh: "TrustMark-Q" },
-  rawatermark: { en: "RAWatermark", rank: 40, zh: "RAWatermark" },
   "maskwm-d32": { en: "MaskWM-D32", rank: 41, zh: "MaskWM-D32" },
   wam: { en: "WAM", rank: 42, zh: "WAM" },
   dwsf: { en: "DWSF", rank: 43, zh: "DWSF" },
