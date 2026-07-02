@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.services.attack_weight_download import AttackWeightDownloadService
+from app.services.attack_weight_download import AttackWeightDownloadJob, AttackWeightDownloadService
 from app.services.attack_weights import (
     attack_method_weights_installed,
     is_attack_pack_marked_installed,
@@ -95,6 +95,24 @@ class AttackWeightDownloadServiceTest(unittest.TestCase):
             self.assertEqual(job.status, "succeeded")
             self.assertTrue(attack_method_weights_installed(root, "2x_regen"))
             self.assertTrue(diffusion_checkpoint.is_file())
+
+    def test_start_download_returns_existing_inflight_job_for_same_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AttackWeightDownloadService(root)
+            existing = AttackWeightDownloadJob(
+                id="regen_diffusion__attack-weights__existing",
+                method="regen_diffusion",
+                weights_dir="regeneration_attacks",
+                weights_pack_id="regen_diffusion",
+                status="running",
+            )
+            service._jobs[existing.id] = existing
+
+            job = service.start_download("regen_diffusion")
+
+            self.assertIs(job, existing)
+            self.assertEqual([item.id for item in service.list_jobs()], [existing.id])
 
     def test_uninstall_only_removes_method_markers_and_unrefed_weights(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

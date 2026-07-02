@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.services.parallel_tuning import (  # noqa: E402
+    DIFFUSION_REGENERATION_PRIMARY_METHOD,
     ParallelTuningService,
     TuningRequest,
     VIEWPOINT_RERENDERING_PRIMARY_METHOD,
@@ -32,7 +34,7 @@ class ParallelTuningPolicyTest(unittest.TestCase):
         self.assertEqual(request.to_json()["watermarkMethods"], ["dwsf", "trustmark-q"])
         self.assertEqual(request.to_json()["attackMethods"], ["jpeg", "brightness"])
 
-    def test_cancel_marks_running_job_cancelled(self) -> None:
+    def test_cancel_requests_running_job_stop_without_marking_terminal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
@@ -46,30 +48,142 @@ class ParallelTuningPolicyTest(unittest.TestCase):
                     "events": [],
                 },
             )
+            release = threading.Event()
+            thread = threading.Thread(target=release.wait, daemon=True)
+            thread.start()
+            service._threads["tune_cancel"] = thread
 
-            cancelled = service.cancel("tune_cancel")
+            try:
+                cancelled = service.cancel("tune_cancel")
+            finally:
+                release.set()
+                thread.join(timeout=1)
 
-            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertEqual(cancelled["status"], "cancelling")
             self.assertTrue(cancelled["cancelRequested"])
-            self.assertEqual(cancelled["message"], "tuning cancelled")
-            self.assertEqual(cancelled["events"][-1]["stage"], "cancel")
+            self.assertNotIn("finishedAt", cancelled)
+            self.assertEqual(cancelled["message"], "tuning cancellation requested")
+            self.assertEqual(cancelled["events"][-1]["stage"], "cancel_requested")
 
-    def test_fixed_attack_batch_method_is_skipped_during_tuning(self) -> None:
+    def test_start_is_blocked_while_job_is_cancelling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            service._write_state(
+                "tune_cancelling",
+                {
+                    "id": "tune_cancelling",
+                    "status": "cancelling",
+                    "progress": 55,
+                    "message": "waiting for current candidate to finish",
+                    "events": [],
+                },
+            )
+
+            with self.assertRaisesRegex(ValueError, "already running"):
+                service.start({"tuneWatermarks": False, "tuneAttacks": False, "tuneQuality": False})
+
+    def test_start_is_blocked_while_tracked_thread_is_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            service._write_state(
+                "tune_old_cancel",
+                {
+                    "id": "tune_old_cancel",
+                    "status": "cancelled",
+                    "progress": 55,
+                    "cancelRequested": True,
+                    "message": "old terminal state but worker still exiting",
+                    "events": [],
+                },
+            )
+            release = threading.Event()
+            thread = threading.Thread(target=release.wait, daemon=True)
+            thread.start()
+            service._threads["tune_old_cancel"] = thread
+
+            try:
+                with self.assertRaisesRegex(ValueError, "still stopping"):
+                    service.start({"tuneWatermarks": False, "tuneAttacks": False, "tuneQuality": False})
+            finally:
+                release.set()
+                thread.join(timeout=1)
+
+    def test_start_reports_running_when_live_thread_state_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            service._write_state(
+                "tune_running",
+                {
+                    "id": "tune_running",
+                    "status": "running",
+                    "progress": 20,
+                    "message": "running candidate",
+                    "events": [],
+                },
+            )
+            release = threading.Event()
+            thread = threading.Thread(target=release.wait, daemon=True)
+            thread.start()
+            service._threads["tune_running"] = thread
+
+            try:
+                with self.assertRaisesRegex(ValueError, "already running"):
+                    service.start({"tuneWatermarks": False, "tuneAttacks": False, "tuneQuality": False})
+            finally:
+                release.set()
+                thread.join(timeout=1)
+
+    def test_diffusion_regeneration_tunes_only_primary_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
             request = TuningRequest(
                 tune_watermarks=False,
                 tune_quality=False,
-                attack_methods=["brightness", "2x_regen"],
+                attack_methods=["brightness", "2x_regen", "4x_regen", DIFFUSION_REGENERATION_PRIMARY_METHOD],
             )
 
             methods = service._attack_methods_for_tuning(request)
 
             self.assertIn("brightness", methods)
+            self.assertIn(DIFFUSION_REGENERATION_PRIMARY_METHOD, methods)
             self.assertNotIn("2x_regen", methods)
+            self.assertNotIn("4x_regen", methods)
+            self.assertEqual(methods.count(DIFFUSION_REGENERATION_PRIMARY_METHOD), 1)
 
-    def test_fixed_attack_batch_override_is_preserved_in_summary(self) -> None:
+    def test_diffusion_regeneration_summary_expands_primary_batch_to_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            report = {
+                "jobId": "tune_test",
+                "watermarks": [],
+                "attacks": [
+                    {
+                        "method": DIFFUSION_REGENERATION_PRIMARY_METHOD,
+                        "bestBatch": {"batchSize": 8, "ok": True, "imagesPerSecond": 1.0},
+                    }
+                ],
+                "quality": {},
+            }
+
+            summary = service._build_summary(report)
+
+            overrides = summary["attackBatchOverrides"]
+            self.assertIn("regen_diffusion=8", overrides)
+            self.assertIn("2x_regen=8", overrides)
+            self.assertIn("4x_regen=8", overrides)
+            self.assertIn("2x_regen=8", summary["inheritedAttackBatchOverrides"])
+            self.assertIn("4x_regen=8", summary["inheritedAttackBatchOverrides"])
+            self.assertEqual(
+                summary["diffusionRegenerationTuningPolicy"]["primaryMethod"],
+                DIFFUSION_REGENERATION_PRIMARY_METHOD,
+            )
+
+    def test_summary_omits_diffusion_regeneration_overrides_without_measurement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
@@ -82,9 +196,9 @@ class ParallelTuningPolicyTest(unittest.TestCase):
 
             summary = service._build_summary(report)
 
-            self.assertIn("2x_regen=8", summary["attackBatchOverrides"])
-            self.assertIn("2x_regen=8", summary["fixedAttackBatchOverrides"])
-            self.assertIn("2x_regen=8", summary["envUpdates"]["WM_BENCH_ATTACK_BATCH_SIZES"])
+            self.assertNotIn("WM_BENCH_ATTACK_BATCH_SIZES", summary["envUpdates"])
+            self.assertEqual(summary["attackBatchOverrides"], [])
+            self.assertEqual(summary["fixedAttackBatchOverrides"], [])
 
     def test_viewpoint_rerendering_is_excluded_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

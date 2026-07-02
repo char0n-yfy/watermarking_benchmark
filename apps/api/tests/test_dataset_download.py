@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.services.dataset_catalog import COMPACT_SAMPLE_COUNT, list_dataset_catalog
-from app.services.dataset_download import DatasetDownloadService
+from app.services.dataset_download import DatasetDownloadJob, DatasetDownloadService
 
 
 class DatasetDownloadServiceTest(unittest.TestCase):
@@ -110,6 +110,28 @@ class DatasetDownloadServiceTest(unittest.TestCase):
             self.assertEqual(install_dir, root / "datasets" / "shopee-product-matching" / "compact")
             self.assertGreaterEqual(len(list(install_dir.glob("*.png"))), 5)
             self.assertIn("__compact__", job.id)
+
+    def test_start_download_returns_existing_inflight_job_for_same_dataset_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = DatasetDownloadService(root)
+            existing = DatasetDownloadJob(
+                id="shopee-product-matching__compact__existing",
+                dataset_id="shopee-product-matching",
+                mode="compact",
+                status="running",
+                sample_count=COMPACT_SAMPLE_COUNT,
+            )
+            service._jobs[existing.id] = existing
+
+            job = service.start_download(
+                "shopee-product-matching",
+                mode="compact",
+                sample_count=COMPACT_SAMPLE_COUNT,
+            )
+
+            self.assertIs(job, existing)
+            self.assertEqual([item.id for item in service.list_jobs()], [existing.id])
 
     def test_custom_download_samples_with_seed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -52,7 +52,7 @@ export interface DatasetCatalogResponse {
 }
 
 export type DatasetDownloadMode = "compact" | "custom";
-export type DatasetDownloadStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type DatasetDownloadStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface DatasetDownloadJob {
   id: string;
@@ -71,7 +71,7 @@ export interface DatasetDownloadJob {
   bytesDownloaded?: number;
 }
 
-export type WeightDownloadStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type WeightDownloadStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface WeightDownloadJob {
   id: string;
@@ -387,6 +387,16 @@ export interface ParallelTuningSummary {
   attackBatchOverrides?: string[];
   attackCpuWorkerOverrides?: string[];
   watermarkCpuWorkerOverrides?: string[];
+  fixedAttackBatchOverrides?: string[];
+  inheritedAttackBatchOverrides?: string[];
+  viewpointRerenderingTuningPolicy?: {
+    primaryMethod?: string;
+    appliesTo?: string[];
+  };
+  diffusionRegenerationTuningPolicy?: {
+    primaryMethod?: string;
+    appliesTo?: string[];
+  };
   qualityBestCpuWorkers?: Record<string, unknown> | null;
   qualityBestPerceptualBatch?: Record<string, unknown> | null;
   [key: string]: unknown;
@@ -394,7 +404,7 @@ export interface ParallelTuningSummary {
 
 export interface ParallelTuningJob {
   id: string;
-  status: "running" | "succeeded" | "failed" | "cancelled" | string;
+  status: "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | string;
   progress: number;
   message?: string | null;
   request?: Record<string, unknown>;
@@ -406,6 +416,8 @@ export interface ParallelTuningJob {
   summary?: ParallelTuningSummary | null;
   error?: string | null;
   traceback?: string | null;
+  cancelRequested?: boolean;
+  cancelRequestedAt?: string;
 }
 
 export interface ParallelTuningSaveResult {

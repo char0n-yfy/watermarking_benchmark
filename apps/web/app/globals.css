@@ -3888,6 +3888,23 @@ a.button {
   max-width: 1180px;
 }
 
+.run-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 1180px;
+  align-items: stretch;
+}
+
+.run-entry-grid > .panel {
+  max-width: none;
+}
+
+.run-entry-grid .run-start-body {
+  min-height: 220px;
+  align-content: space-between;
+}
+
 .run-tuning-panel {
   max-width: 1180px;
   margin-bottom: 16px;
@@ -4538,18 +4555,20 @@ a.button {
 
 .tuning-estimate-section {
   align-content: start;
+  grid-column: 1 / -1;
 }
 
 .tuning-estimate-list {
   display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
 .tuning-estimate-list > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  align-content: center;
   gap: 12px;
+  min-height: 58px;
   border-radius: 8px;
   background: #f7faf8;
   padding: 8px 10px;
@@ -4563,8 +4582,14 @@ a.button {
 }
 
 .tuning-estimate-list strong {
-  text-align: right;
   font-size: 13px;
+}
+
+.tuning-estimate-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .tuning-effective-section {
@@ -5341,6 +5366,7 @@ a.button {
   .runs-workbench,
   .run-control-grid,
   .run-detail-grid,
+  .run-entry-grid,
   .run-tuning-grid,
   .tuning-config-grid,
   .tuning-stage-detail-grid,
@@ -5392,6 +5418,10 @@ a.button {
   .tuning-progress-row,
   .env-suggestion-row {
     grid-template-columns: 1fr;
+  }
+
+  .tuning-estimate-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .resources-browser-grid > .panel {

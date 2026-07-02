@@ -45,9 +45,14 @@ VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
     r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
 )
 VIEWPOINT_RERENDERING_PRIMARY_METHOD = "3d_viewpoint_rerendering_rotate_point"
-FIXED_ATTACK_BATCH_OVERRIDES = {
-    "2x_regen": 8,
-}
+DIFFUSION_REGENERATION_PRIMARY_METHOD = "regen_diffusion"
+DIFFUSION_REGENERATION_EQUIVALENT_METHODS = (
+    DIFFUSION_REGENERATION_PRIMARY_METHOD,
+    "2x_regen",
+    "4x_regen",
+)
+FIXED_ATTACK_BATCH_OVERRIDES: dict[str, int] = {}
+ACTIVE_TUNING_STATUSES = {"running", "cancelling"}
 TERMINAL_TUNING_STATUSES = {"succeeded", "failed", "cancelled"}
 
 
@@ -71,6 +76,17 @@ def _positive_candidates(values: Iterable[Any]) -> list[int]:
         if number > 0:
             parsed.add(number)
     return sorted(parsed)
+
+
+def _unique_preserving_order(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
 
 
 def _candidates_up_to(candidates: list[int], max_value: int) -> list[int]:
@@ -272,7 +288,13 @@ class ParallelTuningService:
     def start(self, payload: dict[str, Any] | None = None) -> JsonDict:
         request = TuningRequest.from_payload(payload)
         with self._lock:
-            running = [job for job in self.list_jobs() if job.get("status") == "running"]
+            live_thread_ids = self._live_thread_ids_locked()
+            if live_thread_ids:
+                live_state = self._state_for_live_thread(live_thread_ids[0])
+                if live_state.get("status") == "running":
+                    raise ValueError(f"Parallel tuning job already running: {live_thread_ids[0]}")
+                raise ValueError(f"Parallel tuning job still stopping: {live_thread_ids[0]}")
+            running = [job for job in self.list_jobs() if job.get("status") in ACTIVE_TUNING_STATUSES]
             if running:
                 raise ValueError(f"Parallel tuning job already running: {running[0]['id']}")
             job_id = f"tune_{time.strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
@@ -295,6 +317,25 @@ class ParallelTuningService:
             self._threads[job_id] = thread
             thread.start()
         return self.get(job_id)
+
+    def _live_thread_ids_locked(self) -> list[str]:
+        live: list[str] = []
+        finished: list[str] = []
+        for job_id, thread in self._threads.items():
+            if thread.is_alive():
+                live.append(job_id)
+            else:
+                finished.append(job_id)
+        for job_id in finished:
+            self._threads.pop(job_id, None)
+        return live
+
+    def _state_for_live_thread(self, job_id: str) -> JsonDict:
+        try:
+            state = self.get(job_id)
+        except KeyError:
+            return {"id": job_id, "status": "unknown"}
+        return state if isinstance(state, dict) else {"id": job_id, "status": "unknown"}
 
     def list_jobs(self) -> list[JsonDict]:
         jobs: list[JsonDict] = []
@@ -342,21 +383,46 @@ class ParallelTuningService:
             state = self.get(job_id)
             if state.get("status") in TERMINAL_TUNING_STATUSES:
                 return state
-            state["status"] = "cancelled"
             state["cancelRequested"] = True
-            state["finishedAt"] = state.get("finishedAt") or _utc_timestamp()
-            state["message"] = "tuning cancelled"
+            state["cancelRequestedAt"] = state.get("cancelRequestedAt") or _utc_timestamp()
+            thread = self._threads.get(job_id)
+            if thread is None or not thread.is_alive():
+                return self._mark_cancelled_locked(state)
+            state["status"] = "cancelling"
+            state["message"] = "tuning cancellation requested"
             events = list(state.get("events") or [])
             events.append(
                 {
                     "timestamp": _utc_timestamp(),
-                    "stage": "cancel",
+                    "stage": "cancel_requested",
                     "message": "tuning cancellation requested",
                 }
             )
             state["events"] = events[-200:]
             self._write_state(job_id, state)
             return state
+
+    def _mark_cancelled_locked(self, state: JsonDict) -> JsonDict:
+        state["status"] = "cancelled"
+        state["cancelRequested"] = True
+        state["finishedAt"] = state.get("finishedAt") or _utc_timestamp()
+        state["message"] = "tuning cancelled"
+        events = list(state.get("events") or [])
+        if not events or events[-1].get("stage") != "cancelled":
+            events.append(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "stage": "cancelled",
+                    "message": "tuning cancelled",
+                }
+            )
+        state["events"] = events[-200:]
+        self._write_state(str(state["id"]), state)
+        return state
+
+    def _mark_cancelled(self, job_id: str) -> JsonDict:
+        with self._lock:
+            return self._mark_cancelled_locked(self.get(job_id))
 
     def _write_state(self, job_id: str, state: JsonDict) -> None:
         state["updatedAt"] = _utc_timestamp()
@@ -394,7 +460,7 @@ class ParallelTuningService:
             state = self.get(job_id)
         except KeyError:
             return False
-        return bool(state.get("cancelRequested")) or state.get("status") == "cancelled"
+        return bool(state.get("cancelRequested")) or state.get("status") in {"cancelled", "cancelling"}
 
     def _ensure_not_cancelled(self, job_id: str) -> None:
         if self._is_cancel_requested(job_id):
@@ -403,12 +469,35 @@ class ParallelTuningService:
     def _viewpoint_rerendering_methods(self) -> list[str]:
         return sorted(method for method in ATTACK_REGISTRY if VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method))
 
+    def _diffusion_regeneration_methods(self) -> list[str]:
+        return [method for method in DIFFUSION_REGENERATION_EQUIVALENT_METHODS if method in ATTACK_REGISTRY]
+
     def _attack_methods_for_tuning(self, request: TuningRequest) -> list[str]:
-        methods = [
+        methods = _unique_preserving_order(
             method
             for method in (request.attack_methods or sorted(ATTACK_REGISTRY))
             if method not in FIXED_ATTACK_BATCH_OVERRIDES
-        ]
+        )
+
+        diffusion_methods = set(self._diffusion_regeneration_methods())
+        has_diffusion_regeneration = any(method in diffusion_methods for method in methods)
+        if has_diffusion_regeneration:
+            primary = (
+                DIFFUSION_REGENERATION_PRIMARY_METHOD
+                if DIFFUSION_REGENERATION_PRIMARY_METHOD in ATTACK_REGISTRY
+                else next((method for method in DIFFUSION_REGENERATION_EQUIVALENT_METHODS if method in diffusion_methods), None)
+            )
+            normalized: list[str] = []
+            primary_inserted = False
+            for method in methods:
+                if method in diffusion_methods:
+                    if not primary_inserted and primary:
+                        normalized.append(primary)
+                        primary_inserted = True
+                    continue
+                normalized.append(method)
+            methods = _unique_preserving_order(normalized)
+
         has_viewpoint = any(VIEWPOINT_RERENDERING_METHOD_PATTERN.fullmatch(method) for method in methods)
         if not has_viewpoint:
             return methods
@@ -517,15 +606,18 @@ class ParallelTuningService:
                 summary=summary,
             )
         except TuningCancelled:
-            self.cancel(job_id)
+            self._mark_cancelled(job_id)
         except Exception as exc:
-            self._mutate_state(
-                job_id,
-                status="failed",
-                message=_error_text(exc),
-                error=_error_text(exc),
-                traceback=traceback.format_exc(limit=12),
-            )
+            if self._is_cancel_requested(job_id):
+                self._mark_cancelled(job_id)
+            else:
+                self._mutate_state(
+                    job_id,
+                    status="failed",
+                    message=_error_text(exc),
+                    error=_error_text(exc),
+                    traceback=traceback.format_exc(limit=12),
+                )
         finally:
             self._cleanup_job_artifacts(job_id)
             for key, value in env_snapshot.items():
@@ -533,6 +625,9 @@ class ParallelTuningService:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+            with self._lock:
+                if self._threads.get(job_id) is threading.current_thread():
+                    self._threads.pop(job_id, None)
 
     def _prepare_inputs(self, job_id: str, request: TuningRequest) -> Path:
         output_dir = self.root / job_id / "canonical_inputs"
@@ -943,6 +1038,10 @@ class ParallelTuningService:
                 capability = attack.batch_capability_info()
                 record["supportsBatch"] = capability.supported
                 record["threadSafeParallel"] = bool(getattr(attack, "thread_safe_parallel", False))
+                diffusion_methods = self._diffusion_regeneration_methods()
+                if method == DIFFUSION_REGENERATION_PRIMARY_METHOD and diffusion_methods:
+                    record["tuningRepresentativeFor"] = diffusion_methods
+                    record["tuningPolicy"] = "diffusion_regeneration_single_model"
                 if method == VIEWPOINT_RERENDERING_PRIMARY_METHOD and viewpoint_methods:
                     record["tuningRepresentativeFor"] = viewpoint_methods
                     record["tuningPolicy"] = "3d_viewpoint_rerendering_primary_rotate_point"
@@ -1176,7 +1275,15 @@ class ParallelTuningService:
             best_batch = record.get("bestBatch")
             best_cpu = record.get("bestCpuWorkers")
             if method and isinstance(best_batch, dict):
-                if method == VIEWPOINT_RERENDERING_PRIMARY_METHOD:
+                if method == DIFFUSION_REGENERATION_PRIMARY_METHOD:
+                    diffusion_methods = self._diffusion_regeneration_methods()
+                    for diffusion_method in diffusion_methods:
+                        add_attack_batch_override(
+                            diffusion_method,
+                            best_batch["batchSize"],
+                            inherited=diffusion_method != DIFFUSION_REGENERATION_PRIMARY_METHOD,
+                        )
+                elif method == VIEWPOINT_RERENDERING_PRIMARY_METHOD:
                     viewpoint_methods = self._viewpoint_rerendering_methods()
                     for viewpoint_method in viewpoint_methods:
                         add_attack_batch_override(
@@ -1224,6 +1331,10 @@ class ParallelTuningService:
             "viewpointRerenderingTuningPolicy": {
                 "primaryMethod": VIEWPOINT_RERENDERING_PRIMARY_METHOD,
                 "appliesTo": self._viewpoint_rerendering_methods(),
+            },
+            "diffusionRegenerationTuningPolicy": {
+                "primaryMethod": DIFFUSION_REGENERATION_PRIMARY_METHOD,
+                "appliesTo": self._diffusion_regeneration_methods(),
             },
             "qualityBestCpuWorkers": best_quality_cpu,
             "qualityBestPerceptualBatch": best_perceptual,

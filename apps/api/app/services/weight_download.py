@@ -20,7 +20,8 @@ from app.services.watermark_weights import (
 )
 
 
-JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+JobStatus = Literal["queued", "running", "succeeded", "failed"]
+ACTIVE_DOWNLOAD_STATUSES = {"queued", "running"}
 
 
 @dataclass
@@ -89,29 +90,36 @@ class WeightDownloadService:
         if directory is None:
             raise ValueError(f"Missing weights directory mapping for: {method}")
 
-        job_id = self._build_job_id(directory)
         install_dir = weights_install_dir(self.resources_root, method)
-        if weights_installed(install_dir):
-            job = WeightDownloadJob(
-                id=job_id,
-                method=method,
-                weights_dir=directory,
-                status="succeeded",
-            )
-            with self._lock:
+        with self._lock:
+            active = self._active_job_for_weights_dir_locked(directory)
+            if active is not None:
+                return active
+
+            job_id = self._build_job_id(directory)
+            if weights_installed(install_dir):
+                job = WeightDownloadJob(
+                    id=job_id,
+                    method=method,
+                    weights_dir=directory,
+                    status="succeeded",
+                )
                 self._jobs[job_id] = job
+                should_start = False
+            else:
+                job = WeightDownloadJob(
+                    id=job_id,
+                    method=method,
+                    weights_dir=directory,
+                )
+                self._jobs[job_id] = job
+                should_start = True
+
+        if not should_start:
             self._mark_already_installed(job, install_dir)
             job.status = "succeeded"
             job.progress = 100
             return job
-
-        job = WeightDownloadJob(
-            id=job_id,
-            method=method,
-            weights_dir=directory,
-        )
-        with self._lock:
-            self._jobs[job_id] = job
 
         thread = threading.Thread(
             target=self._run_job,
@@ -121,6 +129,16 @@ class WeightDownloadService:
         )
         thread.start()
         return job
+
+    def _active_job_for_weights_dir_locked(self, weights_dir: str) -> WeightDownloadJob | None:
+        matches = [
+            job
+            for job in self._jobs.values()
+            if job.weights_dir == weights_dir and job.status in ACTIVE_DOWNLOAD_STATUSES
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda job: job.created_at)
 
     def _build_job_id(self, weights_dir: str) -> str:
         stamp = time.strftime("%Y%m%d_%H%M%S")

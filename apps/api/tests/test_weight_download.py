@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.services.weight_download import WeightDownloadService
+from app.services.weight_download import WeightDownloadJob, WeightDownloadService
 
 
 class WeightDownloadServiceTest(unittest.TestCase):
@@ -57,6 +57,23 @@ class WeightDownloadServiceTest(unittest.TestCase):
 
             self.assertEqual(job.status, "succeeded")
             self.assertGreaterEqual(job.progress, 1)
+
+    def test_start_download_returns_existing_inflight_job_for_same_weights_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = WeightDownloadService(root)
+            existing = WeightDownloadJob(
+                id="hidden__weights__existing",
+                method="hidden",
+                weights_dir="hidden",
+                status="running",
+            )
+            service._jobs[existing.id] = existing
+
+            job = service.start_download("hidden")
+
+            self.assertIs(job, existing)
+            self.assertEqual([item.id for item in service.list_jobs()], [existing.id])
 
     def test_skips_when_already_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

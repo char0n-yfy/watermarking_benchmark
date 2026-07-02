@@ -23,7 +23,8 @@ from app.services.object_storage import ObjectStorageClient
 from app.services.watermark_weights import iter_weight_files
 
 
-JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+JobStatus = Literal["queued", "running", "succeeded", "failed"]
+ACTIVE_DOWNLOAD_STATUSES = {"queued", "running"}
 
 
 @dataclass
@@ -96,31 +97,38 @@ class AttackWeightDownloadService:
         if spec is None:
             raise ValueError(f"Missing attack weights mapping for: {method}")
 
-        job_id = self._build_job_id(spec.pack_id)
         install_dir = attack_weights_install_dir(self.resources_root, method)
-        if attack_method_weights_installed(self.resources_root, method):
-            job = AttackWeightDownloadJob(
-                id=job_id,
-                method=method,
-                weights_dir=spec.storage_dir,
-                weights_pack_id=spec.pack_id,
-                status="succeeded",
-            )
-            with self._lock:
+        with self._lock:
+            active = self._active_job_for_pack_locked(spec.pack_id)
+            if active is not None:
+                return active
+
+            job_id = self._build_job_id(spec.pack_id)
+            if attack_method_weights_installed(self.resources_root, method):
+                job = AttackWeightDownloadJob(
+                    id=job_id,
+                    method=method,
+                    weights_dir=spec.storage_dir,
+                    weights_pack_id=spec.pack_id,
+                    status="succeeded",
+                )
                 self._jobs[job_id] = job
+                should_start = False
+            else:
+                job = AttackWeightDownloadJob(
+                    id=job_id,
+                    method=method,
+                    weights_dir=spec.storage_dir,
+                    weights_pack_id=spec.pack_id,
+                )
+                self._jobs[job_id] = job
+                should_start = True
+
+        if not should_start:
             self._mark_already_installed(job, install_dir, method)
             job.status = "succeeded"
             job.progress = 100
             return job
-
-        job = AttackWeightDownloadJob(
-            id=job_id,
-            method=method,
-            weights_dir=spec.storage_dir,
-            weights_pack_id=spec.pack_id,
-        )
-        with self._lock:
-            self._jobs[job_id] = job
 
         thread = threading.Thread(
             target=self._run_job,
@@ -130,6 +138,16 @@ class AttackWeightDownloadService:
         )
         thread.start()
         return job
+
+    def _active_job_for_pack_locked(self, weights_pack_id: str) -> AttackWeightDownloadJob | None:
+        matches = [
+            job
+            for job in self._jobs.values()
+            if job.weights_pack_id == weights_pack_id and job.status in ACTIVE_DOWNLOAD_STATUSES
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda job: job.created_at)
 
     def _build_job_id(self, pack_id: str) -> str:
         stamp = time.strftime("%Y%m%d_%H%M%S")

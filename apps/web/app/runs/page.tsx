@@ -297,25 +297,6 @@ function stopIntentNotice(
   return run.stopIntent === "cancel" ? labels.cancelRequestedNotice : labels.pauseRequestedNotice;
 }
 
-function tuningStatusClass(status: string | undefined) {
-  if (!status) {
-    return "badge status-badge status-idle";
-  }
-  if (status === "running") {
-    return "badge status-badge status-running ok";
-  }
-  if (status === "queued") {
-    return "badge status-badge status-queued warn";
-  }
-  if (status === "succeeded") {
-    return "badge status-badge status-completed ok";
-  }
-  if (status === "failed" || status === "cancelled") {
-    return `badge status-badge status-${status} error`;
-  }
-  return `badge status-badge status-${status.replaceAll("_", "-")} warn`;
-}
-
 function taskName(run: DemoRunRecord) {
   return run.taskName || run.configName || run.id;
 }
@@ -368,6 +349,10 @@ function attackMethod(attack: AttackPreset) {
 function isViewpointTuningMethod(method: string) {
   return method.startsWith("3d_viewpoint_rerendering_");
 }
+
+const VIEWPOINT_RERENDERING_PRIMARY_METHOD = "3d_viewpoint_rerendering_rotate_point";
+const DIFFUSION_REGENERATION_PRIMARY_METHOD = "regen_diffusion";
+const DIFFUSION_REGENERATION_METHODS = new Set(["regen_diffusion", "2x_regen", "4x_regen"]);
 
 const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
   brightness: { en: "Brightness", zh: "亮度调整" },
@@ -448,6 +433,12 @@ function viewpointDisplayName(method: string) {
 }
 
 function attackTuningDisplayName(attack: AttackPreset | undefined, method: string) {
+  if (method === VIEWPOINT_RERENDERING_PRIMARY_METHOD) {
+    return "3D 视角重渲染";
+  }
+  if (method === DIFFUSION_REGENERATION_PRIMARY_METHOD) {
+    return ATTACK_DISPLAY_NAMES[DIFFUSION_REGENERATION_PRIMARY_METHOD].zh;
+  }
   const viewpointName = viewpointDisplayName(method);
   if (viewpointName) {
     return viewpointName;
@@ -460,6 +451,20 @@ function attackTuningDisplayName(attack: AttackPreset | undefined, method: strin
     return ATTACK_DISPLAY_NAMES[attack.method].zh;
   }
   return attack?.name || method;
+}
+
+function attackTuningRepresentativeMethod(method: string) {
+  if (DIFFUSION_REGENERATION_METHODS.has(method)) {
+    return DIFFUSION_REGENERATION_PRIMARY_METHOD;
+  }
+  if (isViewpointTuningMethod(method)) {
+    return VIEWPOINT_RERENDERING_PRIMARY_METHOD;
+  }
+  return method;
+}
+
+function normalizeTuningAttackMethods(methods: string[]) {
+  return [...new Set(methods.map(attackTuningRepresentativeMethod).filter(Boolean))].sort();
 }
 
 function buildWatermarkTuningOptions(algorithms: AlgorithmVersion[]): TuningMethodOption[] {
@@ -489,18 +494,31 @@ function buildWatermarkTuningOptions(algorithms: AlgorithmVersion[]): TuningMeth
 function buildAttackTuningOptions(attacks: AttackPreset[]): TuningMethodOption[] {
   const groups = new Map<string, AttackPreset[]>();
   for (const attack of attacks) {
-    const method = attackMethod(attack);
+    const method = attackTuningRepresentativeMethod(attackMethod(attack));
     groups.set(method, [...(groups.get(method) ?? []), attack]);
   }
   return [...groups.entries()]
     .map(([method, items]) => {
-      const primary = items.find((item) => item.available !== false) ?? items[0];
+      const primary =
+        items.find((item) => attackMethod(item) === method && item.available !== false) ??
+        items.find((item) => item.available !== false) ??
+        items[0];
       const category = attackCategoryLabel(primary?.category);
       const label = attackTuningDisplayName(primary, method);
+      const rawMethods = [...new Set(items.map((item) => attackMethod(item)))].sort();
+      const inheritedCount = rawMethods.filter((item) => item !== method).length;
+      const policyNote =
+        method === DIFFUSION_REGENERATION_PRIMARY_METHOD
+          ? " · 2/4 轮继承同一模型测量"
+          : method === VIEWPOINT_RERENDERING_PRIMARY_METHOD
+            ? " · 3D 变体继承同一代表测量"
+            : "";
       return {
         method,
         label,
-        subtitle: `${category} · ${method}${items.length > 1 ? ` · ${items.length} 个配置` : ""}`,
+        subtitle: `${category} · ${method}${items.length > 1 ? ` · ${items.length} 个配置` : ""}${
+          inheritedCount > 0 ? ` · ${inheritedCount} 个继承项` : ""
+        }${policyNote}`,
         category,
         count: items.length,
         requiresGpu: items.some((item) => item.requiresGpu),
@@ -535,7 +553,7 @@ function buildTuningPayload(form: TuningForm) {
   const workerCandidates = candidateRange(form.minWorkerCount, maxWorkerCount, [24, 32, 48, 64, 96, 128]);
   const sampleCount = Math.max(positiveInteger(form.sampleCount, maxBatchSize), maxBatchSize, Math.max(...batchCandidates));
   const watermarkMethods = [...new Set(form.selectedWatermarkMethods)].sort();
-  const attackMethods = [...new Set(form.selectedAttackMethods)].sort();
+  const attackMethods = normalizeTuningAttackMethods(form.selectedAttackMethods);
   const tuneWatermarks = form.tuneWatermarks && watermarkMethods.length > 0;
   const tuneAttacks = form.tuneAttacks && attackMethods.length > 0;
   return {
@@ -577,7 +595,9 @@ function buildTuningCatalogStats(
   }>
 ): TuningCatalogStats {
   const watermarkMethods = new Set(algorithms.map((algorithm) => algorithm.method || algorithm.id).filter(Boolean));
-  const attackMethods = new Set(attacks.map((attack) => attack.executionMethod || attack.method).filter(Boolean));
+  const attackMethods = new Set(
+    attacks.map((attack) => attackTuningRepresentativeMethod(attack.executionMethod || attack.method)).filter(Boolean)
+  );
   const weightedAttackVariants = attacks.filter((attack) => attack.weightsPackId || attack.weightsDir || attack.weightsPath).length;
   return {
     watermarkMethods: watermarkMethods.size,
@@ -597,9 +617,6 @@ function tuningParameterSegmentCount(payload: ReturnType<typeof buildTuningPaylo
   }
   if (payload.tuneAttacks) {
     total += 2;
-  }
-  if (payload.includeViewpoint3dAttacks) {
-    total += 1;
   }
   if (payload.tuneQuality) {
     total += 2;
@@ -645,6 +662,7 @@ function tuningPreviewLines(payload: ReturnType<typeof buildTuningPayload>) {
     `watermarkMethods=${payload.watermarkMethods.join(",") || "none"}`,
     `tuneAttacks=${payload.tuneAttacks ? "true" : "false"}`,
     `attackMethods=${payload.attackMethods.join(",") || "none"}`,
+    `attackRepresentativePolicy=diffusion_regeneration,3d_viewpoint_rerendering`,
     `tuneQuality=${payload.tuneQuality ? "true" : "false"}`,
     `includeViewpoint3dAttacks=${payload.includeViewpoint3dAttacks ? "true" : "false"}`
   ];
@@ -667,7 +685,7 @@ function buildTuningStageDetails(
       title: "攻击算法",
       badge: payload.tuneAttacks ? `${payload.attackMethods.length}/${stats.attackMethods || payload.attackMethods.length} 项` : "跳过",
       checked: payload.tuneAttacks,
-      description: `选择需要搜索 batch 或 CPU workers 参数的攻击算法；3D 视角重渲染也在这里选择。${
+      description: `选择需要搜索 batch 或 CPU workers 参数的攻击算法；同模型变体会继承代表项结果，避免重复测量。${
         stats.weightedAttackVariants > 0 ? ` ${stats.weightedAttackVariants} 个攻击配置需要先在资源页安装权重。` : ""
       }`
     },
@@ -1208,6 +1226,7 @@ export default function RunsPage() {
   const [resourceNames, setResourceNames] = useState<Record<string, string>>({});
   const [tuningJob, setTuningJob] = useState<ParallelTuningJob | null>(null);
   const [tuningDialogOpen, setTuningDialogOpen] = useState(false);
+  const [tuningWorkspaceOpen, setTuningWorkspaceOpen] = useState(false);
   const [tuningForm, setTuningForm] = useState<TuningForm>(quickTuningDefaults);
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningNotice, setTuningNotice] = useState("");
@@ -1265,6 +1284,8 @@ export default function RunsPage() {
     [monitorStats.attackOutcomes]
   );
   const tuningRunning = tuningJob?.status === "running";
+  const tuningStopping = tuningJob?.status === "cancelling";
+  const tuningActive = tuningRunning || tuningStopping;
   const tuningEnvEntries = Object.entries(tuningJob?.summary?.envUpdates ?? {});
   const tuningChartPoints = useMemo(() => tuningPoints(tuningJob).slice(-28), [tuningJob]);
   const tuningEvents = (tuningJob?.events ?? []).slice(-8).reverse();
@@ -1295,10 +1316,11 @@ export default function RunsPage() {
     [effectiveTuningPayload, tuningCatalogStats]
   );
   const experimentActive = Boolean(monitorRun);
-  const tuningActive = tuningRunning && !experimentActive;
-  const showTuningSection = !experimentActive;
-  const showExperimentSection = !tuningActive;
-  const tuningStartDisabled = tuningBusy || effectiveTuningStages === 0;
+  const tuningWorkspaceVisible = !experimentActive && Boolean(tuningJob?.id) && (tuningWorkspaceOpen || tuningActive);
+  const showEntryCards = !experimentActive && !tuningWorkspaceVisible;
+  const showTuningSection = tuningWorkspaceVisible;
+  const showExperimentSection = experimentActive;
+  const tuningStartDisabled = tuningBusy || tuningActive || effectiveTuningStages === 0;
 
   useEffect(() => {
     try {
@@ -1380,7 +1402,9 @@ export default function RunsPage() {
         const selectedWatermarkMethods = current.selectedWatermarkMethods.filter((method) =>
           availableWatermarkMethods.includes(method)
         );
-        const selectedAttackMethods = current.selectedAttackMethods.filter((method) => availableAttackMethods.includes(method));
+        const selectedAttackMethods = normalizeTuningAttackMethods(current.selectedAttackMethods).filter((method) =>
+          availableAttackMethods.includes(method)
+        );
         const nextWatermarkMethods =
           selectedWatermarkMethods.length > 0 || !current.tuneWatermarks ? selectedWatermarkMethods : availableWatermarkMethods;
         const nextAttackMethods =
@@ -1484,7 +1508,7 @@ export default function RunsPage() {
   ]);
 
   useEffect(() => {
-    if (!tuningRunning || !tuningJob?.id) {
+    if (!tuningActive || !tuningJob?.id) {
       return;
     }
     const timer = window.setInterval(() => {
@@ -1493,7 +1517,13 @@ export default function RunsPage() {
         .catch(() => undefined);
     }, 1800);
     return () => window.clearInterval(timer);
-  }, [tuningJob?.id, tuningRunning]);
+  }, [tuningJob?.id, tuningActive]);
+
+  useEffect(() => {
+    if (tuningActive) {
+      setTuningWorkspaceOpen(true);
+    }
+  }, [tuningActive]);
 
   const openStartDialog = () => {
     setStartDialogOpen(true);
@@ -1653,10 +1683,10 @@ export default function RunsPage() {
       return {
         ...defaults,
         selectedWatermarkMethods: current.selectedWatermarkMethods,
-        selectedAttackMethods: current.selectedAttackMethods,
+        selectedAttackMethods: normalizeTuningAttackMethods(current.selectedAttackMethods),
         tuneWatermarks: current.selectedWatermarkMethods.length > 0,
-        tuneAttacks: current.selectedAttackMethods.length > 0,
-        includeViewpoint3dAttacks: current.selectedAttackMethods.some(isViewpointTuningMethod)
+        tuneAttacks: normalizeTuningAttackMethods(current.selectedAttackMethods).length > 0,
+        includeViewpoint3dAttacks: normalizeTuningAttackMethods(current.selectedAttackMethods).some(isViewpointTuningMethod)
       };
     });
   };
@@ -1698,10 +1728,11 @@ export default function RunsPage() {
   };
 
   const updateSelectedAttackMethods = (methods: string[]) => {
-    const hasViewpointMethod = methods.some(isViewpointTuningMethod);
+    const normalizedMethods = normalizeTuningAttackMethods(methods);
+    const hasViewpointMethod = normalizedMethods.some(isViewpointTuningMethod);
     updateTuningForm({
-      selectedAttackMethods: methods,
-      tuneAttacks: methods.length > 0,
+      selectedAttackMethods: normalizedMethods,
+      tuneAttacks: normalizedMethods.length > 0,
       includeViewpoint3dAttacks: hasViewpointMethod
     });
   };
@@ -1722,6 +1753,7 @@ export default function RunsPage() {
       const payload = buildTuningPayload(tuningForm);
       const job = await startParallelTuning(payload);
       setTuningJob(job);
+      setTuningWorkspaceOpen(true);
       setTuningDialogOpen(false);
       setTuningNotice(`调参任务已启动，sampleCount=${payload.sampleCount}，最大 batch=${payload.maxBatchSize}。`);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1730,6 +1762,13 @@ export default function RunsPage() {
     } finally {
       setTuningBusy(false);
     }
+  };
+
+  const closeTuningWorkspace = () => {
+    if (tuningActive) {
+      return;
+    }
+    setTuningWorkspaceOpen(false);
   };
 
   const persistTuning = async () => {
@@ -1760,7 +1799,11 @@ export default function RunsPage() {
     try {
       const updated = await cancelParallelTuning(tuningJob.id);
       setTuningJob(updated);
-      setTuningNotice("调参任务已停止，已完成的候选记录保留在该任务目录中。");
+      setTuningNotice(
+        updated.status === "cancelled"
+          ? "调参任务已停止，已完成的候选记录保留在该任务目录中。"
+          : "停止请求已发送，当前候选完成清理后会结束调参。"
+      );
     } catch (error) {
       setTuningNotice(error instanceof Error ? error.message : "停止调参失败。");
     } finally {
@@ -1806,6 +1849,43 @@ export default function RunsPage() {
         </div>
       </div>
 
+      {showEntryCards ? (
+        <div className="run-entry-grid">
+          <section className="panel run-start-panel run-tuning-start-panel">
+            <div className="panel-body run-start-body">
+              <div className="run-start-copy">
+                <h2>并行参数自动调优</h2>
+                <p>先选择调参规则与算法范围，启动后再进入搜索进度、吞吐量趋势和推荐参数面板。</p>
+              </div>
+              <div className="run-start-actions">
+                <button className="button primary run-start-button" disabled={tuningBusy} onClick={openTuningDialog} type="button">
+                  <SlidersHorizontal size={18} />
+                  配置并开始调参
+                </button>
+              </div>
+              {tuningNotice ? <div className="risk ok">{tuningNotice}</div> : null}
+            </div>
+          </section>
+
+          <section className="panel run-start-panel">
+            <div className="panel-body run-start-body">
+              <div className="run-start-copy">
+                <h2>{t.runs.startExperiment}</h2>
+                <p>{t.runs.startExperimentHint}</p>
+              </div>
+              <div className="run-start-actions">
+                <button className="button primary run-start-button" onClick={openStartDialog} type="button">
+                  <PlayCircle size={18} />
+                  {t.runs.startExperiment}
+                </button>
+              </div>
+
+              {notice ? <div className="risk ok">{notice}</div> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {showTuningSection ? (
         <section className="panel run-tuning-panel">
           <div className="panel-header">
@@ -1817,11 +1897,10 @@ export default function RunsPage() {
                   : "在开始实验之外单独搜索 batch size 与 CPU worker 参数。"}
               </p>
             </div>
-            <span className={tuningStatusClass(tuningJob?.status)}>{tuningJob?.status ?? "idle"}</span>
           </div>
           <div className="panel-body run-tuning-body">
           <div className="run-tuning-toolbar">
-            <button className="button primary" disabled={tuningBusy || tuningRunning} onClick={openTuningDialog} type="button">
+            <button className="button primary" disabled={tuningBusy || tuningActive} onClick={openTuningDialog} type="button">
               <SlidersHorizontal size={16} />
               开始调参
             </button>
@@ -1836,7 +1915,7 @@ export default function RunsPage() {
             </button>
             <button className="button danger" disabled={tuningBusy || !tuningRunning} onClick={stopTuning} type="button">
               <Square size={16} />
-              停止调参
+              {tuningStopping ? "正在停止" : "停止调参"}
             </button>
             <button
               className="button"
@@ -1846,6 +1925,9 @@ export default function RunsPage() {
             >
               <RefreshCw size={16} />
               刷新调参
+            </button>
+            <button className="button" disabled={tuningActive} onClick={closeTuningWorkspace} type="button">
+              返回入口
             </button>
           </div>
 
@@ -1930,7 +2012,7 @@ export default function RunsPage() {
         </section>
       ) : null}
 
-      {showExperimentSection ? (monitorRun ? (
+      {showExperimentSection && monitorRun ? (
         <section className="panel run-execution-panel">
           <div className="panel-header">
             <div>
@@ -2086,25 +2168,7 @@ export default function RunsPage() {
             </div>
           </div>
         </section>
-      ) : (
-        <section className="panel run-start-panel">
-          <div className="panel-body run-start-body">
-            <div className="run-start-copy">
-              <h2>{t.runs.startExperiment}</h2>
-              <p>{t.runs.startExperimentHint}</p>
-            </div>
-            <div className="run-start-actions">
-              <button className="button primary run-start-button" onClick={openStartDialog} type="button">
-                <PlayCircle size={18} />
-                {t.runs.startExperiment}
-              </button>
-            </div>
-
-            {notice ? <div className="risk ok">{notice}</div> : null}
-
-          </div>
-        </section>
-      )) : null}
+      ) : null}
 
       {tuningDialogOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -2353,8 +2417,8 @@ export default function RunsPage() {
                       <strong>{effectiveTuningPayload.workerCandidates.length} 个</strong>
                     </div>
                     <div>
-                      <span>预计测量</span>
-                      <strong>{effectiveTuningCombinations} 组</strong>
+                      <span>粗略测量</span>
+                      <strong>约 {effectiveTuningCombinations} 组</strong>
                     </div>
                     <div>
                       <span>水印 method</span>
@@ -2373,7 +2437,7 @@ export default function RunsPage() {
                       <strong>{effectiveTuningSegments} 类</strong>
                     </div>
                     <div>
-                      <span>预计耗时</span>
+                      <span>粗略耗时</span>
                       <strong>{tuningEstimateText(effectiveTuningPayload)}</strong>
                     </div>
                     <div>
@@ -2381,6 +2445,7 @@ export default function RunsPage() {
                       <strong>{effectiveTuningPayload.sampleCount}</strong>
                     </div>
                   </div>
+                  <p className="tuning-estimate-note">实际执行会以后端检测到的算法能力为准，串行项与继承项不会按前端估算重复测量。</p>
                 </section>
 
                 <section className="run-dialog-section tuning-effective-section">
@@ -2427,7 +2492,7 @@ export default function RunsPage() {
             </div>
             <div className="modal-footer tuning-modal-footer">
               <span className={tuningDraftNotice ? "tuning-footer-note saved" : "tuning-footer-note"}>
-                {tuningDraftNotice || `预计将测试 ${effectiveTuningCombinations} 组候选参数，覆盖 ${effectiveTuningSegments} 类输出分项`}
+                {tuningDraftNotice || `粗略预计约 ${effectiveTuningCombinations} 组候选参数，覆盖 ${effectiveTuningSegments} 类输出分项`}
               </span>
               <div className="toolbar">
                 <button className="button" onClick={() => setTuningDialogOpen(false)} type="button">

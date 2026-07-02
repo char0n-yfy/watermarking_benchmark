@@ -26,7 +26,8 @@ from app.services.resources import IMAGE_EXTS, iter_image_paths
 
 
 DownloadMode = Literal["compact", "custom"]
-JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+JobStatus = Literal["queued", "running", "succeeded", "failed"]
+ACTIVE_DOWNLOAD_STATUSES = {"queued", "running"}
 
 
 @dataclass
@@ -105,16 +106,25 @@ class DatasetDownloadService:
         if mode == "compact" and sample_count != COMPACT_SAMPLE_COUNT:
             sample_count = COMPACT_SAMPLE_COUNT
 
-        job_id = self._build_job_id(dataset_id, mode=mode, seed=seed, sample_count=sample_count)
-        job = DatasetDownloadJob(
-            id=job_id,
-            dataset_id=dataset_id,
-            mode=mode,
-            seed=seed if mode == "custom" else None,
-            sample_count=sample_count,
-            message="queued",
-        )
         with self._lock:
+            active = self._active_job_for_request_locked(
+                dataset_id,
+                mode=mode,
+                seed=seed if mode == "custom" else None,
+                sample_count=sample_count,
+            )
+            if active is not None:
+                return active
+
+            job_id = self._build_job_id(dataset_id, mode=mode, seed=seed, sample_count=sample_count)
+            job = DatasetDownloadJob(
+                id=job_id,
+                dataset_id=dataset_id,
+                mode=mode,
+                seed=seed if mode == "custom" else None,
+                sample_count=sample_count,
+                message="queued",
+            )
             self._jobs[job_id] = job
 
         thread = threading.Thread(
@@ -125,6 +135,27 @@ class DatasetDownloadService:
         )
         thread.start()
         return job
+
+    def _active_job_for_request_locked(
+        self,
+        dataset_id: str,
+        *,
+        mode: DownloadMode,
+        seed: int | None,
+        sample_count: int,
+    ) -> DatasetDownloadJob | None:
+        matches = [
+            job
+            for job in self._jobs.values()
+            if job.dataset_id == dataset_id
+            and job.mode == mode
+            and job.seed == seed
+            and job.sample_count == sample_count
+            and job.status in ACTIVE_DOWNLOAD_STATUSES
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda job: job.created_at)
 
     def _set_progress(self, job: DatasetDownloadJob, completed: int, total: int, *, message: str) -> None:
         job.completed_items = completed
