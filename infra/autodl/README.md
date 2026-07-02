@@ -16,17 +16,34 @@ Recommended paths:
 From the repository root:
 
 ```bash
-bash infra/autodl/start.sh
+bash scripts/deploy-autodl-linux.sh
 ```
 
 The command creates `.env.autodl` when missing, creates/reuses `.venv`, installs Python dependencies, prepares screen and Node.js/pnpm when missing, installs web dependencies, builds `apps/web/out`, and starts API + worker in `screen`.
 
 FastAPI listens on `6006` by default and serves the static web build from `apps/web/out` when it exists. Expose local port `6006` in the AutoDL console, or tunnel it with SSH.
 
+The deploy helper also provides operational commands:
+
+```bash
+bash scripts/deploy-autodl-linux.sh status
+bash scripts/deploy-autodl-linux.sh logs
+bash scripts/deploy-autodl-linux.sh tunnel
+bash scripts/deploy-autodl-linux.sh restart
+bash scripts/deploy-autodl-linux.sh stop
+```
+
+Lower-level compatibility entrypoints are still available:
+
+```bash
+bash infra/autodl/start.sh
+bash scripts/start-autodl-linux.sh
+```
+
 ## Stop
 
 ```bash
-bash infra/autodl/stop.sh
+bash scripts/deploy-autodl-linux.sh stop
 ```
 
 The one-command startup output also prints this shutdown command, plus the manual `screen` commands for debugging.

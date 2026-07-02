@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
+  Check,
   CheckCircle2,
   Clock3,
   FolderOpen,
@@ -11,9 +12,11 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   SlidersHorizontal,
   Square,
   TerminalSquare,
+  X,
   XCircle,
   Zap
 } from "lucide-react";
@@ -40,6 +43,8 @@ import {
 } from "@/lib/api";
 import { localizedDate } from "@/lib/i18n";
 import type {
+  AlgorithmVersion,
+  AttackPreset,
   DemoRunRecord,
   ParallelTuningEvent,
   ParallelTuningJob,
@@ -139,6 +144,8 @@ type TuningForm = {
   tuneAttacks: boolean;
   includeViewpoint3dAttacks: boolean;
   tuneQuality: boolean;
+  selectedWatermarkMethods: string[];
+  selectedAttackMethods: string[];
 };
 
 type TuningPoint = {
@@ -154,31 +161,34 @@ type TuningPoint = {
 type TuningCatalogStats = {
   watermarkMethods: number;
   attackMethods: number;
-  attackVariants: number;
   weightedAttackVariants: number;
-  viewpointVariants: number;
+};
+
+type TuningMethodOption = {
+  method: string;
+  label: string;
+  subtitle: string;
+  category: string;
+  count: number;
+  requiresGpu: boolean;
+  available: boolean;
+  weighted?: boolean;
+  viewpoint?: boolean;
 };
 
 type TuningStageDetail = {
-  key: "watermarks" | "attacks" | "viewpoint3d" | "quality";
+  key: "watermarks" | "attacks" | "quality";
   title: string;
   badge: string;
   checked: boolean;
   disabled?: boolean;
   description: string;
-  scope: string;
-  candidates: string;
-  estimate: string;
-  parameters: string[];
-  result: string;
 };
 
 const emptyTuningCatalogStats: TuningCatalogStats = {
   watermarkMethods: 0,
   attackMethods: 0,
-  attackVariants: 0,
-  weightedAttackVariants: 0,
-  viewpointVariants: 0
+  weightedAttackVariants: 0
 };
 
 const terminalStatuses = new Set<DemoRunRecord["status"]>(["succeeded", "failed", "paused", "cancelled", "partially_failed"]);
@@ -208,7 +218,9 @@ const quickTuningDefaults: TuningForm = {
   tuneWatermarks: true,
   tuneAttacks: true,
   includeViewpoint3dAttacks: false,
-  tuneQuality: true
+  tuneQuality: true,
+  selectedWatermarkMethods: [],
+  selectedAttackMethods: []
 };
 
 const fullTuningDefaults: TuningForm = {
@@ -224,19 +236,28 @@ const fullTuningDefaults: TuningForm = {
   tuneWatermarks: true,
   tuneAttacks: true,
   includeViewpoint3dAttacks: false,
-  tuneQuality: true
+  tuneQuality: true,
+  selectedWatermarkMethods: [],
+  selectedAttackMethods: []
 };
 
 const tuningDraftStorageKey = "wm-bench-tuning-form-draft";
 
 function badgeClass(status: DemoRunRecord["status"]) {
-  if (status === "running" || status === "succeeded") {
-    return "badge ok";
+  const normalized = status.replaceAll("_", "-");
+  if (status === "running") {
+    return "badge status-badge status-running ok";
+  }
+  if (status === "queued") {
+    return "badge status-badge status-queued warn";
+  }
+  if (status === "succeeded") {
+    return "badge status-badge status-succeeded ok";
   }
   if (status === "failed" || status === "partially_failed" || status === "cancelled") {
-    return "badge error";
+    return `badge status-badge status-${normalized} error`;
   }
-  return "badge warn";
+  return `badge status-badge status-${normalized} warn`;
 }
 
 function isActiveRun(status: DemoRunRecord["status"]) {
@@ -277,13 +298,22 @@ function stopIntentNotice(
 }
 
 function tuningStatusClass(status: string | undefined) {
+  if (!status) {
+    return "badge status-badge status-idle";
+  }
+  if (status === "running") {
+    return "badge status-badge status-running ok";
+  }
+  if (status === "queued") {
+    return "badge status-badge status-queued warn";
+  }
   if (status === "succeeded") {
-    return "badge ok";
+    return "badge status-badge status-completed ok";
   }
   if (status === "failed" || status === "cancelled") {
-    return "badge error";
+    return `badge status-badge status-${status} error`;
   }
-  return "badge warn";
+  return `badge status-badge status-${status.replaceAll("_", "-")} warn`;
 }
 
 function taskName(run: DemoRunRecord) {
@@ -296,6 +326,190 @@ function progressWidth(progress: number) {
 
 function positiveInteger(value: number, fallback: number) {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+}
+
+function toggle(values: string[], value: string) {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function addIds(values: string[], ids: string[]) {
+  const next = [...values];
+  const seen = new Set(next);
+  for (const id of ids) {
+    if (!seen.has(id)) {
+      next.push(id);
+      seen.add(id);
+    }
+  }
+  return next;
+}
+
+function removeIds(values: string[], ids: string[]) {
+  const removed = new Set(ids);
+  return values.filter((value) => !removed.has(value));
+}
+
+function matchesTuningOption(query: string, option: TuningMethodOption) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return [option.method, option.label, option.subtitle, option.category].join(" ").toLowerCase().includes(normalized);
+}
+
+function watermarkMethod(algorithm: AlgorithmVersion) {
+  return algorithm.method || algorithm.id.replace(/^alg-/, "");
+}
+
+function attackMethod(attack: AttackPreset) {
+  return attack.executionMethod || attack.method;
+}
+
+function isViewpointTuningMethod(method: string) {
+  return method.startsWith("3d_viewpoint_rerendering_");
+}
+
+const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
+  brightness: { en: "Brightness", zh: "亮度调整" },
+  contrast: { en: "Contrast", zh: "对比度调整" },
+  gaussian_blur: { en: "Gaussian Blur", zh: "高斯模糊" },
+  gaussian_noise: { en: "Gaussian Noise", zh: "高斯噪声" },
+  jpeg: { en: "JPEG Compression", zh: "JPEG 压缩" },
+  resize: { en: "Resize", zh: "缩放" },
+  resized_crop: { en: "Resized Crop", zh: "缩放裁剪" },
+  rotation: { en: "Rotation", zh: "旋转" },
+  erasing: { en: "Random Erasing", zh: "区域擦除" },
+  screen_shoot: { en: "PIMoG-style Screen-Camera", zh: "屏幕-拍摄信道" },
+  print_camera: { en: "CamMark-style Print-Camera", zh: "打印-拍摄信道" },
+  combined_physical: { en: "Combined Physical Channel", zh: "组合物理信道" },
+  "2x_regen": { en: "2-pass Diffusion Regeneration", zh: "2轮扩散再生成" },
+  "4x_regen": { en: "4-pass Diffusion Regeneration", zh: "4轮扩散再生成" },
+  regen_diffusion: { en: "WAVES Diffusion Regeneration", zh: "扩散再生成" },
+  noise_to_image: { en: "CtrlRegen Noise-to-Image", zh: "噪声到图像再生成" },
+  regen_vae: { en: "CompressAI VAE Reconstruction", zh: "VAE 再生成" },
+  image_to_vedio: { en: "NFPA Image-to-Video", zh: "图像到视频再生成" },
+  cew_e1: { en: "Auto-Tone", zh: "自动色调" },
+  cew_e2: { en: "Warm-Vivid", zh: "暖色鲜艳" },
+  cew_e3: { en: "Film-Faded", zh: "胶片褪色" },
+  cew_e4: { en: "Local-Clarity HDR", zh: "局部清晰 HDR" },
+  cew_c1: { en: "Basic Auto-Fix SR", zh: "自动修复+超分" },
+  cew_c2: { en: "Color Retouch SR", zh: "色彩修饰+超分" },
+  cew_c3: { en: "Detail Enhance SR", zh: "细节增强+超分" },
+  cew_c4: { en: "Full Enhancement Chain", zh: "完整增强链" },
+  cew_d1: { en: "Zero-DCE++ Auto-Light", zh: "自动补光" },
+  cew_d2: { en: "DeepWB Auto-WhiteBalance", zh: "自动白平衡" },
+  cew_d3: { en: "Image-Adaptive 3D LUT", zh: "自适应 AI 色彩" },
+  cew_d4: { en: "Retinexformer Detail Low-Light Enhance", zh: "低光细节增强" },
+  cew_d5: { en: "NAFNet/Restormer AI-Denoise", zh: "AI 去噪" },
+  cew_s1: { en: "Real-ESRGAN", zh: "Real-ESRGAN" },
+  cew_s2: { en: "SwinIR", zh: "SwinIR" },
+  cew_s3: { en: "BSRGAN", zh: "BSRGAN" }
+};
+
+const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)$/;
+const VIEWPOINT_MOTION_LABELS: Record<string, string> = {
+  swipe: "横向扫动",
+  shake: "抖动",
+  rotate: "环绕旋转",
+  rotate_forward: "前向环绕"
+};
+
+function watermarkCategoryLabel(category: string | undefined) {
+  if (category === "classical" || category === "traditional_watermark") {
+    return "传统水印";
+  }
+  return "深度水印";
+}
+
+function attackCategoryLabel(category: string | undefined) {
+  const labels: Record<string, string> = {
+    distortion: "失真攻击",
+    distortion_attacks: "经典失真",
+    physical: "物理信道",
+    physical_channel_attacks: "物理信道",
+    regeneration: "再生成",
+    regeneration_attacks: "再生成",
+    consumer_enhancement: "消费级增强",
+    consumer_enhancement_workflow_attacks: "消费级增强",
+    "3d_viewpoint_rerendering": "3D 视角重渲染",
+    adversarial: "对抗攻击"
+  };
+  return labels[category || ""] || category || "其他攻击";
+}
+
+function viewpointDisplayName(method: string) {
+  const parsed = VIEWPOINT_METHOD_PATTERN.exec(method);
+  if (!parsed) {
+    return null;
+  }
+  const motion = VIEWPOINT_MOTION_LABELS[parsed[1]] ?? parsed[1];
+  const mode = parsed[2] === "point" ? "point" : "ahead";
+  return `3D 视角 ${motion} (${mode})`;
+}
+
+function attackTuningDisplayName(attack: AttackPreset | undefined, method: string) {
+  const viewpointName = viewpointDisplayName(method);
+  if (viewpointName) {
+    return viewpointName;
+  }
+  const display = ATTACK_DISPLAY_NAMES[method];
+  if (display) {
+    return display.zh;
+  }
+  if (attack?.method && ATTACK_DISPLAY_NAMES[attack.method]) {
+    return ATTACK_DISPLAY_NAMES[attack.method].zh;
+  }
+  return attack?.name || method;
+}
+
+function buildWatermarkTuningOptions(algorithms: AlgorithmVersion[]): TuningMethodOption[] {
+  const groups = new Map<string, AlgorithmVersion[]>();
+  for (const algorithm of algorithms) {
+    const method = watermarkMethod(algorithm);
+    groups.set(method, [...(groups.get(method) ?? []), algorithm]);
+  }
+  return [...groups.entries()]
+    .map(([method, items]) => {
+      const primary = items.find((item) => item.status === "enabled" && item.available !== false) ?? items[0];
+      const category = watermarkCategoryLabel(primary?.category);
+      return {
+        method,
+        label: primary?.name || method,
+        subtitle: `${category} · ${method}${items.length > 1 ? ` · ${items.length} 个版本` : ""}`,
+        category,
+        count: items.length,
+        requiresGpu: items.some((item) => item.requiresGpu),
+        available: items.some((item) => item.status === "enabled" && item.available !== false),
+        weighted: items.some((item) => item.weightsPackId || item.weightsDir || item.weightsPath)
+      };
+    })
+    .sort((left, right) => `${left.category} ${left.label}`.localeCompare(`${right.category} ${right.label}`, undefined, { numeric: true }));
+}
+
+function buildAttackTuningOptions(attacks: AttackPreset[]): TuningMethodOption[] {
+  const groups = new Map<string, AttackPreset[]>();
+  for (const attack of attacks) {
+    const method = attackMethod(attack);
+    groups.set(method, [...(groups.get(method) ?? []), attack]);
+  }
+  return [...groups.entries()]
+    .map(([method, items]) => {
+      const primary = items.find((item) => item.available !== false) ?? items[0];
+      const category = attackCategoryLabel(primary?.category);
+      const label = attackTuningDisplayName(primary, method);
+      return {
+        method,
+        label,
+        subtitle: `${category} · ${method}${items.length > 1 ? ` · ${items.length} 个配置` : ""}`,
+        category,
+        count: items.length,
+        requiresGpu: items.some((item) => item.requiresGpu),
+        available: items.some((item) => item.available !== false),
+        weighted: items.some((item) => item.weightsPackId || item.weightsDir || item.weightsPath),
+        viewpoint: items.some((item) => isViewpointTuningMethod(attackMethod(item)))
+      };
+    })
+    .sort((left, right) => `${left.category} ${left.label}`.localeCompare(`${right.category} ${right.label}`, undefined, { numeric: true }));
 }
 
 function candidateRange(minValue: number, maxValue: number, extras: number[] = []) {
@@ -320,6 +534,10 @@ function buildTuningPayload(form: TuningForm) {
   const batchCandidates = candidateRange(form.minBatchSize, maxBatchSize);
   const workerCandidates = candidateRange(form.minWorkerCount, maxWorkerCount, [24, 32, 48, 64, 96, 128]);
   const sampleCount = Math.max(positiveInteger(form.sampleCount, maxBatchSize), maxBatchSize, Math.max(...batchCandidates));
+  const watermarkMethods = [...new Set(form.selectedWatermarkMethods)].sort();
+  const attackMethods = [...new Set(form.selectedAttackMethods)].sort();
+  const tuneWatermarks = form.tuneWatermarks && watermarkMethods.length > 0;
+  const tuneAttacks = form.tuneAttacks && attackMethods.length > 0;
   return {
     mode: form.mode,
     sampleCount,
@@ -332,9 +550,11 @@ function buildTuningPayload(form: TuningForm) {
     autoExpandCandidates: form.mode === "full",
     minImprovementRatio: Math.max(0, form.minImprovementRatio),
     boundaryPatience: form.mode === "full" ? 2 : 1,
-    tuneWatermarks: form.tuneWatermarks,
-    tuneAttacks: form.tuneAttacks,
-    includeViewpoint3dAttacks: form.tuneAttacks && form.includeViewpoint3dAttacks,
+    tuneWatermarks,
+    tuneAttacks,
+    watermarkMethods,
+    attackMethods,
+    includeViewpoint3dAttacks: tuneAttacks && attackMethods.some(isViewpointTuningMethod),
     tuneQuality: form.tuneQuality
   };
 }
@@ -359,27 +579,10 @@ function buildTuningCatalogStats(
   const watermarkMethods = new Set(algorithms.map((algorithm) => algorithm.method || algorithm.id).filter(Boolean));
   const attackMethods = new Set(attacks.map((attack) => attack.executionMethod || attack.method).filter(Boolean));
   const weightedAttackVariants = attacks.filter((attack) => attack.weightsPackId || attack.weightsDir || attack.weightsPath).length;
-  const viewpointVariants = attacks.filter((attack) => {
-    const text = [
-      attack.method,
-      attack.executionMethod,
-      attack.displayMethod,
-      attack.displayGroup,
-      attack.category,
-      attack.categoryPath,
-      attack.viewpointMotion
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return Boolean(attack.viewpointMotion || attack.viewpointPhase != null || text.includes("viewpoint") || text.includes("3d"));
-  }).length;
   return {
     watermarkMethods: watermarkMethods.size,
     attackMethods: attackMethods.size,
-    attackVariants: attacks.length,
-    weightedAttackVariants,
-    viewpointVariants
+    weightedAttackVariants
   };
 }
 
@@ -405,7 +608,17 @@ function tuningParameterSegmentCount(payload: ReturnType<typeof buildTuningPaylo
 }
 
 function tuningCombinationCount(payload: ReturnType<typeof buildTuningPayload>) {
-  return payload.batchCandidates.length * payload.workerCandidates.length;
+  let total = 0;
+  if (payload.tuneWatermarks) {
+    total += payload.watermarkMethods.length * (payload.batchCandidates.length + payload.workerCandidates.length);
+  }
+  if (payload.tuneAttacks) {
+    total += payload.attackMethods.length * payload.batchCandidates.length;
+  }
+  if (payload.tuneQuality) {
+    total += payload.batchCandidates.length + payload.workerCandidates.length;
+  }
+  return Math.max(0, total * payload.repeatCount);
 }
 
 function tuningEstimateText(payload: ReturnType<typeof buildTuningPayload>) {
@@ -429,88 +642,41 @@ function tuningPreviewLines(payload: ReturnType<typeof buildTuningPayload>) {
     `batchCandidates=${payload.batchCandidates.join(",")}`,
     `workerCandidates=${payload.workerCandidates.join(",")}`,
     `tuneWatermarks=${payload.tuneWatermarks ? "true" : "false"}`,
+    `watermarkMethods=${payload.watermarkMethods.join(",") || "none"}`,
     `tuneAttacks=${payload.tuneAttacks ? "true" : "false"}`,
+    `attackMethods=${payload.attackMethods.join(",") || "none"}`,
     `tuneQuality=${payload.tuneQuality ? "true" : "false"}`,
     `includeViewpoint3dAttacks=${payload.includeViewpoint3dAttacks ? "true" : "false"}`
   ];
-}
-
-function formatCandidatePreview(values: number[], unit: string) {
-  const preview = values.length > 6 ? `${values.slice(0, 6).join(", ")} ...` : values.join(", ");
-  return `${values.length} 个 ${unit}：${preview}`;
-}
-
-function formatKnownCount(count: number, suffix: string, fallback: string) {
-  return count > 0 ? `${count} ${suffix}` : fallback;
 }
 
 function buildTuningStageDetails(
   payload: ReturnType<typeof buildTuningPayload>,
   stats: TuningCatalogStats
 ): TuningStageDetail[] {
-  const batchPreview = formatCandidatePreview(payload.batchCandidates, "batch");
-  const workerPreview = formatCandidatePreview(payload.workerCandidates, "workers");
-  const repeated = `repeat x ${payload.repeatCount}`;
-  const attackScope = [
-    formatKnownCount(stats.attackMethods, "个攻击 method", "全部已注册攻击 method"),
-    stats.attackVariants > 0 ? `${stats.attackVariants} 个攻击配置` : "",
-    stats.weightedAttackVariants > 0 ? `${stats.weightedAttackVariants} 个含权重配置` : ""
-  ]
-    .filter(Boolean)
-    .join(" · ");
   return [
     {
       key: "watermarks",
-      title: "水印嵌入/解码",
-      badge: payload.tuneWatermarks ? "生成 3 类覆盖" : "跳过",
+      title: "水印算法",
+      badge: payload.tuneWatermarks ? `${payload.watermarkMethods.length}/${stats.watermarkMethods || payload.watermarkMethods.length} 项` : "跳过",
       checked: payload.tuneWatermarks,
-      description: "按水印 method 分别测 embed、extract 与 CPU 并发能力，完成后写入每个 method 的最佳覆盖值。",
-      scope: formatKnownCount(stats.watermarkMethods, "个水印 method", "全部已注册水印 method"),
-      candidates: `${batchPreview}；${workerPreview}`,
-      estimate: `每个可并行阶段最多 ${payload.batchCandidates.length + payload.workerCandidates.length} 组候选，${repeated}`,
-      parameters: [
-        "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
-        "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES",
-        "WM_BENCH_WATERMARK_CPU_WORKERS_BY_METHOD"
-      ],
-      result: "适合解决不同水印算法 embed/extract 批量能力差异较大的情况。"
+      description: "选择需要搜索 embed、extract 与 CPU workers 参数的水印算法。"
     },
     {
       key: "attacks",
-      title: "攻击方法",
-      badge: payload.tuneAttacks ? "生成 2 类覆盖" : "跳过",
+      title: "攻击算法",
+      badge: payload.tuneAttacks ? `${payload.attackMethods.length}/${stats.attackMethods || payload.attackMethods.length} 项` : "跳过",
       checked: payload.tuneAttacks,
-      description: "按攻击 method 测 batch 或 CPU workers。含多套权重的攻击会先依赖资源页安装状态，这里调执行参数。",
-      scope: attackScope,
-      candidates: `${batchPreview}；${workerPreview}`,
-      estimate: `每个攻击 method 按能力选择 batch 或 workers，${repeated}`,
-      parameters: ["WM_BENCH_ATTACK_BATCH_SIZES", "WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD"],
-      result: "完成后输出 method=batch 或 method=workers，供正式实验直接复用。"
-    },
-    {
-      key: "viewpoint3d",
-      title: "3D 视角重渲染",
-      badge: !payload.tuneAttacks ? "需先启用攻击" : payload.includeViewpoint3dAttacks ? "代表项启用" : "默认排除",
-      checked: payload.includeViewpoint3dAttacks,
-      disabled: !payload.tuneAttacks,
-      description: "只调 3D 视角攻击的代表项，再把最优 batch 应用到同类 3D 变体，避免多视角组合把搜索时间放大。",
-      scope: formatKnownCount(stats.viewpointVariants, "个 3D 攻击配置", "同类 3D 视角变体"),
-      candidates: batchPreview,
-      estimate: `代表项最多 ${payload.batchCandidates.length} 组 batch 候选，${repeated}`,
-      parameters: ["WM_BENCH_ATTACK_BATCH_SIZES", "inheritedAttackBatchOverrides"],
-      result: "适合服务器资源足够、并且正式实验包含 3D 视角重渲染攻击时开启。"
+      description: `选择需要搜索 batch 或 CPU workers 参数的攻击算法；3D 视角重渲染也在这里选择。${
+        stats.weightedAttackVariants > 0 ? ` ${stats.weightedAttackVariants} 个攻击配置需要先在资源页安装权重。` : ""
+      }`
     },
     {
       key: "quality",
       title: "quality 指标",
       badge: payload.tuneQuality ? "生成 2 类覆盖" : "跳过",
       checked: payload.tuneQuality,
-      description: "单独测 CPU 质量指标 workers 与感知指标 batch，避免评估阶段成为正式实验瓶颈。",
-      scope: "质量评估阶段",
-      candidates: `${workerPreview}；${batchPreview}`,
-      estimate: `quality CPU + perceptual batch 两条路径，${repeated}`,
-      parameters: ["WM_BENCH_QUALITY_CPU_WORKERS", "WM_BENCH_PERCEPTUAL_BATCH_SIZE"],
-      result: "完成后会把质量评估的 CPU 并发和感知指标 batch 写入运行环境。"
+      description: "搜索质量评估阶段的 CPU workers 与感知指标 batch，避免评估阶段成为正式实验瓶颈。"
     }
   ];
 }
@@ -1047,6 +1213,10 @@ export default function RunsPage() {
   const [tuningNotice, setTuningNotice] = useState("");
   const [tuningDraftNotice, setTuningDraftNotice] = useState("");
   const [tuningCatalogStats, setTuningCatalogStats] = useState<TuningCatalogStats>(emptyTuningCatalogStats);
+  const [tuningWatermarkOptions, setTuningWatermarkOptions] = useState<TuningMethodOption[]>([]);
+  const [tuningAttackOptions, setTuningAttackOptions] = useState<TuningMethodOption[]>([]);
+  const [tuningWatermarkFilter, setTuningWatermarkFilter] = useState("");
+  const [tuningAttackFilter, setTuningAttackFilter] = useState("");
 
   const selectedConfig = useMemo(
     () => configs.find((config) => config.id === selectedConfigId),
@@ -1102,6 +1272,24 @@ export default function RunsPage() {
   const effectiveTuningCombinations = tuningCombinationCount(effectiveTuningPayload);
   const effectiveTuningStages = tuningStageCount(effectiveTuningPayload);
   const effectiveTuningSegments = tuningParameterSegmentCount(effectiveTuningPayload);
+  const filteredTuningWatermarkOptions = useMemo(
+    () => tuningWatermarkOptions.filter((option) => matchesTuningOption(tuningWatermarkFilter, option)),
+    [tuningWatermarkFilter, tuningWatermarkOptions]
+  );
+  const filteredTuningAttackOptions = useMemo(
+    () => tuningAttackOptions.filter((option) => matchesTuningOption(tuningAttackFilter, option)),
+    [tuningAttackFilter, tuningAttackOptions]
+  );
+  const visibleTuningWatermarkMethods = useMemo(
+    () => filteredTuningWatermarkOptions.filter((option) => option.available).map((option) => option.method),
+    [filteredTuningWatermarkOptions]
+  );
+  const visibleTuningAttackMethods = useMemo(
+    () => filteredTuningAttackOptions.filter((option) => option.available).map((option) => option.method),
+    [filteredTuningAttackOptions]
+  );
+  const selectedTuningWatermarkCount = effectiveTuningPayload.watermarkMethods.length;
+  const selectedTuningAttackCount = effectiveTuningPayload.attackMethods.length;
   const tuningStageDetails = useMemo(
     () => buildTuningStageDetails(effectiveTuningPayload, tuningCatalogStats),
     [effectiveTuningPayload, tuningCatalogStats]
@@ -1110,6 +1298,7 @@ export default function RunsPage() {
   const tuningActive = tuningRunning && !experimentActive;
   const showTuningSection = !experimentActive;
   const showExperimentSection = !tuningActive;
+  const tuningStartDisabled = tuningBusy || effectiveTuningStages === 0;
 
   useEffect(() => {
     try {
@@ -1176,8 +1365,35 @@ export default function RunsPage() {
       attacks.forEach((attack) => {
         nextResourceNames[attack.id] = attack.name;
       });
+      const watermarkOptions = buildWatermarkTuningOptions(algorithms);
+      const attackOptions = buildAttackTuningOptions(attacks);
+      const availableWatermarkMethods = watermarkOptions.filter((option) => option.available).map((option) => option.method);
+      const availableAttackMethods = attackOptions.filter((option) => option.available).map((option) => option.method);
+      const defaultAttackMethods = attackOptions
+        .filter((option) => option.available && !option.viewpoint)
+        .map((option) => option.method);
       setResourceNames(nextResourceNames);
       setTuningCatalogStats(buildTuningCatalogStats(algorithms, attacks));
+      setTuningWatermarkOptions(watermarkOptions);
+      setTuningAttackOptions(attackOptions);
+      setTuningForm((current) => {
+        const selectedWatermarkMethods = current.selectedWatermarkMethods.filter((method) =>
+          availableWatermarkMethods.includes(method)
+        );
+        const selectedAttackMethods = current.selectedAttackMethods.filter((method) => availableAttackMethods.includes(method));
+        const nextWatermarkMethods =
+          selectedWatermarkMethods.length > 0 || !current.tuneWatermarks ? selectedWatermarkMethods : availableWatermarkMethods;
+        const nextAttackMethods =
+          selectedAttackMethods.length > 0 || !current.tuneAttacks ? selectedAttackMethods : defaultAttackMethods;
+        return {
+          ...current,
+          selectedWatermarkMethods: nextWatermarkMethods,
+          selectedAttackMethods: nextAttackMethods,
+          tuneWatermarks: current.tuneWatermarks && nextWatermarkMethods.length > 0,
+          tuneAttacks: current.tuneAttacks && nextAttackMethods.length > 0,
+          includeViewpoint3dAttacks: current.includeViewpoint3dAttacks && nextAttackMethods.some(isViewpointTuningMethod)
+        };
+      });
     };
     loadResourceNames().catch(() => undefined);
     return () => {
@@ -1432,7 +1648,17 @@ export default function RunsPage() {
   };
 
   const setTuningMode = (mode: TuningMode) => {
-    setTuningForm(mode === "full" ? fullTuningDefaults : quickTuningDefaults);
+    setTuningForm((current) => {
+      const defaults = mode === "full" ? fullTuningDefaults : quickTuningDefaults;
+      return {
+        ...defaults,
+        selectedWatermarkMethods: current.selectedWatermarkMethods,
+        selectedAttackMethods: current.selectedAttackMethods,
+        tuneWatermarks: current.selectedWatermarkMethods.length > 0,
+        tuneAttacks: current.selectedAttackMethods.length > 0,
+        includeViewpoint3dAttacks: current.selectedAttackMethods.some(isViewpointTuningMethod)
+      };
+    });
   };
 
   const updateTuningForm = (updates: Partial<TuningForm>) => {
@@ -1442,18 +1668,42 @@ export default function RunsPage() {
 
   const updateTuningStage = (key: TuningStageDetail["key"], checked: boolean) => {
     if (key === "watermarks") {
-      updateTuningForm({ tuneWatermarks: checked });
+      updateTuningForm({
+        tuneWatermarks: checked,
+        selectedWatermarkMethods: checked
+          ? addIds(tuningForm.selectedWatermarkMethods, tuningWatermarkOptions.filter((option) => option.available).map((option) => option.method))
+          : []
+      });
       return;
     }
     if (key === "attacks") {
-      updateTuningForm({ tuneAttacks: checked, includeViewpoint3dAttacks: checked ? tuningForm.includeViewpoint3dAttacks : false });
-      return;
-    }
-    if (key === "viewpoint3d") {
-      updateTuningForm({ includeViewpoint3dAttacks: checked });
+      const nextAttackMethods = checked
+        ? addIds(tuningForm.selectedAttackMethods, tuningAttackOptions.filter((option) => option.available).map((option) => option.method))
+        : [];
+      updateTuningForm({
+        tuneAttacks: checked,
+        selectedAttackMethods: nextAttackMethods,
+        includeViewpoint3dAttacks: nextAttackMethods.some(isViewpointTuningMethod)
+      });
       return;
     }
     updateTuningForm({ tuneQuality: checked });
+  };
+
+  const updateSelectedWatermarkMethods = (methods: string[]) => {
+    updateTuningForm({
+      selectedWatermarkMethods: methods,
+      tuneWatermarks: methods.length > 0
+    });
+  };
+
+  const updateSelectedAttackMethods = (methods: string[]) => {
+    const hasViewpointMethod = methods.some(isViewpointTuningMethod);
+    updateTuningForm({
+      selectedAttackMethods: methods,
+      tuneAttacks: methods.length > 0,
+      includeViewpoint3dAttacks: hasViewpointMethod
+    });
   };
 
   const saveTuningDraft = () => {
@@ -1643,7 +1893,11 @@ export default function RunsPage() {
                   ))}
                 </ul>
               ) : (
-                <div className="empty compact-empty">暂无调参事件。</div>
+                <RunEmptyState
+                  description="每个候选配置完成后会追加耗时、吞吐量和推荐结果。"
+                  title="暂无调参事件"
+                  variant="events"
+                />
               )}
             </section>
           </div>
@@ -1665,7 +1919,11 @@ export default function RunsPage() {
                 ))}
               </div>
             ) : (
-              <div className="empty compact-empty">完成搜索后显示 summary。</div>
+              <RunEmptyState
+                description="调参完成后会生成可保存到 .env 的参数摘要。"
+                title="等待推荐参数"
+                variant="env"
+              />
             )}
           </section>
           </div>
@@ -1819,7 +2077,11 @@ export default function RunsPage() {
                   </div>
                 ))
               ) : (
-                <div className="empty compact-empty">{t.runs.noEvents}</div>
+                <RunEmptyState
+                  description="worker 写入 stage_events.jsonl 后会显示最近 10 条事件。"
+                  title={t.runs.noEvents}
+                  variant="events"
+                />
               )}
             </div>
           </div>
@@ -2009,54 +2271,69 @@ export default function RunsPage() {
                     <span>{effectiveTuningStages} 阶段 · {effectiveTuningSegments} 分项</span>
                   </div>
                   <div className="tuning-stage-detail-grid">
-                    {tuningStageDetails.map((detail) => (
-                      <label
-                        className={[
-                          "tuning-stage-detail",
-                          detail.checked ? "enabled" : "muted",
-                          detail.disabled ? "disabled" : ""
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        key={detail.key}
-                      >
-                        <span className="tuning-stage-detail-switch">
-                          <input
-                            checked={detail.checked}
-                            disabled={detail.disabled}
-                            onChange={(event) => updateTuningStage(detail.key, event.target.checked)}
-                            type="checkbox"
-                          />
-                        </span>
-                        <span className="tuning-stage-detail-copy">
-                          <span className="tuning-stage-title-line">
-                            <strong>{detail.title}</strong>
-                            <em>{detail.badge}</em>
-                          </span>
-                          <small>{detail.description}</small>
-                          <span className="tuning-stage-metrics">
-                            <span>
-                              <small>覆盖范围</small>
-                              <strong>{detail.scope}</strong>
-                            </span>
-                            <span>
-                              <small>候选空间</small>
-                              <strong>{detail.candidates}</strong>
-                            </span>
-                            <span>
-                              <small>测量策略</small>
-                              <strong>{detail.estimate}</strong>
-                            </span>
-                          </span>
-                          <span className="tuning-stage-param-row">
-                            {detail.parameters.map((parameter) => (
-                              <code key={`${detail.key}-${parameter}`}>{parameter}</code>
-                            ))}
-                          </span>
-                          <span className="tuning-stage-note">{detail.result}</span>
-                        </span>
-                      </label>
-                    ))}
+                    {tuningStageDetails.map((detail) => {
+                      const hasMethodSelector = detail.key === "watermarks" || detail.key === "attacks";
+                      return (
+                        <section
+                          className={[
+                            "tuning-stage-detail",
+                            detail.checked ? "enabled" : "muted",
+                            detail.disabled ? "disabled" : "",
+                            hasMethodSelector ? "with-selector" : "",
+                            detail.key === "quality" ? "full-row" : ""
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          key={detail.key}
+                        >
+                          <div className="tuning-stage-detail-switch">
+                            <input
+                              checked={detail.checked}
+                              disabled={detail.disabled}
+                              onChange={(event) => updateTuningStage(detail.key, event.target.checked)}
+                              type="checkbox"
+                            />
+                          </div>
+                          <div className="tuning-stage-detail-copy">
+                            <div className="tuning-stage-title-line">
+                              <strong>{detail.title}</strong>
+                              <em>{detail.badge}</em>
+                            </div>
+                            <small>{detail.description}</small>
+                            {detail.key === "watermarks" ? (
+                              <TuningMethodSelector
+                                description="名称与资源页水印算法列表保持一致。"
+                                embedded
+                                filter={tuningWatermarkFilter}
+                                onFilterChange={setTuningWatermarkFilter}
+                                onSelectMethods={updateSelectedWatermarkMethods}
+                                options={filteredTuningWatermarkOptions}
+                                searchPlaceholder="搜索水印算法、方法或类别"
+                                selectedMethods={tuningForm.selectedWatermarkMethods}
+                                title="水印算法"
+                                totalCount={tuningWatermarkOptions.length}
+                                visibleMethods={visibleTuningWatermarkMethods}
+                              />
+                            ) : null}
+                            {detail.key === "attacks" ? (
+                              <TuningMethodSelector
+                                description="名称与资源页攻击算法列表保持一致，3D 视角重渲染也在这里选择。"
+                                embedded
+                                filter={tuningAttackFilter}
+                                onFilterChange={setTuningAttackFilter}
+                                onSelectMethods={updateSelectedAttackMethods}
+                                options={filteredTuningAttackOptions}
+                                searchPlaceholder="搜索攻击算法、方法或类别"
+                                selectedMethods={tuningForm.selectedAttackMethods}
+                                title="攻击算法"
+                                totalCount={tuningAttackOptions.length}
+                                visibleMethods={visibleTuningAttackMethods}
+                              />
+                            ) : null}
+                          </div>
+                        </section>
+                      );
+                    })}
                   </div>
                 </section>
 
@@ -2076,8 +2353,16 @@ export default function RunsPage() {
                       <strong>{effectiveTuningPayload.workerCandidates.length} 个</strong>
                     </div>
                     <div>
-                      <span>候选组合</span>
+                      <span>预计测量</span>
                       <strong>{effectiveTuningCombinations} 组</strong>
+                    </div>
+                    <div>
+                      <span>水印 method</span>
+                      <strong>{selectedTuningWatermarkCount} 个</strong>
+                    </div>
+                    <div>
+                      <span>攻击 method</span>
+                      <strong>{selectedTuningAttackCount} 个</strong>
                     </div>
                     <div>
                       <span>调参阶段</span>
@@ -2114,6 +2399,14 @@ export default function RunsPage() {
                       <strong>{effectiveTuningPayload.maxWorkerCount}</strong>
                     </div>
                     <div className="tuning-preview-stat">
+                      <span>水印 method</span>
+                      <strong>{selectedTuningWatermarkCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>攻击 method</span>
+                      <strong>{selectedTuningAttackCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
                       <span>重复次数</span>
                       <strong>{effectiveTuningPayload.repeatCount}</strong>
                     </div>
@@ -2144,7 +2437,7 @@ export default function RunsPage() {
                   <Save size={16} />
                   保存配置
                 </button>
-                <button className="button primary" disabled={tuningBusy} onClick={submitTuningDialog} type="button">
+                <button className="button primary" disabled={tuningStartDisabled} onClick={submitTuningDialog} type="button">
                   <Zap size={16} />
                   开始搜索
                 </button>
@@ -2426,7 +2719,13 @@ function ThroughputChart({ points }: { points: TuningPoint[] }) {
     : 18;
 
   if (!visiblePoints.length) {
-    return <div className="empty compact-empty">搜索开始后显示吞吐量曲线。</div>;
+    return (
+      <RunEmptyState
+        description="每个候选配置会在这里记录耗时、吞吐量与推荐判断。"
+        title="搜索开始后显示 images/sec 曲线"
+        variant="chart"
+      />
+    );
   }
 
   return (
@@ -2476,6 +2775,132 @@ function ThroughputChart({ points }: { points: TuningPoint[] }) {
         <strong>最高 {maxThroughput.toFixed(2)} img/s</strong>
       </div>
     </div>
+  );
+}
+
+function RunEmptyState({
+  description,
+  title,
+  variant = "default"
+}: {
+  description: string;
+  title: string;
+  variant?: "chart" | "events" | "env" | "default";
+}) {
+  return (
+    <div className={`run-empty-state ${variant}`}>
+      <div className="run-empty-visual" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div>
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+    </div>
+  );
+}
+
+function TuningMethodSelector({
+  description,
+  embedded = false,
+  filter,
+  onFilterChange,
+  onSelectMethods,
+  options,
+  searchPlaceholder,
+  selectedMethods,
+  title,
+  totalCount,
+  visibleMethods
+}: {
+  description: string;
+  embedded?: boolean;
+  filter: string;
+  onFilterChange: (value: string) => void;
+  onSelectMethods: (methods: string[]) => void;
+  options: TuningMethodOption[];
+  searchPlaceholder: string;
+  selectedMethods: string[];
+  title: string;
+  totalCount: number;
+  visibleMethods: string[];
+}) {
+  const selectedSet = new Set(selectedMethods);
+  const selectedVisibleCount = visibleMethods.filter((method) => selectedSet.has(method)).length;
+
+  return (
+    <section className={["tuning-method-panel", embedded ? "embedded" : ""].filter(Boolean).join(" ")}>
+      <div className="tuning-method-head">
+        <div>
+          <strong>{title}</strong>
+          <span>{description}</span>
+        </div>
+        <em>
+          {selectedMethods.length}/{totalCount}
+        </em>
+      </div>
+      <div className="selector-tools tuning-method-tools">
+        <div className="field-icon-input">
+          <Search size={15} />
+          <input
+            aria-label={searchPlaceholder}
+            onChange={(event) => onFilterChange(event.target.value)}
+            placeholder={searchPlaceholder}
+            value={filter}
+          />
+        </div>
+        <div className="bulk-actions">
+          <button
+            className="button compact"
+            disabled={visibleMethods.length === 0 || selectedVisibleCount === visibleMethods.length}
+            onClick={() => onSelectMethods(addIds(selectedMethods, visibleMethods))}
+            type="button"
+          >
+            <Check size={14} />
+            选择当前
+          </button>
+          <button
+            className="button compact"
+            disabled={visibleMethods.length === 0 || selectedVisibleCount === 0}
+            onClick={() => onSelectMethods(removeIds(selectedMethods, visibleMethods))}
+            type="button"
+          >
+            <X size={14} />
+            清空当前
+          </button>
+        </div>
+      </div>
+      {options.length ? (
+        <div className="tuning-method-grid">
+          {options.map((option) => (
+            <label className="check-tile resource-check-tile method-check-tile tuning-method-tile" key={option.method}>
+              <input
+                checked={selectedSet.has(option.method)}
+                disabled={!option.available}
+                onChange={() => onSelectMethods(toggle(selectedMethods, option.method))}
+                type="checkbox"
+              />
+              <span className="tile-copy">
+                <strong>{option.label}</strong>
+                <small>{option.subtitle}</small>
+              </span>
+              {option.viewpoint ? <span className="badge warn">3D</span> : null}
+              {option.requiresGpu ? <span className="badge warn">GPU</span> : null}
+              {option.weighted ? <span className="badge">权重</span> : null}
+              {!option.available ? <span className="badge error">Missing</span> : null}
+            </label>
+          ))}
+        </div>
+      ) : (
+        <RunEmptyState
+          description="没有匹配当前搜索条件的 method。"
+          title="暂无可选 method"
+          variant="events"
+        />
+      )}
+    </section>
   );
 }
 

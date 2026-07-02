@@ -93,10 +93,10 @@ $env:WM_BENCH_INSTALL_SHARP_DEPS = "0"
 在 AutoDL 服务器的项目根目录执行这一条命令即可：
 
 ```bash
-bash infra/autodl/start.sh
+bash scripts/deploy-autodl-linux.sh
 ```
 
-这条命令会创建 `.env.autodl`、创建或复用 `.venv`、安装 Python 依赖、在缺少 `screen` 或 Node.js/pnpm 时自动准备运行工具链、安装 Web 依赖、构建静态前端，并用 `screen` 启动 API 与 Worker。
+这条命令会创建 `.env.autodl`、创建或复用 `.venv`、安装 Python 依赖、在缺少 `screen` 或 Node.js/pnpm 时自动准备运行工具链、安装 Web 依赖、构建静态前端，并用 `screen` 启动 API 与 Worker。生产部署时前端静态文件由 FastAPI 同端口托管，因此 AutoDL 只需要暴露 `API_PORT` 一个端口。
 
 兼容入口仍然可用：
 
@@ -104,13 +104,22 @@ bash infra/autodl/start.sh
 bash scripts/start-autodl-linux.sh
 ```
 
-该脚本只会转发到 `infra/autodl/start.sh`。
+该脚本只会转发到 `infra/autodl/start.sh`。新的部署入口支持更多运维子命令：
+
+```bash
+bash scripts/deploy-autodl-linux.sh status
+bash scripts/deploy-autodl-linux.sh logs
+bash scripts/deploy-autodl-linux.sh tunnel
+bash scripts/deploy-autodl-linux.sh restart
+bash scripts/deploy-autodl-linux.sh stop
+```
 
 连接方式：
 
 - 服务器本机: `http://127.0.0.1:6006`
 - 健康检查: `http://127.0.0.1:6006/health`
 - AutoDL 公网访问: 在 AutoDL 控制台把本机端口 `6006` 暴露为自定义服务或隧道，然后用控制台生成的公网 URL 访问。
+- 隧道提示: `bash scripts/deploy-autodl-linux.sh tunnel`
 - SSH 隧道访问:
 
 ```bash

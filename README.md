@@ -13,10 +13,27 @@ bash scripts/start-macos.sh
 Linux / AutoDL：
 
 ```bash
-bash scripts/start-autodl-linux.sh
+bash scripts/deploy-autodl-linux.sh
 ```
 
 启动后打开脚本输出中的 Web URL。AutoDL 默认使用 `6006`，FastAPI 会在同一端口服务 `apps/web/out` 静态前端，浏览器和 API 保持同源访问。
+
+常用运维命令：
+
+```bash
+bash scripts/deploy-autodl-linux.sh status
+bash scripts/deploy-autodl-linux.sh logs
+bash scripts/deploy-autodl-linux.sh tunnel
+bash scripts/deploy-autodl-linux.sh restart
+bash scripts/deploy-autodl-linux.sh stop
+```
+
+## 系统适配范围
+
+- Web 界面：浏览器访问，原则上适配 macOS、Windows、Linux 的现代 Chrome / Edge / Safari / Firefox。
+- 本地开发启动：macOS 使用 `scripts/start-macos.sh`，Windows 使用 `scripts/start-windows.ps1`，Linux / AutoDL 使用 `scripts/deploy-autodl-linux.sh`。
+- 正式实验执行：推荐 Linux / AutoDL。部分水印、攻击、3D/SHARP 或 CUDA 相关依赖在 macOS/Windows 上可能只能做界面调试或 CPU 子集运行。
+- AutoDL 生产部署：推荐只暴露一个端口 `6006`。前端会先构建为静态文件，再由 FastAPI 同源托管，避免分别暴露 Web 与 API 两个服务。
 
 ## 资源目录
 
@@ -28,8 +45,8 @@ bash scripts/start-autodl-linux.sh
 
 服务器/AutoDL 默认路径见 `.env.autodl.example`：
 
-- 数据集：`/root/autodl-fs/wm-bench/resources/datasets`
-- 权重：`/root/autodl-fs/wm-bench/resources/weights`
+- 数据集：`<仓库根目录>/resources/datasets`
+- 权重：`<仓库根目录>/resources/weights`
 - SQLite：`/root/autodl-fs/wm-bench/state/wmbench.sqlite`
 - 运行结果：`/root/autodl-tmp/wm-bench/runs`
 

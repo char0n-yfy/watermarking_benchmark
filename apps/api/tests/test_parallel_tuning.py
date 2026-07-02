@@ -17,6 +17,21 @@ from app.services.parallel_tuning import (  # noqa: E402
 
 
 class ParallelTuningPolicyTest(unittest.TestCase):
+    def test_tuning_request_preserves_selected_methods(self) -> None:
+        request = TuningRequest.from_payload(
+            {
+                "tuneWatermarks": True,
+                "tuneAttacks": True,
+                "watermarkMethods": ["dwsf", "trustmark-q"],
+                "attackMethods": ["jpeg", "brightness"],
+            }
+        )
+
+        self.assertEqual(request.watermark_methods, ["dwsf", "trustmark-q"])
+        self.assertEqual(request.attack_methods, ["jpeg", "brightness"])
+        self.assertEqual(request.to_json()["watermarkMethods"], ["dwsf", "trustmark-q"])
+        self.assertEqual(request.to_json()["attackMethods"], ["jpeg", "brightness"])
+
     def test_cancel_marks_running_job_cancelled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
