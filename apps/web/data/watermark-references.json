@@ -264,29 +264,6 @@
       }
     ]
   },
-  "rawatermark": {
-    "summary": {
-      "zh": "RAWatermark 是 zero-bit 检测型水印，输出水印存在概率/检测结果，而不是解码消息。"
-    },
-    "papers": [
-      {
-        "label": "arXiv:2403.18774",
-        "url": "https://arxiv.org/abs/2403.18774"
-      }
-    ],
-    "repos": [
-      {
-        "label": "jeremyxianx/RAWatermark",
-        "url": "https://github.com/jeremyxianx/RAWatermark"
-      }
-    ],
-    "projectSources": [
-      {
-        "label": "evaluator/watermarking/methods/rawatermark.py",
-        "url": "evaluator/watermarking/methods/rawatermark.py"
-      }
-    ]
-  },
   "ssl-watermarking": {
     "summary": {
       "zh": "Meta 的自监督特征空间水印。本项目默认使用 30-bit multi-bit 模式，通过 DINO/ResNet 特征空间优化嵌入。"

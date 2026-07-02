@@ -122,9 +122,21 @@ export function datasetDownloadArchiveUrl(jobId: string): string {
   return `${apiBaseUrl}/resources/datasets/downloads/${encodeURIComponent(jobId)}/archive`;
 }
 
+const HIDDEN_WATERMARK_METHODS = new Set(["rawatermark"]);
+
+function algorithmMethod(algorithm: AlgorithmVersion) {
+  return algorithm.method ?? algorithm.id.replace(/^alg-/, "");
+}
+
+function visibleWatermarkAlgorithm(algorithm: AlgorithmVersion) {
+  return !HIDDEN_WATERMARK_METHODS.has(algorithmMethod(algorithm));
+}
+
 export function fetchAlgorithms(options?: { remote?: boolean }): Promise<AlgorithmVersion[]> {
   const query = options?.remote ? "?remote=1" : "";
-  return requestJson<AlgorithmVersion[]>(`/resources/watermarks${query}`);
+  return requestJson<AlgorithmVersion[]>(`/resources/watermarks${query}`).then((algorithms) =>
+    algorithms.filter(visibleWatermarkAlgorithm)
+  );
 }
 
 export function startWeightDownload(identifier: string): Promise<WeightDownloadJob> {
