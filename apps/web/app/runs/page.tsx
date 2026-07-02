@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Clock3,
   FolderOpen,
+  LineChart,
   PauseCircle,
   PlayCircle,
   RefreshCw,
@@ -152,11 +153,27 @@ type TuningForm = {
 type TuningPoint = {
   key: string;
   stage: string;
+  stageLabel: string;
+  scopeLabel: string;
+  method: string;
   label: string;
   candidate: number;
   throughput: number;
   kind: "batch" | "workers";
   ok: boolean;
+  groupKey: string;
+  groupLabel: string;
+};
+
+type TuningProcessGroup = {
+  key: string;
+  label: string;
+  description: string;
+  pointCount: number;
+  successCount: number;
+  failedCount: number;
+  bestThroughput: number;
+  latestThroughput: number;
 };
 
 type TuningCatalogStats = {
@@ -647,28 +664,6 @@ function tuningEstimateText(payload: ReturnType<typeof buildTuningPayload>) {
   return combinations >= 35 ? "约 3-5 分钟" : "约 1-3 分钟";
 }
 
-function tuningPreviewLines(payload: ReturnType<typeof buildTuningPayload>) {
-  return [
-    `sampleCount=${payload.sampleCount}`,
-    `warmupCount=${payload.warmupCount}`,
-    `maxBatch=${payload.maxBatchSize}`,
-    `maxWorkers=${payload.maxWorkerCount}`,
-    `repeatCount=${payload.repeatCount}`,
-    `minImprovementRatio=${payload.minImprovementRatio}`,
-    `boundaryPatience=${payload.boundaryPatience}`,
-    `autoExpandCandidates=${payload.autoExpandCandidates ? "true" : "false"}`,
-    `batchCandidates=${payload.batchCandidates.join(",")}`,
-    `workerCandidates=${payload.workerCandidates.join(",")}`,
-    `tuneWatermarks=${payload.tuneWatermarks ? "true" : "false"}`,
-    `watermarkMethods=${payload.watermarkMethods.join(",") || "none"}`,
-    `tuneAttacks=${payload.tuneAttacks ? "true" : "false"}`,
-    `attackMethods=${payload.attackMethods.join(",") || "none"}`,
-    `attackRepresentativePolicy=diffusion_regeneration,3d_viewpoint_rerendering`,
-    `tuneQuality=${payload.tuneQuality ? "true" : "false"}`,
-    `includeViewpoint3dAttacks=${payload.includeViewpoint3dAttacks ? "true" : "false"}`
-  ];
-}
-
 function buildTuningStageDetails(
   payload: ReturnType<typeof buildTuningPayload>,
   stats: TuningCatalogStats
@@ -847,7 +842,54 @@ function eventNumber(event: ParallelTuningEvent, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function tuningPoints(job: ParallelTuningJob | null): TuningPoint[] {
+function eventText(event: ParallelTuningEvent, key: string) {
+  const value = event[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function tuningStageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    watermark_embed: "水印嵌入 batch",
+    watermark_extract: "水印提取 batch",
+    watermark_cpu: "水印 CPU workers",
+    attack_batch: "攻击 batch",
+    attack_cpu: "攻击 CPU workers",
+    quality_cpu: "quality CPU workers",
+    quality_perceptual: "感知质量 batch"
+  };
+  return labels[stage] ?? humanizeId(stage);
+}
+
+function tuningScopeLabel(stage: string) {
+  if (stage.startsWith("watermark_")) {
+    return "水印算法";
+  }
+  if (stage.startsWith("attack_")) {
+    return "攻击算法";
+  }
+  if (stage.startsWith("quality_")) {
+    return "quality 指标";
+  }
+  return "调参过程";
+}
+
+function tuningMethodLabel(method: string, stage: string, names: Record<string, string>) {
+  if (!method || method === "n/a") {
+    return tuningStageLabel(stage);
+  }
+  if (names[method]) {
+    return names[method];
+  }
+  if (stage.startsWith("watermark_")) {
+    return resolveWatermarkDisplayName(method, humanizeId(method));
+  }
+  if (stage.startsWith("attack_")) {
+    return attackTuningDisplayName(undefined, method);
+  }
+  return humanizeId(method);
+}
+
+function tuningPoints(job: ParallelTuningJob | null, names: Record<string, string>): TuningPoint[] {
   const events = job?.events ?? [];
   return events
     .map((event, index) => {
@@ -857,20 +899,56 @@ function tuningPoints(job: ParallelTuningJob | null): TuningPoint[] {
       if (throughput == null || (batchSize == null && workers == null)) {
         return null;
       }
-      const method = typeof event.method === "string" ? event.method : String(event.message ?? event.stage ?? "candidate");
+      const stage = String(event.stage ?? "step");
+      const method = eventText(event, "method") ?? String(event.message ?? stage);
       const kind = batchSize != null ? "batch" : "workers";
       const candidate = batchSize ?? workers ?? 1;
+      const stageLabel = tuningStageLabel(stage);
+      const scopeLabel = tuningScopeLabel(stage);
+      const label = tuningMethodLabel(method, stage, names);
+      const groupKey = `${stage}:${method}`;
       return {
         key: `${event.timestamp ?? "point"}-${index}`,
-        stage: String(event.stage ?? "step"),
-        label: method,
+        stage,
+        stageLabel,
+        scopeLabel,
+        method,
+        label,
         candidate,
         throughput,
         kind,
-        ok: event.ok !== false
+        ok: event.ok !== false,
+        groupKey,
+        groupLabel: `${label} · ${stageLabel}`
       } satisfies TuningPoint;
     })
     .filter((point): point is TuningPoint => Boolean(point));
+}
+
+function buildTuningProcessGroups(points: TuningPoint[]): TuningProcessGroup[] {
+  const groups = new Map<string, TuningPoint[]>();
+  points.forEach((point) => {
+    groups.set(point.groupKey, [...(groups.get(point.groupKey) ?? []), point]);
+  });
+  return [...groups.entries()]
+    .map(([key, items]) => {
+      const latest = items[items.length - 1];
+      const successful = items.filter((point) => point.ok);
+      const bestThroughput = Math.max(0, ...successful.map((point) => point.throughput));
+      return {
+        key,
+        label: latest.groupLabel,
+        description: `${latest.scopeLabel} · ${items.length} 个候选 · ${
+          latest.kind === "batch" ? "batch 搜索" : "workers 搜索"
+        }`,
+        pointCount: items.length,
+        successCount: successful.length,
+        failedCount: items.length - successful.length,
+        bestThroughput,
+        latestThroughput: latest.throughput
+      } satisfies TuningProcessGroup;
+    })
+    .sort((left, right) => right.bestThroughput - left.bestThroughput || right.pointCount - left.pointCount);
 }
 
 function uniqueEventCount(events: RunStageEvent[], predicate: (event: RunStageEvent) => boolean, keyOf: (event: RunStageEvent) => string | null) {
@@ -1237,6 +1315,7 @@ export default function RunsPage() {
   const [tuningAttackOptions, setTuningAttackOptions] = useState<TuningMethodOption[]>([]);
   const [tuningWatermarkFilter, setTuningWatermarkFilter] = useState("");
   const [tuningAttackFilter, setTuningAttackFilter] = useState("");
+  const [selectedTuningProcessKey, setSelectedTuningProcessKey] = useState("all");
 
   const selectedConfig = useMemo(
     () => configs.find((config) => config.id === selectedConfigId),
@@ -1288,8 +1367,23 @@ export default function RunsPage() {
   const tuningStopping = tuningJob?.status === "cancelling";
   const tuningActive = tuningRunning || tuningStopping;
   const tuningEnvEntries = Object.entries(tuningJob?.summary?.envUpdates ?? {});
-  const tuningChartPoints = useMemo(() => tuningPoints(tuningJob).slice(-28), [tuningJob]);
-  const tuningEvents = (tuningJob?.events ?? []).slice(-8).reverse();
+  const tuningChartPoints = useMemo(() => tuningPoints(tuningJob, resourceNames), [resourceNames, tuningJob]);
+  const tuningProcessGroups = useMemo(() => buildTuningProcessGroups(tuningChartPoints), [tuningChartPoints]);
+  const selectedTuningProcess = useMemo(
+    () => tuningProcessGroups.find((group) => group.key === selectedTuningProcessKey) ?? null,
+    [selectedTuningProcessKey, tuningProcessGroups]
+  );
+  const visibleTuningChartPoints = useMemo(
+    () =>
+      selectedTuningProcessKey === "all"
+        ? tuningChartPoints
+        : tuningChartPoints.filter((point) => point.groupKey === selectedTuningProcessKey),
+    [selectedTuningProcessKey, tuningChartPoints]
+  );
+  const tuningChartScope =
+    selectedTuningProcessKey === "all"
+      ? `全部候选点 · ${tuningChartPoints.length} 次测量`
+      : selectedTuningProcess?.label ?? "当前过程";
   const effectiveTuningPayload = useMemo(() => buildTuningPayload(tuningForm), [tuningForm]);
   const effectiveTuningCombinations = tuningCombinationCount(effectiveTuningPayload);
   const effectiveTuningStages = tuningStageCount(effectiveTuningPayload);
@@ -1522,6 +1616,15 @@ export default function RunsPage() {
     }, 1800);
     return () => window.clearInterval(timer);
   }, [tuningJob?.id, tuningActive]);
+
+  useEffect(() => {
+    if (
+      selectedTuningProcessKey !== "all" &&
+      !tuningProcessGroups.some((group) => group.key === selectedTuningProcessKey)
+    ) {
+      setSelectedTuningProcessKey("all");
+    }
+  }, [selectedTuningProcessKey, tuningProcessGroups]);
 
   useEffect(() => {
     if (tuningActive) {
@@ -1866,6 +1969,20 @@ export default function RunsPage() {
                   <SlidersHorizontal size={18} />
                   配置并开始调参
                 </button>
+                {tuningJob?.id ? (
+                  <button
+                    className="button run-start-button"
+                    disabled={tuningBusy}
+                    onClick={() => {
+                      setTuningWorkspaceOpen(true);
+                      setTuningNotice("");
+                    }}
+                    type="button"
+                  >
+                    <LineChart size={18} />
+                    查看最近结果
+                  </button>
+                ) : null}
               </div>
               {tuningNotice ? <div className="risk ok">{tuningNotice}</div> : null}
             </div>
@@ -1954,30 +2071,52 @@ export default function RunsPage() {
               <div className="run-tuning-card-head">
                 <div>
                   <strong>吞吐量趋势</strong>
-                  <span>每个候选点使用 images/sec，完整模式取重复测量中位数。</span>
+                  <span>{tuningChartScope}</span>
                 </div>
-                <BarChart3 size={17} />
+                <LineChart size={17} />
               </div>
-              <ThroughputChart points={tuningChartPoints} />
+              <ThroughputChart points={visibleTuningChartPoints} />
             </section>
 
             <section className="run-tuning-card">
               <div className="run-tuning-card-head">
                 <div>
                   <strong>运行过程</strong>
-                  <span>最近的候选测量事件</span>
+                  <span>点击过程后，左侧只显示对应吞吐量趋势。</span>
                 </div>
                 <Zap size={17} />
               </div>
-              {tuningEvents.length ? (
-                <ul className="tuning-event-list run-tuning-events">
-                  {tuningEvents.map((event, index) => (
-                    <li key={`${event.timestamp ?? "event"}-${index}`}>
-                      <span>{event.stage ?? "step"}</span>
-                      <strong>{event.message ?? "running"}</strong>
-                    </li>
+              {tuningProcessGroups.length ? (
+                <div className="run-tuning-process-list">
+                  <button
+                    className={selectedTuningProcessKey === "all" ? "run-tuning-process active" : "run-tuning-process"}
+                    onClick={() => setSelectedTuningProcessKey("all")}
+                    type="button"
+                  >
+                    <span>
+                      <strong>全部候选点</strong>
+                      <small>{tuningChartPoints.length} 次测量 · 查看整体趋势</small>
+                    </span>
+                    <em>{Math.max(0, ...tuningChartPoints.map((point) => point.throughput)).toFixed(1)} img/s</em>
+                  </button>
+                  {tuningProcessGroups.map((group) => (
+                    <button
+                      className={selectedTuningProcessKey === group.key ? "run-tuning-process active" : "run-tuning-process"}
+                      key={group.key}
+                      onClick={() => setSelectedTuningProcessKey(group.key)}
+                      type="button"
+                    >
+                      <span>
+                        <strong>{group.label}</strong>
+                        <small>
+                          {group.description}
+                          {group.failedCount > 0 ? ` · ${group.failedCount} 个失败` : ""}
+                        </small>
+                      </span>
+                      <em>{group.bestThroughput.toFixed(1)} img/s</em>
+                    </button>
                   ))}
-                </ul>
+                </div>
               ) : (
                 <RunEmptyState
                   description="每个候选配置完成后会追加耗时、吞吐量和推荐结果。"
@@ -2488,9 +2627,6 @@ export default function RunsPage() {
                       <strong>{effectiveTuningSegments}</strong>
                     </div>
                   </div>
-                  <pre className="tuning-preview-code">
-                    <code>{tuningPreviewLines(effectiveTuningPayload).join("\n")}</code>
-                  </pre>
                 </section>
               </div>
             </div>
@@ -2774,18 +2910,32 @@ function ProgressMeter({ step }: { step: ProgressStep }) {
   );
 }
 
+function formatTuningThroughput(value: number) {
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: value >= 100 ? 0 : 1,
+    notation: value >= 10000 ? "compact" : "standard"
+  }).format(value);
+}
+
 function ThroughputChart({ points }: { points: TuningPoint[] }) {
   const width = 720;
   const height = 240;
   const padding = { top: 16, right: 18, bottom: 42, left: 46 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const maxThroughput = Math.max(1, ...points.map((point) => point.throughput));
-  const visiblePoints = points.slice(-18);
-  const barGap = 7;
-  const barWidth = visiblePoints.length
-    ? Math.max(8, (plotWidth - barGap * Math.max(0, visiblePoints.length - 1)) / visiblePoints.length)
-    : 18;
+  const maxVisiblePoints = 72;
+  const visiblePoints = points.length > maxVisiblePoints ? points.slice(-maxVisiblePoints) : points;
+  const maxThroughput = Math.max(1, ...visiblePoints.map((point) => point.throughput));
+  const xStep = visiblePoints.length > 1 ? plotWidth / (visiblePoints.length - 1) : 0;
+  const pointCoordinates = visiblePoints.map((point, index) => {
+    const x = padding.left + (visiblePoints.length === 1 ? plotWidth / 2 : index * xStep);
+    const y = padding.top + plotHeight * (1 - point.throughput / maxThroughput);
+    return { point, x, y };
+  });
+  const linePath = pointCoordinates
+    .map(({ x, y }, index) => `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`)
+    .join(" ");
+  const labelStep = Math.max(1, Math.ceil(visiblePoints.length / 6));
 
   if (!visiblePoints.length) {
     return (
@@ -2808,40 +2958,41 @@ function ThroughputChart({ points }: { points: TuningPoint[] }) {
             <g key={ratio}>
               <line className="chart-grid-line" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
               <text className="chart-label" x={8} y={y + 4}>
-                {(maxThroughput * ratio).toFixed(1)}
+                {formatTuningThroughput(maxThroughput * ratio)}
               </text>
             </g>
           );
         })}
-        {visiblePoints.map((point, index) => {
-          const x = padding.left + index * (barWidth + barGap);
-          const barHeight = Math.max(3, (point.throughput / maxThroughput) * plotHeight);
-          const y = height - padding.bottom - barHeight;
-          return (
-            <g key={point.key}>
-              <rect
-                className={point.kind === "batch" ? "chart-bar batch" : "chart-bar workers"}
-                height={barHeight}
-                rx={3}
-                width={barWidth}
-                x={x}
-                y={y}
-              />
-              <text className="chart-x-label" textAnchor="middle" x={x + barWidth / 2} y={height - 20}>
+        {linePath ? <path className="chart-trend-line" d={linePath} /> : null}
+        {pointCoordinates.map(({ point, x, y }, index) => (
+          <g key={point.key}>
+            <circle
+              className={`${point.kind === "batch" ? "chart-point batch" : "chart-point workers"}${point.ok ? "" : " failed"}`}
+              cx={x}
+              cy={y}
+              r={point.ok ? 4.2 : 5}
+            />
+            <title>{`${point.groupLabel} · ${point.kind === "batch" ? "batch" : "workers"}=${point.candidate} · ${formatTuningThroughput(
+              point.throughput
+            )} img/s${point.ok ? "" : " · failed"}`}</title>
+            {(index === 0 || index === visiblePoints.length - 1 || index % labelStep === 0) && (
+              <text className="chart-x-label" textAnchor="middle" x={x} y={height - 20}>
                 {point.kind === "batch" ? `b${point.candidate}` : `w${point.candidate}`}
               </text>
-            </g>
-          );
-        })}
+            )}
+          </g>
+        ))}
       </svg>
       <div className="throughput-chart-meta">
         <span>
-          <i className="batch" /> batch size
+          <i className="batch" /> batch 候选
         </span>
         <span>
-          <i className="workers" /> workers
+          <i className="workers" /> workers 候选
         </span>
-        <strong>最高 {maxThroughput.toFixed(2)} img/s</strong>
+        <strong>
+          显示 {visiblePoints.length}/{points.length} 次 · 最高 {formatTuningThroughput(maxThroughput)} img/s
+        </strong>
       </div>
     </div>
   );

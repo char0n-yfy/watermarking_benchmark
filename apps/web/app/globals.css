@@ -4241,6 +4241,85 @@ a.button {
   overflow: auto;
 }
 
+.run-tuning-process-list {
+  display: grid;
+  max-height: 270px;
+  overflow: auto;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.run-tuning-process {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfdfc;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 10px 11px;
+  text-align: left;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.run-tuning-process:hover {
+  border-color: rgba(15, 139, 127, 0.34);
+  background: #f6fbf8;
+  box-shadow: 0 6px 16px rgba(16, 24, 40, 0.06);
+  transform: translateY(-1px);
+}
+
+.run-tuning-process.active {
+  border-color: rgba(15, 139, 127, 0.64);
+  background: #eefbf7;
+  box-shadow: 0 7px 18px rgba(15, 139, 127, 0.11);
+}
+
+.run-tuning-process span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.run-tuning-process strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-tuning-process small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-tuning-process em {
+  justify-self: end;
+  border-radius: 999px;
+  background: rgba(15, 139, 127, 0.09);
+  color: var(--teal-strong);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  padding: 7px 8px;
+  white-space: nowrap;
+}
+
 .run-env-suggestion-list {
   max-height: 280px;
 }
@@ -4267,12 +4346,29 @@ a.button {
   stroke-width: 1;
 }
 
-.chart-bar {
+.chart-trend-line {
+  fill: none;
+  stroke: rgba(15, 139, 127, 0.72);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.chart-point {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.chart-point.batch {
   fill: var(--teal);
 }
 
-.chart-bar.workers {
+.chart-point.workers {
   fill: var(--blue);
+}
+
+.chart-point.failed {
+  fill: var(--red);
 }
 
 .chart-label,
@@ -4755,27 +4851,6 @@ a.button {
 
 .tuning-preview-stat strong {
   font-size: 15px;
-}
-
-.tuning-preview-code {
-  margin: 0;
-  overflow: auto;
-  border-radius: 10px;
-  background: #17231f;
-  padding: 13px 14px;
-  color: #dff8ef;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.65;
-}
-
-.tuning-preview-code code {
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .tuning-modal-footer {
