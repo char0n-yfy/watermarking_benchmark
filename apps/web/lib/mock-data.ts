@@ -8,7 +8,7 @@ export const datasets: DatasetVersion[] = [
 export const algorithms: AlgorithmVersion[] = [
   {
     id: "alg-invisible-watermark-dwtdct",
-    name: "Invisible Watermark DWT-DCT",
+    name: "DWT-DCT",
     version: "packaged",
     status: "enabled",
     requiresGpu: false,
@@ -17,7 +17,7 @@ export const algorithms: AlgorithmVersion[] = [
   },
   {
     id: "alg-invisible-watermark-dwtdctsvd",
-    name: "Invisible Watermark DWT-DCT-SVD",
+    name: "DWT-DCT-SVD",
     version: "packaged",
     status: "enabled",
     requiresGpu: false,
@@ -25,7 +25,7 @@ export const algorithms: AlgorithmVersion[] = [
   },
   {
     id: "alg-traditional-spread-dct",
-    name: "Traditional Spread-DCT",
+    name: "DCT",
     version: "local",
     status: "enabled",
     requiresGpu: false,

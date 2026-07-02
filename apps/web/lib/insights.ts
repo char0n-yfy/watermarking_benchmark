@@ -8,6 +8,7 @@ import type {
   RunStatus,
   SavedExperimentConfig
 } from "./types";
+import { resolveWatermarkDisplayName } from "./watermark-display";
 
 export const terminalRunStatuses = new Set<RunStatus>([
   "succeeded",
@@ -70,7 +71,12 @@ export function buildActiveRunRows(
 ): ActiveRunRow[] {
   const configMap = new Map(configs.map((config) => [config.id, config]));
   const datasetMap = new Map(datasets.map((dataset) => [dataset.id, dataset.name]));
-  const algorithmMap = new Map(algorithms.map((algorithm) => [algorithm.id, algorithm.name]));
+  const algorithmMap = new Map(
+    algorithms.map((algorithm) => [
+      algorithm.id,
+      resolveWatermarkDisplayName(algorithm.method ?? algorithm.id, algorithm.name)
+    ])
+  );
   const attackMap = new Map(attacks.map((attack) => [attack.id, attack.name]));
 
   return runs

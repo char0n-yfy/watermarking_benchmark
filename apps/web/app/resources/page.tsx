@@ -22,6 +22,7 @@ import {
   datasets as fallbackDatasets
 } from "@/lib/mock-data";
 import { buildDatasetReference, getAttackReference, getWatermarkReference, referenceOverviewText } from "@/lib/resource-references";
+import { resolveWatermarkDisplayName, watermarkMethodSubtitle } from "@/lib/watermark-display";
 import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ResourceStatus, WeightDownloadJob } from "@/lib/types";
 
 type ResourceType = "datasets" | "watermarks" | "attacks";
@@ -515,9 +516,14 @@ export default function ResourcesPage() {
           )
         ) : (
           <>
-            {resource.requiresGpu ? <span className="badge warn">{t.common.gpu}</span> : null}
-            {resource.recommended ? <span className="badge ok">{t.resources.recommended}</span> : null}
-            <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
+            {resource.requiresGpu ? (
+              <span className="badge warn">{t.common.gpu}</span>
+            ) : (
+              <span className="badge">{t.common.cpu}</span>
+            )}
+            <span className={installationBadgeClass(resource)}>
+              {installationLabel(resource, t)}
+            </span>
           </>
         )}
       </span>
@@ -957,10 +963,14 @@ function ResourceDetail({
                 {resource.categoryLabel ?? resource.category}
               </span>
             ) : null}
-            {resource.type !== "datasets" && resource.requiresGpu ? (
-              <span className="badge warn">{t.common.gpu}</span>
+            {resource.type !== "datasets" ? (
+              resource.requiresGpu ? (
+                <span className="badge warn">{t.common.gpu}</span>
+              ) : (
+                <span className="badge">{t.common.cpu}</span>
+              )
             ) : null}
-            <span className={badgeClass(resource.statusTone)}>{statusLabel(resource, t)}</span>
+            <span className={installationBadgeClass(resource)}>{installationLabel(resource, t)}</span>
           </div>
         </div>
         {showHeroSummary ? <p>{summary}</p> : null}
@@ -1718,11 +1728,11 @@ function watermarkCategoryLabel(category: string, language: "zh" | "en") {
 }
 
 function algorithmDisplayName(algorithm: AlgorithmVersion) {
-  return algorithm.name;
+  return resolveWatermarkDisplayName(algorithm.method ?? algorithm.id, algorithm.name);
 }
 
 function algorithmSubtitle(algorithm: AlgorithmVersion) {
-  return algorithm.method ?? algorithm.id;
+  return watermarkMethodSubtitle(algorithm.method ?? algorithm.id);
 }
 
 function isAsciiText(value: string) {
@@ -2357,6 +2367,21 @@ function resourceTypeIcon(type: ResourceType) {
   return <Gauge size={16} />;
 }
 
+function installationBadgeClass(resource: BrowserResource) {
+  return isResourceInstalled(resource) ? "badge ok" : "badge";
+}
+
+function installationLabel(resource: BrowserResource, t: ReturnType<typeof useLanguage>["t"]) {
+  return isResourceInstalled(resource) ? t.resources.installed : t.resources.notInstalled;
+}
+
+function isResourceInstalled(resource: BrowserResource) {
+  if (resource.type === "datasets") {
+    return resource.catalog?.installed === true;
+  }
+  return resource.available !== false && resource.status !== "missing";
+}
+
 function badgeClass(tone: BrowserResource["statusTone"]) {
   if (tone === "ok") {
     return "badge ok";
@@ -2368,16 +2393,6 @@ function badgeClass(tone: BrowserResource["statusTone"]) {
     return "badge error";
   }
   return "badge";
-}
-
-function statusLabel(resource: BrowserResource, t: ReturnType<typeof useLanguage>["t"]) {
-  if (resource.status === "indexed") {
-    return t.common.indexed;
-  }
-  if (resource.status === "missing") {
-    return "Missing";
-  }
-  return t.common.status[resource.status];
 }
 
 function countByGpu(resources: Array<{ requiresGpu?: boolean }>) {
