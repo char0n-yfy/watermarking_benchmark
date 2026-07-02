@@ -1,6 +1,6 @@
 # AutoDL Profile
 
-This is the primary no-Docker deployment profile for the MVP.
+This is the primary deployment profile for the MVP.
 
 Recommended paths:
 
@@ -68,4 +68,4 @@ bash infra/autodl/start_worker.sh
 - Screen logs are written under `WM_BENCH_LOG_DIR`.
 - `GET /system/runtime` reports configured paths, device, and worker heartbeats.
 
-Known MVP limits: no multi-user auth, no Docker sandbox, and no formal public leaderboard yet.
+Known MVP limits: no multi-user auth and no formal public leaderboard yet.

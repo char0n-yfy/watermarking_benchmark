@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -29,7 +30,7 @@ class LocalRunnerTest(unittest.TestCase):
                     run_id="run_smoke",
                     selection={
                         "datasetIds": ["smoke"],
-                        "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                        "algorithmIds": ["alg-traditional-spread-dct"],
                         "attackPresetIds": ["atk-identity"],
                         "seeds": [42],
                         "maxSamples": 1,
@@ -112,7 +113,7 @@ class LocalRunnerTest(unittest.TestCase):
                     run_id="run_smoke",
                     selection={
                         "datasetIds": ["smoke"],
-                        "algorithmIds": ["alg-invisible-watermark-dwtdct"],
+                        "algorithmIds": ["alg-traditional-spread-dct"],
                         "attackPresetIds": ["atk-identity"],
                         "seeds": [42],
                         "maxSamples": 1,
@@ -133,23 +134,35 @@ class LocalRunnerTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (90, 140, 210)).save(dataset_dir / "sample.png")
 
-            summary = run_local_experiment(
-                LocalRunRequest(
-                    run_id="run_negative_reuse",
-                    selection={
-                        "datasetIds": ["smoke"],
-                        "algorithmIds": [
-                            "alg-invisible-watermark-dwtdct",
-                            "alg-invisible-watermark-dwtdctsvd",
-                        ],
-                        "attackPresetIds": ["atk-identity"],
-                        "seeds": [42],
-                        "maxSamples": 1,
-                    },
-                    resources_root=root / "resources",
-                    runs_root=runs_root,
+            from app.services import local_executor
+
+            original_catalog_item = local_executor.get_watermark_catalog_item
+
+            def catalog_item(identifier: str):
+                if identifier == "alg-traditional-spread-dct-copy":
+                    item = dict(original_catalog_item("alg-traditional-spread-dct"))
+                    item["id"] = identifier
+                    return item
+                return original_catalog_item(identifier)
+
+            with patch("app.services.local_executor.get_watermark_catalog_item", side_effect=catalog_item):
+                summary = run_local_experiment(
+                    LocalRunRequest(
+                        run_id="run_negative_reuse",
+                        selection={
+                            "datasetIds": ["smoke"],
+                            "algorithmIds": [
+                                "alg-traditional-spread-dct",
+                                "alg-traditional-spread-dct-copy",
+                            ],
+                            "attackPresetIds": ["atk-identity"],
+                            "seeds": [42],
+                            "maxSamples": 1,
+                        },
+                        resources_root=root / "resources",
+                        runs_root=runs_root,
+                    )
                 )
-            )
 
             self.assertEqual(summary["status"], "succeeded")
             self.assertEqual(summary["cellCount"], 2)
@@ -175,6 +188,38 @@ class LocalRunnerTest(unittest.TestCase):
                 1,
             )
             self.assertFalse((run_root / "staging" / "negative_attacked" / "smoke").exists())
+
+    def test_stop_intent_is_written_to_run_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            runs_root = root / "runs"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (300, 300), (90, 140, 210)).save(dataset_dir / "sample.png")
+
+            summary = run_local_experiment(
+                LocalRunRequest(
+                    run_id="run_pause_requested",
+                    selection={
+                        "datasetIds": ["smoke"],
+                        "algorithmIds": ["alg-traditional-spread-dct"],
+                        "attackPresetIds": ["atk-identity"],
+                        "seeds": [42],
+                        "maxSamples": 1,
+                    },
+                    resources_root=root / "resources",
+                    runs_root=runs_root,
+                ),
+                should_cancel=lambda: "pause",
+            )
+
+            run_root = runs_root / "run_pause_requested"
+            run_status = json.loads((run_root / "run_status.json").read_text())
+            run_summary = json.loads((run_root / "run_summary.json").read_text())
+
+            self.assertEqual(summary["status"], "paused")
+            self.assertEqual(run_status["status"], "paused")
+            self.assertEqual(run_summary["status"], "paused")
 
 
 if __name__ == "__main__":
