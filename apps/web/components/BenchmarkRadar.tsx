@@ -4,11 +4,15 @@ import type { CSSProperties } from "react";
 export function BenchmarkRadar({
   categories,
   emptyText,
-  series
+  series,
+  selectedCategoryKey,
+  onSelectCategory
 }: {
   categories: BenchmarkCategoryScore[];
   emptyText: string;
   series?: Array<{ id: string; label: string; categories: BenchmarkCategoryScore[] }>;
+  selectedCategoryKey?: string;
+  onSelectCategory?: (category: BenchmarkCategoryScore) => void;
 }) {
   const visibleSeries = (series ?? [])
     .map((item) => ({
@@ -69,7 +73,7 @@ export function BenchmarkRadar({
         })}
         {axisPoints.map((point) => (
           <line
-            className="radar-axis"
+            className={selectedCategoryKey === point.category.key ? "radar-axis active" : "radar-axis"}
             key={point.category.key}
             x1={center}
             x2={point.axisX}
@@ -100,11 +104,16 @@ export function BenchmarkRadar({
               />
               {points.map((point) => (
                 <circle
-                  className={point.category.covered ? "radar-dot covered" : "radar-dot"}
+                  className={[
+                    "radar-dot",
+                    point.category.covered ? "covered" : "",
+                    selectedCategoryKey === point.category.key ? "active" : ""
+                  ].join(" ")}
                   cx={point.x}
                   cy={point.y}
                   fill={color}
                   key={`${item.id}-${point.category.key}-dot`}
+                  onClick={() => onSelectCategory?.(point.category)}
                   r="4"
                 />
               ))}
@@ -113,8 +122,9 @@ export function BenchmarkRadar({
         })}
         {axisPoints.map((point) => (
           <text
-            className="radar-label"
+            className={selectedCategoryKey === point.category.key ? "radar-label active" : "radar-label"}
             key={`${point.category.key}-label`}
+            onClick={() => onSelectCategory?.(point.category)}
             textAnchor={point.labelX < center - 8 ? "end" : point.labelX > center + 8 ? "start" : "middle"}
             x={point.labelX}
             y={point.labelY}

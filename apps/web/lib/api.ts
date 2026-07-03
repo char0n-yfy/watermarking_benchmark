@@ -275,7 +275,7 @@ export function fetchBenchmarkProtocols(): Promise<BenchmarkProtocol[]> {
   return requestJson<BenchmarkProtocol[]>("/benchmark-protocols");
 }
 
-export function fetchLeaderboard(protocolId = "waves-official-detection-v1"): Promise<LeaderboardResponse> {
+export function fetchLeaderboard(protocolId = "wrs-v2-detection-v1"): Promise<LeaderboardResponse> {
   return requestJson<LeaderboardResponse>(`/leaderboard?protocol_id=${encodeURIComponent(protocolId)}`);
 }
 

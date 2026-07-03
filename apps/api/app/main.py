@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -35,8 +36,10 @@ from .services.system_metrics import collect_system_metrics, warmup_cpu_power_se
 
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
-    warmup_cpu_power_sensors()
+    warmup_task = asyncio.create_task(asyncio.to_thread(warmup_cpu_power_sensors))
     yield
+    if not warmup_task.done():
+        warmup_task.cancel()
 
 
 def create_app() -> FastAPI:

@@ -20,7 +20,7 @@ from app.services.local_runner import LocalRunRequest, estimate_selection, run_l
 from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
 from app.services.runtime_resource_manager import release_runtime_resources
 from app.services.runtime_parallel_config import apply_runtime_parallel_env
-from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols
+from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols, score_cell_from_records
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "paused", "cancelled", "partially_failed"}
@@ -492,7 +492,8 @@ class ExperimentService:
                     """,
                     tuple(active_statuses),
                 ).fetchall()
-                return [self._enrich_run_with_state(row_to_run(row)) for row in rows]
+                runs = [self._enrich_run_with_state(row_to_run(row)) for row in rows]
+                return self._merge_file_backed_runs(runs, scope=scope)
             if scope == "unfinished":
                 rows = connection.execute(
                     """
@@ -511,11 +512,13 @@ class ExperimentService:
                     """,
                     tuple(unfinished_statuses),
                 ).fetchall()
-                return [self._enrich_run_with_state(row_to_run(row)) for row in rows]
+                runs = [self._enrich_run_with_state(row_to_run(row)) for row in rows]
+                return self._merge_file_backed_runs(runs, scope=scope)
             rows = connection.execute(
                 "SELECT * FROM experiment_runs ORDER BY created_at DESC"
             ).fetchall()
-        return [self._enrich_run_with_state(row_to_run(row)) for row in rows]
+        runs = [self._enrich_run_with_state(row_to_run(row)) for row in rows]
+        return self._merge_file_backed_runs(runs, scope=scope)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:
@@ -524,8 +527,152 @@ class ExperimentService:
                 (run_id,),
             ).fetchone()
         if row is None:
+            file_run = self._file_backed_run(run_id)
+            if file_run is not None:
+                return file_run
             raise KeyError(f"Unknown run id: {run_id}")
         return self._enrich_run_with_state(row_to_run(row))
+
+    def _merge_file_backed_runs(self, runs: list[dict[str, Any]], *, scope: str | None) -> list[dict[str, Any]]:
+        existing_ids = {str(run.get("id")) for run in runs}
+        merged = list(runs)
+        for run_dir in self._iter_file_run_dirs():
+            if run_dir.name in existing_ids:
+                continue
+            file_run = self._file_backed_run(run_dir.name)
+            if file_run is None or not self._run_matches_scope(file_run, scope):
+                continue
+            merged.append(file_run)
+        return sorted(
+            merged,
+            key=lambda run: str(run.get("createdAt") or run.get("updatedAt") or ""),
+            reverse=True,
+        )
+
+    def _iter_file_run_dirs(self) -> list[Path]:
+        if not self.runs_root.exists():
+            return []
+        run_dirs = [
+            path
+            for path in self.runs_root.iterdir()
+            if path.is_dir()
+            and path.name.startswith("run_")
+            and (
+                (path / "run_summary.json").exists()
+                or (path / "run_state.json").exists()
+                or (path / "result_units.jsonl").exists()
+            )
+        ]
+        return sorted(run_dirs, key=lambda path: path.stat().st_mtime, reverse=True)
+
+    def _file_backed_run(self, run_id: str) -> dict[str, Any] | None:
+        run_dir = self.runs_root / safe_segment(run_id)
+        if not run_dir.is_dir():
+            return None
+        summary = read_json_object(run_dir / "run_summary.json")
+        state = read_json_object(run_dir / "run_state.json")
+        status_doc = read_json_object(run_dir / "run_status.json")
+        plan = read_json_object(run_dir / "run_plan.json")
+        if not any((summary, state, status_doc, plan, (run_dir / "result_units.jsonl").exists())):
+            return None
+
+        selection = self._first_dict(summary.get("selection"), state.get("selection"), plan.get("selection"))
+        created_at = self._first_string(
+            plan.get("createdAt"),
+            summary.get("createdAt"),
+            state.get("createdAt"),
+            self._path_timestamp(run_dir),
+        )
+        updated_at = self._first_string(
+            status_doc.get("updatedAt"),
+            state.get("updatedAt"),
+            summary.get("updatedAt"),
+            self._path_timestamp(run_dir),
+        )
+        status = self._first_string(status_doc.get("status"), state.get("status"), summary.get("status"), "succeeded")
+        cells = self._first_int(
+            status_doc.get("expectedResultUnits"),
+            state.get("expectedResultUnits"),
+            plan.get("expectedCells"),
+            summary.get("resultUnitCount"),
+            0,
+        )
+        progress = self._first_int(
+            status_doc.get("progress"),
+            state.get("overallProgress"),
+            state.get("progress"),
+            summary.get("progress"),
+            100 if status in TERMINAL_STATUSES else 0,
+        )
+        config_name = self._first_string(
+            summary.get("configName"),
+            state.get("configName"),
+            plan.get("configName"),
+            self._imported_run_name(selection),
+        )
+        log_path = run_dir / "worker.log"
+        run = {
+            "id": run_id,
+            "taskName": self._first_string(summary.get("taskName"), summary.get("runName"), config_name),
+            "configId": self._first_string(summary.get("configId"), state.get("configId"), plan.get("configId"), f"imported-{run_id}"),
+            "configName": config_name,
+            "status": status,
+            "cells": cells,
+            "progress": progress,
+            "completedProgress": progress,
+            "progressKind": self._first_string(status_doc.get("progressKind"), state.get("progressKind"), summary.get("progressKind"), "phaseOperations"),
+            "artifactRoot": str(run_dir),
+            "logPath": str(log_path) if log_path.exists() else None,
+            "workerId": None,
+            "cancelRequested": False,
+            "stopIntent": None,
+            "error": status_doc.get("error") or state.get("error") or summary.get("error"),
+            "createdAt": created_at,
+            "updatedAt": updated_at,
+            "startedAt": self._first_string(summary.get("startedAt"), state.get("startedAt"), plan.get("startedAt"), None),
+            "finishedAt": self._first_string(summary.get("finishedAt"), state.get("finishedAt"), status_doc.get("finishedAt"), None),
+        }
+        return self._enrich_run_with_state(run)
+
+    def _run_matches_scope(self, run: dict[str, Any], scope: str | None) -> bool:
+        status = str(run.get("status") or "")
+        if scope == "active":
+            return status in {"queued", "running"}
+        if scope == "unfinished":
+            return status in {"queued", "running", "paused", "failed", "partially_failed"}
+        return True
+
+    def _imported_run_name(self, selection: dict[str, Any]) -> str:
+        dataset_count = len(selection.get("datasetIds") or [])
+        algorithm_count = len(selection.get("algorithmIds") or [])
+        attack_count = len(selection.get("attackPresetIds") or [])
+        return f"Imported run ({dataset_count} datasets, {algorithm_count} algorithms, {attack_count} attacks)"
+
+    def _path_timestamp(self, path: Path) -> str:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+
+    def _first_string(self, *values: Any) -> str:
+        for value in values:
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _first_int(self, *values: Any) -> int:
+        for value in values:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    def _first_dict(self, *values: Any) -> dict[str, Any]:
+        for value in values:
+            if isinstance(value, dict):
+                return value
+        return {}
 
     def _run_state_path(self, run: dict[str, Any]) -> Path:
         return Path(str(run["artifactRoot"])) / "run_state.json"
@@ -605,7 +752,77 @@ class ExperimentService:
             key = unit.get("resultUnitKey") or unit.get("cellKey")
             if isinstance(key, str):
                 latest[key] = unit
-        return sorted(latest.values(), key=lambda unit: str(unit.get("resultUnitKey") or unit.get("cellKey") or ""))
+        units = sorted(latest.values(), key=lambda unit: str(unit.get("resultUnitKey") or unit.get("cellKey") or ""))
+        return self._attach_scoring_from_run_records(run, units)
+
+    def _attach_scoring_from_run_records(self, run: dict[str, Any], result_units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not result_units or all(isinstance(unit.get("scoring"), dict) for unit in result_units):
+            return result_units
+        artifact_root = Path(str(run["artifactRoot"]))
+        detection_records = read_jsonl(artifact_root / "image_detection.jsonl")
+        quality_records = read_jsonl(artifact_root / "image_quality.jsonl")
+        if not detection_records and not quality_records:
+            return result_units
+
+        detections_by_cell: dict[str, list[dict[str, Any]]] = {}
+        quality_by_cell: dict[str, list[dict[str, Any]]] = {}
+        clean_quality_by_algorithm: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+
+        for record in detection_records:
+            key = record.get("cellKey")
+            if isinstance(key, str):
+                detections_by_cell.setdefault(key, []).append(record)
+
+        for record in quality_records:
+            scope = record.get("scope")
+            if scope == "original_vs_watermarked":
+                clean_key = (
+                    str(record.get("datasetId") or ""),
+                    str(record.get("algorithmId") or ""),
+                    str(record.get("seed") or ""),
+                )
+                clean_quality_by_algorithm.setdefault(clean_key, []).append(record)
+                continue
+            if scope != "original_vs_attacked_watermarked":
+                continue
+            key = record.get("cellKey")
+            if isinstance(key, str):
+                quality_by_cell.setdefault(key, []).append(record)
+
+        scored_units: list[dict[str, Any]] = []
+        for unit in result_units:
+            if isinstance(unit.get("scoring"), dict):
+                scored_units.append(unit)
+                continue
+            key = str(unit.get("resultUnitKey") or unit.get("cellKey") or "")
+            clean_key = (
+                str(unit.get("datasetId") or ""),
+                str(unit.get("algorithmId") or ""),
+                str(unit.get("seed") or ""),
+            )
+            try:
+                attack_strength = float(unit.get("attackStrength") or 0.0)
+            except (TypeError, ValueError):
+                attack_strength = 0.0
+            try:
+                sample_count = int(unit.get("sampleCount") or 0)
+            except (TypeError, ValueError):
+                sample_count = 0
+            attack_params = unit.get("attackParams") if isinstance(unit.get("attackParams"), dict) else {}
+            scoring = score_cell_from_records(
+                algorithm_id=str(unit.get("algorithmId") or ""),
+                attack_preset_id=str(unit.get("attackPresetId") or ""),
+                attack_method=str(unit.get("attackMethod") or unit.get("attackPresetId") or ""),
+                attack_strength=attack_strength,
+                sample_count=sample_count,
+                detection_records=detections_by_cell.get(key, []),
+                quality_records=quality_by_cell.get(key, []),
+                clean_quality_records=clean_quality_by_algorithm.get(clean_key, []),
+                elapsed_ms=float(unit.get("elapsedMs") or 0.0),
+                attack_params=attack_params,
+            )
+            scored_units.append({**unit, "scoring": scoring})
+        return scored_units
 
     def get_run_results(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
@@ -856,6 +1073,8 @@ class ExperimentService:
     ) -> dict[str, Any]:
         if isinstance(summary, dict) and isinstance(summary.get("score"), dict):
             return summary["score"]
+        if any(isinstance(unit.get("scoring"), dict) for unit in result_units):
+            return aggregate_benchmark_score(result_units)
         if isinstance(summary, dict) and isinstance(summary.get("resultUnits"), list):
             return aggregate_benchmark_score(summary["resultUnits"])
         return aggregate_benchmark_score(result_units)

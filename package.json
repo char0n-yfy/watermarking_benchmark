@@ -6,5 +6,5 @@
     "build:web": "pnpm --filter @wm-bench/web build",
     "lint:web": "pnpm --filter @wm-bench/web lint"
   },
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@11.7.0"
 }

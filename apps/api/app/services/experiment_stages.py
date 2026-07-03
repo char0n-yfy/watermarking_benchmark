@@ -642,9 +642,9 @@ class QualityStage:
         watermarked_dir: Path,
         attacked_dir: Path,
         embed_quality_records: list[JsonDict],
-    ) -> None:
+    ) -> list[JsonDict]:
         if is_identity:
-            self.record_reused_quality_records(
+            original_records = self.record_reused_quality_records(
                 self.paths,
                 run_id=self.run_id,
                 cell_key=cell_key,
@@ -661,7 +661,7 @@ class QualityStage:
                 device=self.device,
                 reuse_policy="identity_attack_watermarked_copy",
             )
-            self.record_identity_quality_pairs(
+            watermarked_records = self.record_identity_quality_pairs(
                 self.paths,
                 run_id=self.run_id,
                 cell_key=cell_key,
@@ -676,9 +676,9 @@ class QualityStage:
                 target_dir=attacked_dir,
                 device=self.device,
             )
-            return
+            return [*original_records, *watermarked_records]
 
-        self.record_quality_pairs(
+        original_records = self.record_quality_pairs(
             self.paths,
             run_id=self.run_id,
             cell_key=cell_key,
@@ -693,7 +693,7 @@ class QualityStage:
             target_dir=attacked_dir,
             device=self.device,
         )
-        self.record_quality_pairs(
+        watermarked_records = self.record_quality_pairs(
             self.paths,
             run_id=self.run_id,
             cell_key=cell_key,
@@ -708,6 +708,7 @@ class QualityStage:
             target_dir=attacked_dir,
             device=self.device,
         )
+        return [*original_records, *watermarked_records]
 
 
 @dataclass

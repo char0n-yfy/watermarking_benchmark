@@ -266,6 +266,7 @@ export interface RunResultUnit {
   attackPresetId: string;
   attackMethod: string;
   attackStrength: number;
+  attackParams?: Record<string, unknown>;
   seed: number;
   sampleCount: number;
   bitAccuracy: number | null;
@@ -281,8 +282,10 @@ export interface BenchmarkCategoryScore {
   key: string;
   label: string;
   score: number | null;
+  meanPerformance?: number | null;
   meanNqd: number | null;
   cellCount: number;
+  attackCount?: number;
   covered: boolean;
 }
 
@@ -304,6 +307,9 @@ export interface BenchmarkLeaderboardRow {
   protocolStatus: "official" | "provisional" | string;
   officialEligible: boolean;
   wrs: number | null;
+  physicalScore?: number | null;
+  worstCategory?: BenchmarkCategoryScore | null;
+  profileTags?: string[];
   cleanFidelity: number | null;
   avgNqd: number | null;
   runtimeMs: number | null;
@@ -318,13 +324,36 @@ export interface BenchmarkLeaderboardRow {
 }
 
 export interface BenchmarkCurvePoint {
+  datasetId: string;
   algorithmId: string;
   attackPresetId: string;
   attackMethod: string;
   attackCategory: string;
   attackStrength: number;
+  attackParams?: Record<string, unknown>;
+  attackVariantKey?: string;
+  attackVariantLabel?: string;
+  attackParamStrengthName?: string;
+  attackParamStrength?: number | null;
+  sampleCount?: number;
+  xStrength?: number;
   xNqd: number;
   yTprAtFpr: number;
+  yPerformance?: number | null;
+}
+
+export interface BenchmarkAttackLeaderboardRow {
+  rank: number;
+  algorithmId: string;
+  attackPresetId: string;
+  attackMethod: string;
+  attackCategory: string;
+  qAtP95: number | "inf" | "-inf" | null;
+  qAtP70: number | "inf" | "-inf" | null;
+  avgPerformance: number | null;
+  avgNqd: number | null;
+  auc: number | null;
+  cellCount: number;
 }
 
 export interface BenchmarkScore {
@@ -334,13 +363,16 @@ export interface BenchmarkScore {
   officialEligible: boolean;
   wrs: number | null;
   wrsLabel: string;
+  rankMethod?: string;
   fprTarget: number;
   practicalNqdThreshold: number;
+  performanceThresholds?: number[];
   officialMinSamples: number;
   categoryScores: BenchmarkCategoryScore[];
   coverage: BenchmarkCoverage;
   leaderboardRows: BenchmarkLeaderboardRow[];
   curvePoints: BenchmarkCurvePoint[];
+  attackLeaderboard?: BenchmarkAttackLeaderboardRow[];
 }
 
 export interface RunAggregate {

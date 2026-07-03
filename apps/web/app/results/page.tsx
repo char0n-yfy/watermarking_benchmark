@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -12,6 +12,7 @@ import {
   Info,
   Layers3,
   PlayCircle,
+  RefreshCw,
   Search,
   SlidersHorizontal,
   Trophy
@@ -19,13 +20,23 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { BenchmarkRadar } from "@/components/BenchmarkRadar";
 import { useLanguage } from "@/components/LanguageProvider";
-import { RobustnessCurve } from "@/components/RobustnessCurve";
-import { fetchRunResults, fetchRunScore, fetchRuns } from "@/lib/api";
+import {
+  CurveLegendGlyph,
+  RobustnessCurve,
+  curveDomainColor,
+  curveDomainShape
+} from "@/components/RobustnessCurve";
+import { fetchAlgorithms, fetchAttacks, fetchRunResults, fetchRunScore, fetchRuns } from "@/lib/api";
 import { formatMetric, rankAggregates, statusBadgeClass } from "@/lib/insights";
+import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
   BenchmarkCategoryScore,
+  BenchmarkCurvePoint,
   BenchmarkLeaderboardRow,
   BenchmarkScore,
+  AlgorithmVersion,
+  AttackPreset,
+  DemoRunRecord,
   RunAggregate,
   RunResultUnit,
   RunResults,
@@ -33,7 +44,65 @@ import type {
 } from "@/lib/types";
 
 type ResultsTab = "overview" | "attack" | "quality" | "debug";
+type RankingMetric = "waves" | "robustness" | "fidelity" | "complexity";
 type StatusFilter = RunStatus | "all";
+type StringArraySetter = (value: string[] | ((current: string[]) => string[])) => void;
+
+type ChartInsight = {
+  kind: "run" | "algorithm" | "category" | "attack" | "curve";
+  title: string;
+  body: string;
+  details?: Array<{ label: string; value: string }>;
+  meta?: string;
+  key?: string;
+};
+
+type QualityAttackSummary = {
+  key: string;
+  attackPresetId: string;
+  attackMethod: string;
+  attackCategory: string;
+  algorithmCount: number;
+  pointCount: number;
+  strengthName: string;
+  strengthMin: number;
+  strengthMax: number;
+  avgTpr: number | null;
+  avgNqd: number | null;
+  weakestPoint: BenchmarkCurvePoint | null;
+};
+
+type QualityAttackOption = {
+  attackPresetId: string;
+  attackMethod: string;
+  attackCategory: string;
+  pointCount: number;
+  variantCount: number;
+};
+
+type QualitySelectorOption = {
+  id: string;
+  label: string;
+  meta: string;
+  count: number;
+};
+
+type QualityComboSummary = {
+  key: string;
+  datasetId: string;
+  algorithmId: string;
+  attackPresetId: string;
+  attackMethod: string;
+  attackCategory: string;
+  variantLabel: string;
+  pointCount: number;
+  strengthName: string;
+  strengthMin: number;
+  strengthMax: number;
+  avgTpr: number | null;
+  avgNqd: number | null;
+  weakestPoint: BenchmarkCurvePoint | null;
+};
 
 interface ScoringSummary {
   attackCategory?: string;
@@ -55,12 +124,24 @@ const EMPTY_SCORE_ROWS: BenchmarkLeaderboardRow[] = [];
 
 export default function ResultsPage() {
   const { language, t } = useLanguage();
+  const uiText = (zh: string, en: string) => (language === "zh" ? zh : en);
+  const [runs, setRuns] = useState<DemoRunRecord[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [runRefreshKey, setRunRefreshKey] = useState(0);
   const [results, setResults] = useState<RunResults | null>(null);
   const [score, setScore] = useState<BenchmarkScore | null>(null);
+  const [resourceAlgorithmNames, setResourceAlgorithmNames] = useState<Record<string, string>>({});
+  const [resourceAttackNames, setResourceAttackNames] = useState<Record<string, string>>({});
+  const [activeInsight, setActiveInsight] = useState<ChartInsight | null>(null);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric>("waves");
   const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<string[]>([]);
+  const [qualityAttackFilter, setQualityAttackFilter] = useState("all");
+  const [qualityDatasetIds, setQualityDatasetIds] = useState<string[]>([]);
+  const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<string[]>([]);
+  const [qualityAttackIds, setQualityAttackIds] = useState<string[]>([]);
   const [debugStatus, setDebugStatus] = useState<StatusFilter>("all");
   const [debugAttack, setDebugAttack] = useState("all");
   const [debugSearch, setDebugSearch] = useState("");
@@ -69,6 +150,30 @@ export default function ResultsPage() {
   const legacyRanking = useMemo(() => rankAggregates(results?.aggregates ?? []), [results]);
   const scoreRows = score?.leaderboardRows ?? EMPTY_SCORE_ROWS;
   const algorithmIds = useMemo(() => collectAlgorithmIds(results, scoreRows, legacyRanking), [legacyRanking, results, scoreRows]);
+  const qualityFallbackDatasetIds = useMemo(
+    () => Array.from(new Set((results?.resultUnits ?? []).map((unit) => unit.datasetId).filter(Boolean))),
+    [results]
+  );
+  const qualityFallbackDatasetId = qualityFallbackDatasetIds.length === 1 ? qualityFallbackDatasetIds[0] : "unknown";
+  const qualityAvailableCurvePoints = useMemo(
+    () =>
+      (score?.curvePoints ?? [])
+        .map((point) => ({ ...point, datasetId: point.datasetId || qualityFallbackDatasetId }))
+        .sort(qualityCurvePointSort),
+    [qualityFallbackDatasetId, score]
+  );
+  const qualityDatasetOptionIds = useMemo(
+    () => buildQualityDatasetOptions(qualityAvailableCurvePoints).map((item) => item.id),
+    [qualityAvailableCurvePoints]
+  );
+  const qualityAlgorithmOptionIds = useMemo(
+    () => buildQualityAlgorithmOptions(qualityAvailableCurvePoints).map((item) => item.id),
+    [qualityAvailableCurvePoints]
+  );
+  const qualityAttackOptionIds = useMemo(
+    () => buildQualityAttackOptions(qualityAvailableCurvePoints).map((item) => item.attackPresetId),
+    [qualityAvailableCurvePoints]
+  );
 
   useEffect(() => {
     setSelectedAlgorithmIds((current) => {
@@ -80,18 +185,107 @@ export default function ResultsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const loadResourceNames = async () => {
+      const [algorithms, attacks] = await Promise.all([
+        fetchAlgorithms().catch(() => [] as AlgorithmVersion[]),
+        fetchAttacks().catch(() => [] as AttackPreset[])
+      ]);
+      if (cancelled) {
+        return;
+      }
+      const nextAlgorithmNames: Record<string, string> = {};
+      for (const algorithm of algorithms) {
+        const label = localizedAlgorithmResourceName(language, algorithm);
+        nextAlgorithmNames[algorithm.id] = label;
+        if (algorithm.method) {
+          nextAlgorithmNames[algorithm.method] = label;
+        }
+      }
+      const nextAttackNames: Record<string, string> = {};
+      for (const attack of attacks) {
+        const label = localizedAttackResourceName(language, attack);
+        nextAttackNames[attack.id] = label;
+        nextAttackNames[attack.method] = label;
+      }
+      setResourceAlgorithmNames(nextAlgorithmNames);
+      setResourceAttackNames(nextAttackNames);
+    };
+    void loadResourceNames();
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
+
+  useEffect(() => {
+    setQualityDatasetIds((current) => reconcileQualitySelection(current, qualityDatasetOptionIds, qualityDatasetOptionIds));
+  }, [qualityDatasetOptionIds]);
+
+  useEffect(() => {
+    const seeded = selectedAlgorithmIds.filter((id) => qualityAlgorithmOptionIds.includes(id));
+    const fallback = seeded.length ? seeded : qualityAlgorithmOptionIds.slice(0, Math.min(3, qualityAlgorithmOptionIds.length));
+    setQualityAlgorithmIds((current) => reconcileQualitySelection(current, qualityAlgorithmOptionIds, fallback));
+  }, [qualityAlgorithmOptionIds, selectedAlgorithmIds]);
+
+  useEffect(() => {
+    const fallback =
+      qualityAttackFilter !== "all" && qualityAttackOptionIds.includes(qualityAttackFilter)
+        ? [qualityAttackFilter]
+        : qualityAttackOptionIds;
+    setQualityAttackIds((current) => reconcileQualitySelection(current, qualityAttackOptionIds, fallback));
+  }, [qualityAttackFilter, qualityAttackOptionIds]);
+
+  useEffect(() => {
+    let cancelled = false;
     fetchRuns()
-      .then((runs) => {
-        const latest =
-          runs.find((run) => run.status === "succeeded" || run.status === "partially_failed") ??
-          runs.find((run) => run.status !== "queued") ??
-          runs[0];
-        return latest ? fetchRunResults(latest.id) : null;
+      .then((nextRuns) => {
+        if (cancelled) {
+          return;
+        }
+        setRuns(nextRuns);
+        setSelectedRunId((current) => {
+          if (current && nextRuns.some((run) => run.id === current)) {
+            return current;
+          }
+          const latest =
+            nextRuns.find((run) => run.status === "succeeded" || run.status === "partially_failed") ??
+            nextRuns.find((run) => run.status !== "queued") ??
+            nextRuns[0];
+          return latest?.id ?? "";
+        });
+        if (nextRuns.length === 0) {
+          setNotice(t.results.noRealResults);
+          setLoading(false);
+        }
       })
+      .catch(() => {
+        if (!cancelled) {
+          setNotice(t.results.apiUnavailable);
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runRefreshKey, t.results.apiUnavailable, t.results.noRealResults]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setNotice("");
+    fetchRunResults(selectedRunId)
       .then((nextResults) => {
-        if (!cancelled && nextResults) {
+        if (!cancelled) {
           setResults(nextResults);
           setScore(nextResults.score ?? null);
+          setActiveInsight({
+            kind: "run",
+            title: nextResults.run.taskName || nextResults.run.configName || nextResults.run.id,
+            body: `${nextResults.resultUnits.length} result units, status ${nextResults.run.status}`,
+            meta: nextResults.run.artifactRoot
+          });
           if (!nextResults.score) {
             fetchRunScore(nextResults.run.id)
               .then((scoreResponse) => {
@@ -102,12 +296,11 @@ export default function ResultsPage() {
               .catch(() => undefined);
           }
         }
-        if (!cancelled && !nextResults) {
-          setNotice(t.results.noRealResults);
-        }
       })
       .catch(() => {
         if (!cancelled) {
+          setResults(null);
+          setScore(null);
           setNotice(t.results.apiUnavailable);
         }
       })
@@ -119,7 +312,7 @@ export default function ResultsPage() {
     return () => {
       cancelled = true;
     };
-  }, [t.results.apiUnavailable, t.results.noRealResults]);
+  }, [selectedRunId, t.results.apiUnavailable]);
 
   const selectedSet = useMemo(() => new Set(selectedAlgorithmIds), [selectedAlgorithmIds]);
   const selectedScoreRows = useMemo(
@@ -171,19 +364,26 @@ export default function ResultsPage() {
     [debugAttack, debugSearch, debugStatus, failedOnly, results, selectedSet]
   );
 
-  const radarSeries = selectedScoreRows.map((row) => ({
-    id: row.algorithmId,
-    label: row.algorithmId,
-    categories: row.categoryScores
-  }));
-  const radarCategories = score?.categoryScores ?? selectedScoreRows[0]?.categoryScores ?? [];
+  const radarCategories = useMemo(
+    () => buildRadarCategories(selectedScoreRows, score, language, selectedScoreRows),
+    [language, score, selectedScoreRows]
+  );
+  const radarSeries = useMemo(
+    () =>
+      selectedScoreRows.map((row) => ({
+        id: row.algorithmId,
+        label: displayAlgorithm(row.algorithmId, resourceAlgorithmNames),
+        categories: buildRadarCategories([row], score, language, selectedScoreRows)
+      })),
+    [language, resourceAlgorithmNames, score, selectedScoreRows]
+  );
   const emptyCopy =
     language === "zh"
       ? {
           loadingTitle: "正在读取运行结果",
-          loadingBody: "如果 worker 正在执行，结果会在运行完成后出现在这里。",
-          title: "还没有可展示的真实结果",
-          body: "先创建实验配置，再到运行页提交并启动 worker；完成后这里会展示 WRS、覆盖率、曲线和调试单元。",
+          loadingBody: "如果 worker 正在执行，结果会在运行完成后出现。",
+          title: "暂无可展示的真实结果",
+          body: "请先创建实验配置，在运行页提交并启动 worker。完成后这里会显示 WRS、覆盖率、曲线和调试单元。",
           openRuns: "去运行页",
           openConfigs: "去配置页"
         }
@@ -195,6 +395,39 @@ export default function ResultsPage() {
           openRuns: "Open Runs",
           openConfigs: "Open Configs"
         };
+  const insightKindLabel = (kind: ChartInsight["kind"]) =>
+    ({
+      algorithm: uiText("算法详情", "Algorithm detail"),
+      attack: uiText("攻击详情", "Attack detail"),
+      category: uiText("类别详情", "Category detail"),
+      curve: uiText("选中数据点", "Selected point"),
+      run: uiText("运行详情", "Run detail")
+    })[kind] ?? kind;
+  const makeCurvePointInsight = (point: BenchmarkCurvePoint, key = qualityPointKey(point)): ChartInsight => {
+    const strengthName = point.attackParamStrengthName ?? "strength";
+    const strengthValue = formatStrength(point.attackParamStrength ?? point.attackStrength);
+    const algorithmName = displayAlgorithm(point.algorithmId, resourceAlgorithmNames);
+    const attackName = displayAttackPoint(point, resourceAttackNames);
+    return {
+      kind: "curve",
+      key,
+      title: `${algorithmName} × ${attackName}`,
+      body: `${point.datasetId || "unknown"} / ${variantLabel(point)} / ${strengthName} ${strengthValue}`,
+      details: [
+        { label: uiText("数据集", "Dataset"), value: point.datasetId || "unknown" },
+        { label: uiText("水印算法", "Watermark"), value: algorithmName },
+        { label: uiText("攻击方法", "Attack"), value: attackName },
+        { label: uiText("攻击预设", "Preset"), value: point.attackPresetId ?? "n/a" },
+        { label: uiText("变体", "Variant"), value: variantLabel(point) },
+        { label: strengthName, value: strengthValue },
+        { label: "TPR", value: formatMetric(point.yTprAtFpr) },
+        { label: "NQD", value: formatMetric(point.xNqd) },
+        { label: uiText("样本数", "Samples"), value: formatCount(point.sampleCount) },
+        { label: uiText("类别", "Category"), value: point.attackCategory ?? "n/a" }
+      ],
+      meta: `${point.attackCategory ?? "n/a"} / ${point.attackPresetId ?? "n/a"}`
+    };
+  };
 
   return (
     <AppShell active="results">
@@ -204,6 +437,23 @@ export default function ResultsPage() {
           <p>{t.results.subtitle}</p>
         </div>
         <div className="toolbar">
+          <select
+            aria-label="Select run result"
+            className="run-result-select"
+            disabled={runs.length === 0}
+            onChange={(event) => setSelectedRunId(event.target.value)}
+            value={selectedRunId}
+          >
+            {runs.length === 0 ? <option value="">No runs</option> : null}
+            {runs.map((run) => (
+              <option key={run.id} value={run.id}>
+                {(run.taskName || run.configName || run.id).slice(0, 72)} / {run.status}
+              </option>
+            ))}
+          </select>
+          <button className="button icon-button" onClick={() => setRunRefreshKey((value) => value + 1)} type="button">
+            <RefreshCw size={16} />
+          </button>
           <button className="button" disabled={!results} onClick={() => exportResultsCsv(results, score)} type="button">
             <Download size={16} />
             {t.results.exportCsv}
@@ -239,7 +489,7 @@ export default function ResultsPage() {
         <SummaryCard label={t.common.wrs} value={summary.wrs} meta={summary.protocolStatus} />
         <SummaryCard label={t.common.coverage} value={summary.coverage} meta={summary.coverageMeta} />
         <SummaryCard label={language === "zh" ? "完成结果单元" : "Completed result units"} value={summary.completedResultUnits} meta={`${summary.totalResultUnits} ${language === "zh" ? "结果单元" : "result units"}`} />
-        <SummaryCard label={t.common.samples} value={summary.sampleCount} meta={`${summary.algorithmCount} ${t.console.algorithms} · ${summary.attackCount} ${t.console.attacks}`} />
+        <SummaryCard label={t.common.samples} value={summary.sampleCount} meta={`${summary.algorithmCount} ${t.console.algorithms} / ${summary.attackCount} ${t.console.attacks}`} />
       </section>
 
       <section className="result-confidence-card">
@@ -272,7 +522,7 @@ export default function ResultsPage() {
         ))}
       </section>
 
-      {activeTab !== "debug" ? (
+      {activeTab !== "debug" && activeTab !== "quality" ? (
         <AlgorithmSelector
           algorithmIds={algorithmIds}
           selectedAlgorithmIds={selectedAlgorithmIds}
@@ -281,21 +531,40 @@ export default function ResultsPage() {
         />
       ) : null}
 
+      {activeInsight && activeTab !== "quality" ? <InsightStrip insight={activeInsight} /> : null}
+
       {activeTab === "overview" ? (
         <OverviewTab
           legacyRows={selectedLegacyRows}
           radarCategories={radarCategories}
           radarSeries={radarSeries}
+          rankingMetric={rankingMetric}
           results={results}
           score={score}
           scoreRows={selectedScoreRows}
+          setRankingMetric={setRankingMetric}
         />
       ) : null}
 
       {activeTab === "attack" ? <AttackAnalysisTab aggregateRows={aggregateRows} score={score} /> : null}
 
       {activeTab === "quality" ? (
-        <QualityTab results={results} score={score} selectedAlgorithmIds={selectedAlgorithmIds} scoreRows={selectedScoreRows} />
+        <QualityWorkbenchTab
+          qualityAttackFilter={qualityAttackFilter}
+          qualityAlgorithmIds={qualityAlgorithmIds}
+          qualityAttackIds={qualityAttackIds}
+          qualityDatasetIds={qualityDatasetIds}
+          resourceAlgorithmNames={resourceAlgorithmNames}
+          resourceAttackNames={resourceAttackNames}
+          results={results}
+          score={score}
+          scoreRows={selectedScoreRows}
+          selectedAlgorithmIds={selectedAlgorithmIds}
+          setQualityAlgorithmIds={setQualityAlgorithmIds}
+          setQualityAttackFilter={setQualityAttackFilter}
+          setQualityAttackIds={setQualityAttackIds}
+          setQualityDatasetIds={setQualityDatasetIds}
+        />
       ) : null}
 
       {activeTab === "debug" ? (
@@ -320,23 +589,114 @@ export default function ResultsPage() {
     </AppShell>
   );
 
+  function InsightStrip({ insight }: { insight: ChartInsight }) {
+    const hasDetails = Boolean(insight.details?.length);
+    return (
+      <section className={hasDetails ? "insight-strip dense" : "insight-strip"}>
+        <div className="insight-heading">
+          <span>{insightKindLabel(insight.kind)}</span>
+          <strong>{insight.title}</strong>
+        </div>
+        {hasDetails ? (
+          <div className="insight-detail-grid">
+            {insight.details?.map((item) => (
+              <div className="insight-detail-item" key={`${item.label}-${item.value}`}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="insight-copy">
+            <p>{insight.body}</p>
+            {insight.meta ? <code>{insight.meta}</code> : null}
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function InteractiveScoreBars({
+    metric,
+    rows,
+    setMetric
+  }: {
+    metric: RankingMetric;
+    rows: BenchmarkLeaderboardRow[];
+    setMetric: (value: RankingMetric) => void;
+  }) {
+    if (rows.length === 0) {
+      return null;
+    }
+    const rankedRows = rankRowsByMetric(rows, metric);
+    const maxScore = Math.max(...rankedRows.map((row) => rankingMetricScore(row, metric, rows)), 1);
+    const metricLabels = rankingMetricLabels(language);
+    return (
+      <section className="panel interactive-bars-panel">
+        <div className="panel-header">
+          <h2>{uiText("水印算法排名", "Watermark ranking")}</h2>
+          <BarChart3 size={16} />
+        </div>
+        <div className="ranking-mode-tabs">
+          {(Object.keys(metricLabels) as RankingMetric[]).map((key) => (
+            <button className={metric === key ? "active" : ""} key={key} onClick={() => setMetric(key)} type="button">
+              {metricLabels[key]}
+            </button>
+          ))}
+        </div>
+        <div className="panel-body interactive-bars">
+          {rankedRows.map((row, index) => {
+            const value = rankingMetricScore(row, metric, rows);
+            const width = `${Math.max(3, (value / maxScore) * 100)}%`;
+            return (
+              <button
+                className="interactive-bar-row"
+                key={row.algorithmId}
+                onClick={() => {
+                  setActiveInsight({
+                    kind: "algorithm",
+                    key: row.algorithmId,
+                    title: displayAlgorithm(row.algorithmId, resourceAlgorithmNames),
+                    body: `${metricLabels[metric]} ${formatRankingValue(row, metric, rows)}`,
+                    meta: rankingMetricMeta(row, metric, rows, language)
+                  });
+                }}
+                type="button"
+              >
+                <span>{index + 1}. {displayAlgorithm(row.algorithmId, resourceAlgorithmNames)}</span>
+                <i style={{ width }} />
+                <strong>{formatRankingValue(row, metric, rows)}</strong>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
   function OverviewTab({
     legacyRows,
     radarCategories,
     radarSeries,
+    rankingMetric,
     results,
     score,
-    scoreRows
+    scoreRows,
+    setRankingMetric
   }: {
     legacyRows: ReturnType<typeof rankAggregates>;
     radarCategories: BenchmarkCategoryScore[];
     radarSeries: Array<{ id: string; label: string; categories: BenchmarkCategoryScore[] }>;
+    rankingMetric: RankingMetric;
     results: RunResults | null;
     score: BenchmarkScore | null;
     scoreRows: BenchmarkLeaderboardRow[];
+    setRankingMetric: (value: RankingMetric) => void;
   }) {
     return (
       <>
+        <InteractiveScoreBars metric={rankingMetric} rows={scoreRows} setMetric={setRankingMetric} />
+
         <section className="results-grid">
           <div className="panel">
             <div className="panel-header">
@@ -360,7 +720,21 @@ export default function ResultsPage() {
               <BarChart3 size={16} />
             </div>
             <div className="panel-body">
-              <BenchmarkRadar categories={radarCategories} emptyText={t.console.needMultipleStrengths} series={radarSeries} />
+              <BenchmarkRadar
+                categories={radarCategories}
+                emptyText={t.console.needMultipleStrengths}
+                onSelectCategory={(category) =>
+                  setActiveInsight({
+                    kind: "category",
+                    key: category.key,
+                    title: category.label,
+                    body: `Score ${formatMetric(category.score)} across ${category.cellCount} cells`,
+                    meta: `Mean NQD ${formatMetric(category.meanNqd)}`
+                  })
+                }
+                selectedCategoryKey={activeInsight?.kind === "category" ? activeInsight.key : undefined}
+                series={radarSeries}
+              />
             </div>
           </div>
         </section>
@@ -373,13 +747,26 @@ export default function ResultsPage() {
             </div>
             <div className="panel-body score-breakdown-grid">
               {(score?.categoryScores ?? []).map((category) => (
-                <div className={category.covered ? "score-breakdown-card covered" : "score-breakdown-card"} key={category.key}>
+                <button
+                  className={category.covered ? "score-breakdown-card covered interactive" : "score-breakdown-card interactive"}
+                  key={category.key}
+                  onClick={() =>
+                    setActiveInsight({
+                      kind: "category",
+                      key: category.key,
+                      title: category.label,
+                      body: `Score ${formatMetric(category.score)} across ${category.cellCount} cells`,
+                      meta: `Mean NQD ${formatMetric(category.meanNqd)}`
+                    })
+                  }
+                  type="button"
+                >
                   <span>{category.label}</span>
                   <strong>{category.score == null ? "n/a" : category.score.toFixed(2)}</strong>
                   <small>
-                    {category.cellCount} {t.runs.cells} · NQD {formatMetric(category.meanNqd)}
+                    {category.cellCount} {t.runs.cells} / NQD {formatMetric(category.meanNqd)}
                   </small>
-                </div>
+                </button>
               ))}
               {!score ? <div className="empty compact-empty">{t.common.noData}</div> : null}
             </div>
@@ -399,13 +786,66 @@ export default function ResultsPage() {
     score: BenchmarkScore | null;
   }) {
     return (
-      <section className="panel results-detail-panel">
-        <div className="panel-header">
-          <h2>{t.results.attackAnalysis}</h2>
-          <Gauge size={16} />
-        </div>
-        <div className="panel-body table-scroll">
-          <table className="table">
+      <>
+        <section className="panel results-detail-panel">
+          <div className="panel-header">
+            <h2>WAVES-style attack leaderboard</h2>
+            <Trophy size={16} />
+          </div>
+          <div className="panel-body table-scroll">
+            <table className="table compact-table">
+              <thead>
+                <tr>
+                  <th>{t.common.rank}</th>
+                  <th>{t.common.algorithm}</th>
+                  <th>{t.common.attackPreset}</th>
+                  <th>{t.results.category}</th>
+                  <th>Q@0.95P</th>
+                  <th>Q@0.7P</th>
+                  <th>Avg P</th>
+                  <th>Avg Q</th>
+                  <th>AUC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(score?.attackLeaderboard ?? []).map((row) => (
+                  <tr
+                    className="clickable-row"
+                    key={`${row.algorithmId}-${row.attackPresetId}`}
+                    onClick={() =>
+                      setActiveInsight({
+                        kind: "attack",
+                        key: `${row.algorithmId}-${row.attackPresetId}`,
+                        title: `${row.algorithmId} / ${row.attackPresetId}`,
+                        body: `Q@0.95P ${formatThreshold(row.qAtP95)}, Q@0.7P ${formatThreshold(row.qAtP70)}`,
+                        meta: `${row.attackCategory}, AvgP ${formatMetric(row.avgPerformance)}, AvgQ ${formatMetric(row.avgNqd)}`
+                      })
+                    }
+                  >
+                    <td>{row.rank}</td>
+                    <td>{row.algorithmId}</td>
+                    <td>{row.attackPresetId}</td>
+                    <td>{row.attackCategory}</td>
+                    <td>{formatThreshold(row.qAtP95)}</td>
+                    <td>{formatThreshold(row.qAtP70)}</td>
+                    <td>{formatMetric(row.avgPerformance)}</td>
+                    <td>{formatMetric(row.avgNqd)}</td>
+                    <td>{formatMetric(row.auc)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!score?.attackLeaderboard?.length ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+          </div>
+        </section>
+
+        <section className="panel results-detail-panel">
+          <div className="panel-header">
+            <h2>{t.results.attackAnalysis}</h2>
+            <Gauge size={16} />
+          </div>
+          <div className="panel-body table-scroll">
+            <table className="table">
             <thead>
               <tr>
                 <th>{t.common.algorithm}</th>
@@ -438,24 +878,399 @@ export default function ResultsPage() {
             </tbody>
           </table>
           {aggregateRows.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
-        </div>
-      </section>
+          </div>
+        </section>
+      </>
     );
   }
 
-  function QualityTab({
+  function QualityWorkbenchTab({
+    qualityAlgorithmIds,
+    qualityAttackFilter,
+    qualityAttackIds,
+    qualityDatasetIds,
+    resourceAlgorithmNames,
+    resourceAttackNames,
     results,
     score,
     selectedAlgorithmIds,
-    scoreRows
+    scoreRows,
+    setQualityAlgorithmIds,
+    setQualityAttackFilter,
+    setQualityAttackIds,
+    setQualityDatasetIds
   }: {
+    qualityAlgorithmIds: string[];
+    qualityAttackFilter: string;
+    qualityAttackIds: string[];
+    qualityDatasetIds: string[];
+    resourceAlgorithmNames: Record<string, string>;
+    resourceAttackNames: Record<string, string>;
     results: RunResults | null;
     score: BenchmarkScore | null;
     selectedAlgorithmIds: string[];
     scoreRows: BenchmarkLeaderboardRow[];
+    setQualityAlgorithmIds: StringArraySetter;
+    setQualityAttackFilter: (value: string) => void;
+    setQualityAttackIds: StringArraySetter;
+    setQualityDatasetIds: StringArraySetter;
   }) {
+    const fallbackDatasetIds = Array.from(new Set((results?.resultUnits ?? []).map((unit) => unit.datasetId).filter(Boolean)));
+    const fallbackDatasetId = fallbackDatasetIds.length === 1 ? fallbackDatasetIds[0] : "unknown";
+    const allCurvePoints = (score?.curvePoints ?? [])
+      .map((point) => ({ ...point, datasetId: point.datasetId || fallbackDatasetId }))
+      .sort(qualityCurvePointSort);
+    const datasetOptions = buildQualityDatasetOptions(allCurvePoints);
+    const algorithmOptions = buildQualityAlgorithmOptions(allCurvePoints, resourceAlgorithmNames);
+    const attackOptions = buildQualityAttackOptions(allCurvePoints);
+    const selectedDatasetSet = new Set(qualityDatasetIds);
+    const selectedAlgorithmSet = new Set(qualityAlgorithmIds);
+    const selectedAttackSet = new Set(qualityAttackIds);
+    const filteredCurvePoints = allCurvePoints.filter(
+      (point) =>
+        selectedDatasetSet.has(point.datasetId) &&
+        selectedAlgorithmSet.has(point.algorithmId) &&
+        selectedAttackSet.has(point.attackPresetId)
+    );
+    const attackSummaries = buildQualityAttackSummaries(
+      allCurvePoints.filter(
+        (point) => selectedDatasetSet.has(point.datasetId) && selectedAlgorithmSet.has(point.algorithmId)
+      )
+    );
+    const comboSummaries = buildQualityComboSummaries(filteredCurvePoints);
+    const qualitySeriesDomain = comboSummaries.map((combo) => combo.key);
+    const weakestPoint = filteredCurvePoints.reduce<BenchmarkCurvePoint | null>(
+      (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
+      null
+    );
+    const selectedAttackCount = new Set(filteredCurvePoints.map((point) => point.attackPresetId)).size;
+    const selectedStrengthCount = new Set(
+      filteredCurvePoints.map((point) => `${point.attackPresetId}:${point.attackParamStrength ?? point.attackStrength}`)
+    ).size;
+    const selectedVariantCount = new Set(filteredCurvePoints.map((point) => point.attackVariantKey ?? "default")).size;
+    const selectorPanel = ({
+      options,
+      selectedIds,
+      setSelectedIds,
+      title
+    }: {
+      options: QualitySelectorOption[];
+      selectedIds: string[];
+      setSelectedIds: StringArraySetter;
+      title: string;
+    }) => (
+      <details className="quality-selector">
+        <summary>
+          <span>{title}</span>
+          <strong>
+            {selectedIds.length}/{options.length}
+          </strong>
+        </summary>
+        <div className="quality-selector-actions">
+          <button onClick={() => setSelectedIds(options.map((item) => item.id))} type="button">
+            {uiText("全选", "All")}
+          </button>
+          <button onClick={() => setSelectedIds([])} type="button">
+            {uiText("清空", "Clear")}
+          </button>
+        </div>
+        <div className="quality-selector-list">
+          {options.map((item) => (
+            <label className="quality-selector-option" key={item.id}>
+              <input
+                checked={selectedIds.includes(item.id)}
+                onChange={() =>
+                  setSelectedIds((current) =>
+                    current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+                  )
+                }
+                type="checkbox"
+              />
+              <span>
+                <strong>{item.label}</strong>
+                <em>{item.meta}</em>
+              </span>
+              <b>{item.count}</b>
+            </label>
+          ))}
+        </div>
+      </details>
+    );
+
     return (
       <>
+        <section className="panel quality-selector-panel">
+          <div className="panel-header">
+            <h2>{uiText("质量-鲁棒性筛选", "Quality-robustness filters")}</h2>
+            <Filter size={16} />
+          </div>
+          <div className="panel-body">
+            <div className="quality-selector-grid">
+              {selectorPanel({
+                options: datasetOptions,
+                selectedIds: qualityDatasetIds,
+                setSelectedIds: setQualityDatasetIds,
+                title: uiText("数据集", "Datasets")
+              })}
+              {selectorPanel({
+                options: algorithmOptions,
+                selectedIds: qualityAlgorithmIds,
+                setSelectedIds: setQualityAlgorithmIds,
+                title: uiText("水印算法", "Watermark algorithms")
+              })}
+              {selectorPanel({
+                options: attackOptions.map((item) => ({
+                  id: item.attackPresetId,
+                  label: displayAttackByIds(item.attackPresetId, item.attackMethod, resourceAttackNames),
+                  meta: `${item.attackPresetId} / ${item.attackCategory} / ${item.variantCount} ${uiText("个变体", "variants")}`,
+                  count: item.pointCount
+                })),
+                selectedIds: qualityAttackIds,
+                setSelectedIds: (value) => {
+                  setQualityAttackIds(value);
+                  if (typeof value !== "function") {
+                    setQualityAttackFilter(value.length === 1 ? value[0] : "all");
+                  }
+                },
+                title: uiText("攻击方法", "Attack methods")
+              })}
+            </div>
+            <div className="quality-selection-summary">
+              <span>
+                {filteredCurvePoints.length} {uiText("个曲线点", "curve points")} / {comboSummaries.length}{" "}
+                {uiText("个组合", "combinations")}
+              </span>
+              <span>
+                {selectedAttackCount} {uiText("种攻击", "attacks")} / {selectedVariantCount} {uiText("个变体", "variants")} /{" "}
+                {selectedStrengthCount} {uiText("个强度点", "strength points")}
+              </span>
+              <span>
+                {scoreRows.length} {uiText("个排名算法", "ranked algorithms")}
+                {qualityAttackFilter !== "all" ? ` / ${displayAttack(qualityAttackFilter, resourceAttackNames)}` : ""}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="quality-analysis-grid">
+          <div className="panel">
+            <div className="panel-header">
+              <h2>{t.results.qualityRobustness}</h2>
+              <BarChart3 size={16} />
+            </div>
+            <div className="panel-body">
+              <div className="quality-chart-guide">
+                <span>{uiText("横轴 NQD: 质量损失", "X: NQD quality loss")}</span>
+                <span>{uiText("纵轴 TPR: 检出率", "Y: TPR detection rate")}</span>
+                <span>{uiText("图例: 每个组合独立颜色和形状", "Legend: unique color and shape per combination")}</span>
+                <span>{uiText("点: 强度或变体", "Point: strength or variant")}</span>
+                <span>{uiText("虚线: Q@P95 / Q@P70", "Dashed: Q@P95 / Q@P70")}</span>
+              </div>
+              <RobustnessCurve
+                algorithmLabels={resourceAlgorithmNames}
+                attackLabels={resourceAttackNames}
+                colorDomain={qualitySeriesDomain}
+                curvePoints={filteredCurvePoints}
+                emptyText={t.console.needMultipleStrengths}
+                groupMode="combination"
+                onSelectPoint={(point) => setActiveInsight(makeCurvePointInsight(point))}
+                performanceThresholds={score?.performanceThresholds}
+                pointCaption={uiText("点: 攻击变体 / 强度", "Point: attack variant / strength")}
+                results={results}
+                score={score}
+                selectedAlgorithmIds={qualityAlgorithmIds}
+                selectedAttackPresetIds={qualityAttackIds}
+                selectedDatasetIds={qualityDatasetIds}
+                seriesCaption={uiText("曲线: 数据集 × 水印算法 × 攻击方法", "Series: dataset × watermark × attack")}
+                shapeDomain={qualitySeriesDomain}
+                showCaption={false}
+                showLegend={false}
+              />
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <h2>{uiText("组合清单与图例", "Combination list and legend")}</h2>
+              <Gauge size={16} />
+            </div>
+            <div className="panel-body quality-combo-list">
+              {comboSummaries.map((combo) => (
+                <button
+                  className="quality-combo-row"
+                  key={combo.key}
+                  onClick={() => {
+                    if (!combo.weakestPoint) {
+                      return;
+                    }
+                    setActiveInsight({
+                      kind: "attack",
+                      key: combo.key,
+                      title: `${displayAlgorithm(combo.algorithmId, resourceAlgorithmNames)} / ${displayAttackByIds(combo.attackPresetId, combo.attackMethod, resourceAttackNames)}`,
+                      body: `${combo.datasetId}, ${combo.attackPresetId}, ${formatParamRange(combo.strengthName, combo.strengthMin, combo.strengthMax)}`,
+                      details: [
+                        { label: uiText("数据集", "Dataset"), value: combo.datasetId },
+                        { label: uiText("水印算法", "Watermark"), value: displayAlgorithm(combo.algorithmId, resourceAlgorithmNames) },
+                        { label: uiText("攻击方法", "Attack"), value: displayAttackByIds(combo.attackPresetId, combo.attackMethod, resourceAttackNames) },
+                        { label: uiText("攻击预设", "Preset"), value: combo.attackPresetId },
+                        { label: uiText("变体", "Variant"), value: combo.variantLabel },
+                        { label: uiText("强度范围", "Strength"), value: formatParamRange(combo.strengthName, combo.strengthMin, combo.strengthMax) },
+                        { label: "TPR", value: formatMetric(combo.avgTpr) },
+                        { label: "NQD", value: formatMetric(combo.avgNqd) },
+                        { label: uiText("点数", "Points"), value: String(combo.pointCount) }
+                      ],
+                      meta: `TPR ${formatMetric(combo.avgTpr)}, NQD ${formatMetric(combo.avgNqd)}, ${combo.variantLabel}`
+                    });
+                  }}
+                  type="button"
+                >
+                  <CurveLegendGlyph
+                    color={curveDomainColor(qualitySeriesDomain, combo.key)}
+                    shape={curveDomainShape(qualitySeriesDomain, combo.key)}
+                  />
+                  <span className="combo-watermark">
+                    <strong>{displayAlgorithm(combo.algorithmId, resourceAlgorithmNames)}</strong>
+                    <em>{combo.datasetId}</em>
+                  </span>
+                  <span className="combo-attack">
+                    <strong>{displayAttackByIds(combo.attackPresetId, combo.attackMethod, resourceAttackNames)}</strong>
+                    <em>{displayAttackSubtitle(combo.attackMethod, combo.strengthName)}</em>
+                  </span>
+                  <span className="combo-variant">
+                    <strong>{combo.variantLabel}</strong>
+                    <em>
+                      {formatParamRange(combo.strengthName, combo.strengthMin, combo.strengthMax)}
+                    </em>
+                  </span>
+                </button>
+              ))}
+              {comboSummaries.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+            </div>
+          </div>
+        </section>
+
+      </>
+    );
+  }
+
+  function QualityTab({
+    qualityAttackFilter,
+    results,
+    score,
+    selectedAlgorithmIds,
+    scoreRows,
+    setQualityAttackFilter
+  }: {
+    qualityAttackFilter: string;
+    results: RunResults | null;
+    score: BenchmarkScore | null;
+    selectedAlgorithmIds: string[];
+    scoreRows: BenchmarkLeaderboardRow[];
+    setQualityAttackFilter: (value: string) => void;
+  }) {
+    const visibleCurvePoints = (score?.curvePoints ?? [])
+      .filter((point) => selectedAlgorithmIds.length === 0 || selectedAlgorithmIds.includes(point.algorithmId))
+      .sort((left, right) =>
+        left.algorithmId.localeCompare(right.algorithmId) ||
+        left.attackCategory.localeCompare(right.attackCategory) ||
+        left.attackMethod.localeCompare(right.attackMethod) ||
+        left.attackPresetId.localeCompare(right.attackPresetId) ||
+        (left.attackVariantLabel ?? "default").localeCompare(right.attackVariantLabel ?? "default") ||
+        (left.attackParamStrength ?? left.attackStrength) - (right.attackParamStrength ?? right.attackStrength) ||
+        left.attackStrength - right.attackStrength
+      );
+    const attackOptions = buildQualityAttackOptions(visibleCurvePoints);
+    const activeAttackFilter = attackOptions.some((item) => item.attackPresetId === qualityAttackFilter)
+      ? qualityAttackFilter
+      : "all";
+    const filteredCurvePoints = visibleCurvePoints.filter(
+      (point) => activeAttackFilter === "all" || point.attackPresetId === activeAttackFilter
+    );
+    const attackSummaries = buildQualityAttackSummaries(visibleCurvePoints);
+    const weakestPoint = filteredCurvePoints.reduce<BenchmarkCurvePoint | null>(
+      (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
+      null
+    );
+    const selectedAttackCount = new Set(filteredCurvePoints.map((point) => point.attackPresetId)).size;
+    const selectedStrengthCount = new Set(
+      filteredCurvePoints.map((point) => `${point.attackPresetId}:${point.attackParamStrength ?? point.attackStrength}`)
+    ).size;
+    const selectedVariantCount = new Set(filteredCurvePoints.map((point) => point.attackVariantKey ?? "default")).size;
+
+    return (
+      <>
+        <section className="quality-focus-grid">
+          <div className="quality-focus-card">
+            <span>{uiText("水印算法", "Watermark algorithms")}</span>
+            <strong>{scoreRows.length}</strong>
+            <small>{scoreRows.map((row) => displayAlgorithm(row.algorithmId)).slice(0, 4).join(" / ") || "n/a"}</small>
+          </div>
+          <div className="quality-focus-card">
+            <span>{uiText("当前攻击方法", "Current attack method")}</span>
+            <strong>{selectedAttackCount}</strong>
+            <small>
+              {selectedVariantCount} {uiText("个变体", "variants")} / {selectedStrengthCount} {uiText("个强度点", "strength points")} / {filteredCurvePoints.length} {uiText("个曲线点", "curve points")}
+            </small>
+          </div>
+          <button
+            className="quality-focus-card interactive"
+            disabled={!weakestPoint}
+            onClick={() =>
+              weakestPoint
+                ? setActiveInsight({
+                    kind: "curve",
+                    key: qualityPointKey(weakestPoint),
+                    title: `${displayAlgorithm(weakestPoint.algorithmId)} / ${displayAttack(weakestPoint.attackMethod)}`,
+                    body: `${weakestPoint.attackPresetId}, ${weakestPoint.attackParamStrengthName ?? "strength"} ${formatStrength(weakestPoint.attackParamStrength ?? weakestPoint.attackStrength)}, TPR ${formatMetric(weakestPoint.yTprAtFpr)}`,
+                    meta: `${weakestPoint.attackCategory}, ${variantLabel(weakestPoint)}, NQD ${formatMetric(weakestPoint.xNqd)}`
+                  })
+                : undefined
+            }
+            type="button"
+          >
+            <span>{uiText("最弱鲁棒点", "Weakest robustness point")}</span>
+            <strong>{weakestPoint ? formatMetric(weakestPoint.yTprAtFpr) : "n/a"}</strong>
+            <small>
+              {weakestPoint
+                ? `${displayAlgorithm(weakestPoint.algorithmId)} / ${displayAttack(weakestPoint.attackMethod)}`
+                : "n/a"}
+            </small>
+          </button>
+        </section>
+
+        <section className="panel quality-filter-panel">
+          <div className="panel-header">
+            <h2>{uiText("攻击方法筛选", "Attack method filter")}</h2>
+            <Filter size={16} />
+          </div>
+          <div className="panel-body quality-filter-body">
+            <select
+              className="run-result-select"
+              onChange={(event) => setQualityAttackFilter(event.target.value)}
+              value={activeAttackFilter}
+            >
+              <option value="all">{uiText("全部攻击方法", "All attack methods")}</option>
+              {attackOptions.map((item) => (
+                <option key={item.attackPresetId} value={item.attackPresetId}>
+                  {displayAttack(item.attackMethod)} / {item.attackPresetId} / {item.variantCount} {uiText("个变体", "variants")} / {item.pointCount} {uiText("个点", "points")}
+                </option>
+              ))}
+            </select>
+            <div className="quality-filter-meta">
+              <strong>
+                {activeAttackFilter === "all"
+                  ? uiText("曲线按水印算法分组", "Curves grouped by watermark algorithm")
+                  : uiText("曲线按水印算法 × 攻击变体分组", "Curves grouped by watermark algorithm × attack variant")}
+              </strong>
+              <span>
+                {activeAttackFilter === "all"
+                  ? uiText("选择一个攻击方法后，可以把权重、模型和校正选项拆成不同曲线。", "Pick one attack method to split weights, models, and correction options into separate colors.")
+                  : `${displayAttack(attackOptions.find((item) => item.attackPresetId === activeAttackFilter)?.attackMethod ?? activeAttackFilter)}: ${selectedVariantCount} ${uiText("个变体", "variants")}, ${filteredCurvePoints.length} ${uiText("个点", "points")}`}
+              </span>
+            </div>
+          </div>
+        </section>
+
         <section className="results-grid">
           <div className="panel">
             <div className="panel-header">
@@ -465,9 +1280,21 @@ export default function ResultsPage() {
             <div className="panel-body">
               <RobustnessCurve
                 emptyText={t.console.needMultipleStrengths}
+                onSelectPoint={(point) =>
+                  setActiveInsight({
+                    kind: "curve",
+                    key: `${point.algorithmId}-${point.attackPresetId}-${point.attackStrength}`,
+                    title: `${displayAlgorithm(point.algorithmId)} / ${displayAttack(point.attackMethod ?? point.attackPresetId ?? "")}`,
+                    body: `${point.attackPresetId ?? "n/a"}, ${point.attackParamStrengthName ?? "strength"} ${formatStrength(point.attackParamStrength ?? point.attackStrength)}, TPR ${formatMetric(point.yTprAtFpr)}`,
+                    meta: `${point.attackCategory ?? "n/a"}, ${variantLabel(point)}, NQD ${formatMetric(point.xNqd)}`
+                  })
+                }
+                pointCaption={uiText("点: 攻击变体 / 强度", "Point: attack variant / strength")}
                 results={results}
                 score={score}
+                selectedAttackPresetId={activeAttackFilter}
                 selectedAlgorithmIds={selectedAlgorithmIds}
+                seriesCaption={uiText("曲线: 水印算法", "Series: watermark algorithm")}
               />
             </div>
           </div>
@@ -477,16 +1304,32 @@ export default function ResultsPage() {
               <h2>{t.results.auxiliaryMetrics}</h2>
               <Gauge size={16} />
             </div>
-            <div className="panel-body score-breakdown-grid">
+            <div className="panel-body quality-method-list">
               {scoreRows.map((row) => (
-                <div className="score-breakdown-card" key={row.algorithmId}>
-                  <span>{row.algorithmId}</span>
+                <button
+                  className="quality-method-card"
+                  key={row.algorithmId}
+                  onClick={() => {
+                    setSelectedAlgorithmIds([row.algorithmId]);
+                    setActiveInsight({
+                      kind: "algorithm",
+                      key: row.algorithmId,
+                      title: displayAlgorithm(row.algorithmId),
+                      body: `WRS-v2 ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)}, ${uiText("无攻击保真度", "clean fidelity")} ${formatMetric(row.cleanFidelity)}`,
+                      meta: `${uiText("平均 NQD", "Avg NQD")} ${formatMetric(row.avgNqd)}, ${uiText("物理信道", "physical")} ${formatMetric(row.physicalScore)}`
+                    });
+                  }}
+                  type="button"
+                >
+                  <span>{displayAlgorithm(row.algorithmId)}</span>
                   <strong>{row.wrs == null ? "n/a" : row.wrs.toFixed(1)}</strong>
                   <small>
-                    {t.results.cleanFidelity} {formatMetric(row.cleanFidelity)} · NQD {formatMetric(row.avgNqd)} ·{" "}
-                    {row.runtimeMs == null ? "n/a" : `${(row.runtimeMs / 1000).toFixed(2)}s`}
+                    {row.algorithmId}
                   </small>
-                </div>
+                  <em>
+                    Clean {formatMetric(row.cleanFidelity)} / NQD {formatMetric(row.avgNqd)}
+                  </em>
+                </button>
               ))}
               {scoreRows.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
             </div>
@@ -495,42 +1338,119 @@ export default function ResultsPage() {
 
         <section className="panel results-detail-panel">
           <div className="panel-header">
+            <h2>{uiText("攻击方法拆解", "Attack method breakdown")}</h2>
+            <Gauge size={16} />
+          </div>
+          <div className="panel-note">
+            {attackSummaries.length} {uiText("个有实验结果的攻击方法", "attack methods with experiment results")}
+            {selectedAlgorithmIds.length ? ` / ${scoreRows.length} ${uiText("个已选水印算法", "selected watermark algorithms")}` : ""}
+          </div>
+          <div className="panel-body quality-attack-grid">
+            {attackSummaries.map((item) => (
+              <button
+                className="quality-attack-card"
+                key={item.key}
+                onClick={() => {
+                  setQualityAttackFilter(item.attackPresetId);
+                  if (item.weakestPoint) {
+                    setActiveInsight({
+                        kind: "curve",
+                        key: qualityPointKey(item.weakestPoint),
+                        title: `${displayAttack(item.attackMethod)} / ${displayAlgorithm(item.weakestPoint.algorithmId)}`,
+                        body: `${item.attackPresetId}, ${item.weakestPoint.attackParamStrengthName ?? "strength"} ${formatStrength(item.weakestPoint.attackParamStrength ?? item.weakestPoint.attackStrength)}, TPR ${formatMetric(item.weakestPoint.yTprAtFpr)}`,
+                        meta: `${item.attackCategory}, ${variantLabel(item.weakestPoint)}, NQD ${formatMetric(item.weakestPoint.xNqd)}`
+                    });
+                  }
+                }}
+                type="button"
+              >
+                <span>{item.attackCategory}</span>
+                <strong>{displayAttack(item.attackMethod)}</strong>
+                <small>{item.attackPresetId}</small>
+                <div className="quality-card-metrics">
+                  <b>TPR {formatMetric(item.avgTpr)}</b>
+                  <b>NQD {formatMetric(item.avgNqd)}</b>
+                  <b>{formatParamRange(item.strengthName, item.strengthMin, item.strengthMax)}</b>
+                </div>
+                <em>
+                  {item.algorithmCount} {uiText("个算法", "algorithms")} / {item.pointCount} {uiText("个点", "points")}
+                  {item.weakestPoint ? ` / ${uiText("最弱", "weakest")} ${displayAlgorithm(item.weakestPoint.algorithmId)}` : ""}
+                </em>
+              </button>
+            ))}
+            {attackSummaries.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+          </div>
+        </section>
+
+        <section className="panel results-detail-panel">
+          <div className="panel-header">
             <h2>{t.results.qualityPoints}</h2>
           </div>
-          <div className="panel-body table-scroll">
-            <table className="table compact-table">
+          <div className="panel-body table-scroll quality-points-scroll">
+            <table className="table quality-points-table">
               <thead>
                 <tr>
-                  <th>{t.common.algorithm}</th>
-                  <th>{t.common.attackPreset}</th>
-                  <th>{t.results.category}</th>
+                  <th>{uiText("水印算法", "Watermark algorithm")}</th>
+                  <th>{uiText("攻击方法", "Attack method")}</th>
+                  <th>{uiText("预设 / 类别", "Preset / family")}</th>
+                  <th>{uiText("变体参数", "Variant")}</th>
                   <th>{t.results.strength}</th>
                   <th>{t.results.tprAtFpr}</th>
                   <th>{t.results.nqd}</th>
                 </tr>
               </thead>
               <tbody>
-                {(score?.curvePoints ?? [])
-                  .filter((point) => selectedAlgorithmIds.length === 0 || selectedAlgorithmIds.includes(point.algorithmId))
-                  .map((point) => (
-                    <tr key={`${point.algorithmId}-${point.attackPresetId}-${point.attackStrength}-${point.xNqd}`}>
-                      <td>{point.algorithmId}</td>
-                      <td>{point.attackPresetId}</td>
-                      <td>{point.attackCategory}</td>
-                      <td>{point.attackStrength}</td>
-                      <td>{formatMetric(point.yTprAtFpr)}</td>
-                      <td>{formatMetric(point.xNqd)}</td>
-                    </tr>
-                  ))}
+                {filteredCurvePoints.map((point, index) => (
+                  <tr
+                    className="clickable-row"
+                    key={qualityPointKey(point, index)}
+                    onClick={() =>
+                      setActiveInsight({
+                        kind: "curve",
+                        key: qualityPointKey(point, index),
+                        title: `${displayAlgorithm(point.algorithmId)} / ${displayAttack(point.attackMethod)}`,
+                        body: `${point.attackPresetId}, ${point.attackParamStrengthName ?? "strength"} ${formatStrength(point.attackParamStrength ?? point.attackStrength)}, TPR ${formatMetric(point.yTprAtFpr)}`,
+                        meta: `${point.attackCategory}, ${variantLabel(point)}, NQD ${formatMetric(point.xNqd)}`
+                      })
+                    }
+                  >
+                    <td>
+                      <strong>{displayAlgorithm(point.algorithmId)}</strong>
+                      <span>{point.algorithmId}</span>
+                    </td>
+                    <td>
+                      <strong>{displayAttack(point.attackMethod)}</strong>
+                      <span>{point.attackMethod}</span>
+                    </td>
+                    <td>
+                      <strong>{point.attackPresetId}</strong>
+                      <span>{point.attackCategory}</span>
+                    </td>
+                    <td>
+                      <strong>{variantLabel(point)}</strong>
+                      <span>{formatAttackParams(point.attackParams)}</span>
+                    </td>
+                    <td>
+                      <b className="metric-pill">
+                        {point.attackParamStrengthName ?? "strength"} {formatStrength(point.attackParamStrength ?? point.attackStrength)}
+                      </b>
+                    </td>
+                    <td>
+                      <b className={point.yTprAtFpr < 0.7 ? "metric-pill risk" : "metric-pill ok"}>
+                        {formatMetric(point.yTprAtFpr)}
+                      </b>
+                    </td>
+                    <td>{formatMetric(point.xNqd)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-            {!score?.curvePoints?.length ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+            {!filteredCurvePoints.length ? <div className="empty compact-empty">{t.common.noData}</div> : null}
           </div>
         </section>
       </>
     );
   }
-
   function DebugTab({
     attackOptions,
     debugAttack,
@@ -570,7 +1490,7 @@ export default function ResultsPage() {
         />
         <section className="panel results-detail-panel">
           <div className="panel-header">
-            <h2>{language === "zh" ? "结果单元调试" : "Result unit debug"}</h2>
+              <h2>{language === "zh" ? "结果单元调试" : "Result unit debug"}</h2>
             <Bug size={16} />
           </div>
           <div className="panel-body">
@@ -578,9 +1498,9 @@ export default function ResultsPage() {
               <div className="field-icon-input">
                 <Search size={15} />
                 <input
-                  aria-label={language === "zh" ? "搜索结果单元" : "Search result units"}
-                  onChange={(event) => setDebugSearch(event.target.value)}
-                  placeholder={language === "zh" ? "搜索结果单元" : "Search result units"}
+              aria-label={language === "zh" ? "搜索结果单元" : "Search result units"}
+              onChange={(event) => setDebugSearch(event.target.value)}
+              placeholder={language === "zh" ? "搜索结果单元" : "Search result units"}
                   value={debugSearch}
                 />
               </div>
@@ -609,7 +1529,7 @@ export default function ResultsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>{language === "zh" ? "结果单元" : "Result unit"}</th>
+                  <th>{language === "zh" ? "结果单元" : "Result unit"}</th>
                     <th>{t.common.algorithm}</th>
                     <th>{t.common.attackPreset}</th>
                     <th>Bit Acc.</th>
@@ -674,23 +1594,40 @@ export default function ResultsPage() {
             <th>{t.common.rank}</th>
             <th>{t.common.algorithm}</th>
             <th>{t.common.wrs}</th>
+            <th>{uiText("物理信道", "Physical")}</th>
             <th>{t.results.cleanFidelity}</th>
             <th>{t.results.nqd}</th>
             <th>{t.common.coverage}</th>
+            <th>{uiText("特性标签", "Profile")}</th>
             <th>{t.runs.cells}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.algorithmId}>
+            <tr
+              className="clickable-row"
+              key={row.algorithmId}
+              onClick={() => {
+                setSelectedAlgorithmIds([row.algorithmId]);
+                setActiveInsight({
+                  kind: "algorithm",
+                  key: row.algorithmId,
+                  title: displayAlgorithm(row.algorithmId, resourceAlgorithmNames),
+                  body: `WRS-v2 ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)}, ${uiText("物理信道", "physical")} ${formatMetric(row.physicalScore)}`,
+                  meta: displayProfileTags(row.profileTags, language) || row.worstCategory?.label
+                });
+              }}
+            >
               <td>{row.rank}</td>
-              <td>{row.algorithmId}</td>
+              <td>{displayAlgorithm(row.algorithmId, resourceAlgorithmNames)}</td>
               <td>{row.wrs == null ? "n/a" : row.wrs.toFixed(1)}</td>
+              <td>{formatMetric(row.physicalScore)}</td>
               <td>{formatMetric(row.cleanFidelity)}</td>
               <td>{formatMetric(row.avgNqd)}</td>
               <td>
                 {row.coverage.coveredCategoryCount}/{row.coverage.requiredCategoryCount}
               </td>
+              <td>{displayProfileTags(row.profileTags, language) || (row.worstCategory?.label ?? "n/a")}</td>
               <td>{row.cellCount}</td>
             </tr>
           ))}
@@ -827,6 +1764,609 @@ export default function ResultsPage() {
   }
 }
 
+function reconcileQualitySelection(current: string[], availableIds: string[], fallbackIds: string[]) {
+  const available = new Set(availableIds);
+  const next = current.filter((id) => available.has(id));
+  const normalized = next.length ? next : fallbackIds.filter((id) => available.has(id));
+  return sameStringArray(current, normalized) ? current : normalized;
+}
+
+function qualityCurvePointSort(left: BenchmarkCurvePoint, right: BenchmarkCurvePoint) {
+  return (
+    (left.datasetId || "").localeCompare(right.datasetId || "") ||
+    left.algorithmId.localeCompare(right.algorithmId) ||
+    (left.attackCategory ?? "").localeCompare(right.attackCategory ?? "") ||
+    left.attackMethod.localeCompare(right.attackMethod) ||
+    left.attackPresetId.localeCompare(right.attackPresetId) ||
+    (left.attackVariantLabel ?? "default").localeCompare(right.attackVariantLabel ?? "default") ||
+    (left.attackParamStrength ?? left.attackStrength) - (right.attackParamStrength ?? right.attackStrength) ||
+    left.attackStrength - right.attackStrength
+  );
+}
+
+function buildQualityDatasetOptions(points: BenchmarkCurvePoint[]): QualitySelectorOption[] {
+  const grouped = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    const datasetId = point.datasetId || "unknown";
+    grouped.set(datasetId, [...(grouped.get(datasetId) ?? []), point]);
+  }
+  return Array.from(grouped.entries())
+    .map(([datasetId, items]) => ({
+      id: datasetId,
+      label: datasetId,
+      meta: `${new Set(items.map((point) => point.algorithmId)).size} algorithms / ${
+        new Set(items.map((point) => point.attackPresetId)).size
+      } attacks`,
+      count: items.length
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function buildQualityAlgorithmOptions(
+  points: BenchmarkCurvePoint[],
+  algorithmNames: Record<string, string> = {}
+): QualitySelectorOption[] {
+  const grouped = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    grouped.set(point.algorithmId, [...(grouped.get(point.algorithmId) ?? []), point]);
+  }
+  return Array.from(grouped.entries())
+    .map(([algorithmId, items]) => ({
+      id: algorithmId,
+      label: displayAlgorithm(algorithmId, algorithmNames),
+      meta: `${algorithmId} / ${new Set(items.map((point) => point.attackPresetId)).size} attacks`,
+      count: items.length
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function buildQualityAttackSummaries(points: BenchmarkCurvePoint[]): QualityAttackSummary[] {
+  const grouped = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    const key = `${point.attackCategory}:${point.attackPresetId}:${point.attackMethod}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), point]);
+  }
+  return Array.from(grouped.entries())
+    .map(([key, items]) => {
+      const strengths = items.map((point) => point.attackParamStrength ?? point.attackStrength);
+      const strengthName = items.find((point) => point.attackParamStrengthName)?.attackParamStrengthName ?? "strength";
+      const weakestPoint = items.reduce<BenchmarkCurvePoint | null>(
+        (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
+        null
+      );
+      return {
+        key,
+        attackPresetId: items[0]?.attackPresetId ?? "n/a",
+        attackMethod: items[0]?.attackMethod ?? "n/a",
+        attackCategory: items[0]?.attackCategory ?? "n/a",
+        algorithmCount: new Set(items.map((point) => point.algorithmId)).size,
+        pointCount: items.length,
+        strengthName,
+        strengthMin: Math.min(...strengths),
+        strengthMax: Math.max(...strengths),
+        avgTpr: meanNumber(items.map((point) => point.yTprAtFpr)),
+        avgNqd: meanNumber(items.map((point) => point.xNqd)),
+        weakestPoint
+      };
+    })
+    .sort((left, right) =>
+      (left.avgTpr ?? 1) - (right.avgTpr ?? 1) ||
+      (right.avgNqd ?? 0) - (left.avgNqd ?? 0) ||
+      left.attackMethod.localeCompare(right.attackMethod)
+    );
+}
+
+function buildQualityComboSummaries(points: BenchmarkCurvePoint[]): QualityComboSummary[] {
+  const grouped = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    const key = qualityComboKey(point);
+    grouped.set(key, [...(grouped.get(key) ?? []), point]);
+  }
+  return Array.from(grouped.entries()).map(([key, items]) => {
+    const strengths = items.map((point) => point.attackParamStrength ?? point.attackStrength);
+    const weakestPoint = items.reduce<BenchmarkCurvePoint | null>(
+      (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
+      null
+    );
+    const first = items[0];
+    const strengthName = items.find((point) => point.attackParamStrengthName)?.attackParamStrengthName ?? "strength";
+    return {
+      key,
+      datasetId: first?.datasetId || "unknown",
+      algorithmId: first?.algorithmId ?? "n/a",
+      attackPresetId: first?.attackPresetId ?? "n/a",
+      attackMethod: first?.attackMethod ?? "n/a",
+      attackCategory: first?.attackCategory ?? "n/a",
+      variantLabel: first ? variantLabel(first) : "default",
+      pointCount: items.length,
+      strengthName,
+      strengthMin: Math.min(...strengths),
+      strengthMax: Math.max(...strengths),
+      avgTpr: meanNumber(items.map((point) => point.yTprAtFpr)),
+      avgNqd: meanNumber(items.map((point) => point.xNqd)),
+      weakestPoint
+    };
+  });
+}
+
+function buildQualityAttackOptions(points: BenchmarkCurvePoint[]): QualityAttackOption[] {
+  const grouped = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    grouped.set(point.attackPresetId, [...(grouped.get(point.attackPresetId) ?? []), point]);
+  }
+  return Array.from(grouped.entries())
+    .map(([attackPresetId, items]) => ({
+      attackPresetId,
+      attackMethod: items[0]?.attackMethod ?? attackPresetId,
+      attackCategory: items[0]?.attackCategory ?? "unknown",
+      pointCount: items.length,
+      variantCount: new Set(items.map((point) => point.attackVariantKey ?? "default")).size
+    }))
+    .sort(
+      (left, right) =>
+        left.attackCategory.localeCompare(right.attackCategory) ||
+        left.attackMethod.localeCompare(right.attackMethod) ||
+        left.attackPresetId.localeCompare(right.attackPresetId)
+    );
+}
+
+const RESULT_ALGORITHM_LABELS: Record<string, string> = {
+  "invisible-watermark-dwtdct": "DWT-DCT",
+  "invisible-watermark-dwtdctsvd": "DWT-DCT-SVD",
+  "invisible-watermark-rivagan": "RivaGAN",
+  "traditional-spread-dct": "DCT",
+  chunkyseal: "ChunkySeal",
+  cin: "CIN",
+  dwsf: "DWSF",
+  hidden: "HiDDeN",
+  invismark: "InvisMark",
+  maskwm: "MaskWM",
+  mbrs: "MBRS",
+  pimog: "PIMoG",
+  pixelseal: "PixelSeal",
+  stegastamp: "StegaStamp",
+  trustmark: "TrustMark",
+  videoseal: "VideoSeal",
+  vine: "VINE",
+  wam: "WAM"
+};
+
+const RESULT_ATTACK_LABELS: Record<string, string> = {
+  brightness: "亮度调整",
+  contrast: "对比度调整",
+  gaussian_blur: "高斯模糊",
+  gaussian_noise: "高斯噪声",
+  jpeg: "JPEG 压缩",
+  resize: "缩放",
+  resized_crop: "缩放裁剪",
+  rotation: "旋转",
+  erasing: "区域擦除",
+  screen_shoot: "屏幕拍摄信道",
+  print_camera: "打印拍摄信道",
+  combined_physical: "组合物理信道",
+  "2x_regen": "2 轮扩散再生成",
+  "4x_regen": "4 轮扩散再生成",
+  regen_diffusion: "扩散再生成",
+  regen_vae: "VAE 重建",
+  noise_to_image: "噪声到图像再生成",
+  image_to_vedio: "图像到视频再生成",
+  cew_e1: "自动色调增强",
+  cew_e2: "暖色鲜艳增强",
+  cew_e3: "胶片褪色增强",
+  cew_e4: "局部清晰 HDR",
+  cew_c1: "自动修复超分",
+  cew_c2: "色彩修饰超分",
+  cew_c3: "细节增强超分",
+  cew_c4: "完整增强链",
+  cew_d1: "自动补光",
+  cew_d2: "自动白平衡",
+  cew_d3: "自适应 AI 色彩",
+  cew_d4: "低光细节增强",
+  cew_d5: "AI 去噪",
+  cew_s1: "Real-ESRGAN 超分",
+  cew_s2: "SwinIR 超分",
+  cew_s3: "BSRGAN 超分"
+};
+
+const RESULT_PROFILE_TAG_LABELS: Record<string, string> = {
+  "physical-robust": "物理鲁棒",
+  "screen-specialist": "屏摄专长",
+  "print-specialist": "打印专长",
+  "combined-fragile": "组合攻击脆弱",
+  "quality-first": "保真优先",
+  "fast-lightweight": "轻量快速",
+  "geometry-fragile": "几何脆弱"
+};
+
+const RESULT_ATTACK_ENGLISH_LABELS: Record<string, string> = {
+  brightness: "Brightness",
+  contrast: "Contrast",
+  gaussian_blur: "Gaussian Blur",
+  gaussian_noise: "Gaussian Noise",
+  jpeg: "JPEG Compression",
+  resize: "Resize",
+  resized_crop: "Resized Crop",
+  rotation: "Rotation",
+  erasing: "Random Erasing",
+  screen_shoot: "PIMoG-style Screen-Camera",
+  print_camera: "CamMark-style Print-Camera",
+  combined_physical: "Combined Physical Channel",
+  "2x_regen": "2-pass Diffusion Regeneration",
+  "4x_regen": "4-pass Diffusion Regeneration",
+  regen_diffusion: "WAVES Diffusion Regeneration",
+  regen_vae: "CompressAI VAE Reconstruction",
+  noise_to_image: "CtrlRegen Noise-to-Image",
+  image_to_vedio: "NFPA Image-to-Video",
+  cew_e1: "Auto-Tone",
+  cew_e2: "Warm-Vivid",
+  cew_e3: "Film-Faded",
+  cew_e4: "Local-Clarity HDR",
+  cew_c1: "Basic Auto-Fix SR",
+  cew_c2: "Color Retouch SR",
+  cew_c3: "Detail Enhance SR",
+  cew_c4: "Full Enhancement Chain",
+  cew_d1: "Zero-DCE++ Auto-Light",
+  cew_d2: "DeepWB Auto-WhiteBalance",
+  cew_d3: "Image-Adaptive 3D LUT",
+  cew_d4: "Retinexformer Low-Light Enhance",
+  cew_d5: "NAFNet/Restormer AI-Denoise",
+  cew_s1: "Real-ESRGAN",
+  cew_s2: "SwinIR",
+  cew_s3: "BSRGAN"
+};
+
+function displayAlgorithm(id: string, resourceNames: Record<string, string> = {}): string {
+  const normalized = id.replace(/^alg[-_]/, "");
+  const fallback = RESULT_ALGORITHM_LABELS[normalized] ?? displayTokenLabel(normalized);
+  return resourceNames[id] ?? resourceNames[normalized] ?? resolveWatermarkDisplayName(normalized, fallback);
+}
+
+function displayAttack(value: string, resourceNames: Record<string, string> = {}): string {
+  const normalized = value.replace(/^atk[-_]/, "").replace(/-/g, "_");
+  return (
+    resourceNames[value] ??
+    resourceNames[normalized] ??
+    RESULT_ATTACK_LABELS[normalized] ??
+    displayParameterizedAttack(normalized) ??
+    displayTokenLabel(normalized)
+  );
+}
+
+function displayAttackByIds(presetId: string, method: string, resourceNames: Record<string, string> = {}): string {
+  return resourceNames[presetId] ?? displayAttack(method || presetId, resourceNames);
+}
+
+function displayAttackPoint(point: BenchmarkCurvePoint, resourceNames: Record<string, string> = {}): string {
+  return displayAttackByIds(point.attackPresetId, point.attackMethod ?? point.attackPresetId, resourceNames);
+}
+
+function displayAttackSubtitle(method: string, strengthName: string): string {
+  const normalized = method.replace(/^atk[-_]/, "").replace(/-/g, "_");
+  const english = RESULT_ATTACK_ENGLISH_LABELS[normalized] ?? displayTokenLabel(normalized);
+  const mapping =
+    strengthName === "strength" || strengthName === "step"
+      ? "0-1 强度映射"
+      : strengthName === "scale"
+        ? "倍率参数"
+        : strengthName === "xy"
+          ? "固定/离散参数"
+          : `${strengthName} 参数`;
+  return `${english} · ${mapping}`;
+}
+
+function displayProfileTags(tags: string[] | undefined, language: string): string {
+  if (!tags?.length) {
+    return "";
+  }
+  return tags
+    .map((tag) => (language === "zh" ? RESULT_PROFILE_TAG_LABELS[tag] ?? displayTokenLabel(tag) : displayTokenLabel(tag)))
+    .join(language === "zh" ? "，" : ", ");
+}
+
+function localizedAlgorithmResourceName(language: string, algorithm: AlgorithmVersion): string {
+  const method = algorithm.method ?? algorithm.id.replace(/^alg[-_]/, "");
+  return resolveWatermarkDisplayName(method, algorithm.name || RESULT_ALGORITHM_LABELS[method] || displayAlgorithm(algorithm.id));
+}
+
+function localizedAttackResourceName(language: string, attack: AttackPreset): string {
+  if (language === "zh") {
+    return RESULT_ATTACK_LABELS[attack.method] ?? displayParameterizedAttack(attack.method) ?? attack.name;
+  }
+  return attack.name || RESULT_ATTACK_LABELS[attack.method] || displayParameterizedAttack(attack.method) || displayAttack(attack.method);
+}
+
+function displayParameterizedAttack(method: string): string | null {
+  const normalized = method.replace(/-/g, "_");
+  const viewpoint = normalized.match(/^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)$/);
+  if (viewpoint) {
+    const motion: Record<string, string> = {
+      rotate: "鏃嬭浆",
+      rotate_forward: "鍓嶅悜鏃嬭浆",
+      shake: "鏅冨姩",
+      swipe: "骞崇Щ"
+    };
+    const target = viewpoint[2] === "point" ? "瀹氱偣" : "鍓嶈";
+    return `3D 瑙嗚閲嶆覆鏌?${motion[viewpoint[1]] ?? viewpoint[1]}-${target}`;
+  }
+  return null;
+}
+
+function displayTokenLabel(value: string): string {
+  const special: Record<string, string> = {
+    cin: "CIN",
+    dct: "DCT",
+    dwsf: "DWSF",
+    dwt: "DWT",
+    dwtdct: "DWT-DCT",
+    dwtdctsvd: "DWT-DCT-SVD",
+    mbrs: "MBRS",
+    nsn: "NSN",
+    pimog: "PIMoG",
+    riva: "Riva",
+    svd: "SVD",
+    wam: "WAM"
+  };
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => special[part.toLowerCase()] ?? part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatStrength(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  return value.toFixed(2).replace(/\.00$/, "").replace(/0$/, "");
+}
+
+function formatCount(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  return Math.round(value).toLocaleString();
+}
+
+function rankingMetricLabels(language: string): Record<RankingMetric, string> {
+  return {
+    waves: language === "zh" ? "WAVES 评分" : "WAVES score",
+    robustness: language === "zh" ? "鲁棒性" : "Robustness",
+    fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
+    complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity"
+  };
+}
+
+function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric): BenchmarkLeaderboardRow[] {
+  return [...rows].sort((left, right) => {
+    const leftScore = rankingMetricScore(left, metric, rows);
+    const rightScore = rankingMetricScore(right, metric, rows);
+    return rightScore - leftScore || left.algorithmId.localeCompare(right.algorithmId);
+  });
+}
+
+function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): number {
+  if (metric === "waves") {
+    return finiteOrNull(row.wrs) ?? 0;
+  }
+  if (metric === "robustness") {
+    return (robustnessScore(row) ?? 0) * 100;
+  }
+  if (metric === "fidelity") {
+    return (finiteOrNull(row.cleanFidelity) ?? 0) * 100;
+  }
+  return (algorithmSimplicityScore(row, rows) ?? 0) * 100;
+}
+
+function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): string {
+  if (metric === "waves") {
+    return row.wrs == null ? "n/a" : row.wrs.toFixed(1);
+  }
+  if (metric === "robustness") {
+    const value = robustnessScore(row);
+    return value == null ? "n/a" : (value * 100).toFixed(1);
+  }
+  if (metric === "fidelity") {
+    return formatMetric(row.cleanFidelity);
+  }
+  const score = algorithmSimplicityScore(row, rows);
+  return score == null ? "n/a" : (score * 100).toFixed(1);
+}
+
+function rankingMetricMeta(
+  row: BenchmarkLeaderboardRow,
+  metric: RankingMetric,
+  rows: BenchmarkLeaderboardRow[],
+  language: string
+): string {
+  if (metric === "complexity") {
+    const runtime = row.runtimeMs == null ? "n/a" : `${row.runtimeMs.toFixed(1)} ms`;
+    return language === "zh" ? `运行时间 ${runtime}，越快复杂度评分越高` : `runtime ${runtime}; faster means higher score`;
+  }
+  if (metric === "fidelity") {
+    return `Clean ${formatMetric(row.cleanFidelity)} / NQD ${formatMetric(row.avgNqd)}`;
+  }
+  if (metric === "robustness") {
+    return language === "zh" ? "按攻击类平均鲁棒得分排序" : "Mean robustness over attack families";
+  }
+  return `WRS ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)} / ${row.protocolStatus}`;
+}
+
+function robustnessScore(row: BenchmarkLeaderboardRow): number | null {
+  return meanNumber(
+    row.categoryScores
+      .filter((category) => category.covered)
+      .map((category) => category.score)
+  );
+}
+
+function buildRadarCategories(
+  rows: BenchmarkLeaderboardRow[],
+  score: BenchmarkScore | null,
+  language: string,
+  allRows: BenchmarkLeaderboardRow[]
+): BenchmarkCategoryScore[] {
+  const specs = radarAxisSpecs(language);
+  return specs.map((spec) => {
+    const values = rows.map((row) => radarAxisScore(row, spec.key, score, allRows));
+    const value = meanNumber(values);
+    return {
+      key: spec.key,
+      label: spec.label,
+      score: value,
+      meanNqd: meanNumber(rows.map((row) => row.avgNqd)),
+      cellCount: rows.reduce((total, row) => total + row.cellCount, 0),
+      covered: value != null
+    };
+  });
+}
+
+function radarAxisSpecs(language: string): Array<{ key: string; label: string }> {
+  if (language === "zh") {
+    return [
+      { key: "classic-distortion", label: "经典失真" },
+      { key: "physical-channel", label: "物理信道" },
+      { key: "viewpoint-3d", label: "3D 视角重渲染" },
+      { key: "regeneration", label: "再生成" },
+      { key: "consumer-enhancement", label: "消费级增强" },
+      { key: "clean-fidelity", label: "无攻击保真度" },
+      { key: "algorithm-complexity", label: "算法复杂度" }
+    ];
+  }
+  return [
+    { key: "classic-distortion", label: "Classic Distortion" },
+    { key: "physical-channel", label: "Physical Channel" },
+    { key: "viewpoint-3d", label: "3D Viewpoint" },
+    { key: "regeneration", label: "Regeneration" },
+    { key: "consumer-enhancement", label: "Consumer Enhancement" },
+    { key: "clean-fidelity", label: "Clean Fidelity" },
+    { key: "algorithm-complexity", label: "Algorithm Complexity" }
+  ];
+}
+
+function radarAxisScore(
+  row: BenchmarkLeaderboardRow,
+  axisKey: string,
+  score: BenchmarkScore | null,
+  allRows: BenchmarkLeaderboardRow[]
+): number | null {
+  if (axisKey === "classic-distortion") {
+    return categoryScore(row, ["distortion-single", "distortion-combination"]);
+  }
+  if (axisKey === "physical-channel") {
+    return categoryScore(row, ["physical-screen", "physical-print", "physical-combined"]);
+  }
+  if (axisKey === "viewpoint-3d") {
+    return curvePointScore(row, score, (point) => isViewpointAttack(point));
+  }
+  if (axisKey === "regeneration") {
+    return curvePointScore(row, score, (point) => point.attackCategory === "regeneration" && !isViewpointAttack(point)) ?? categoryScore(row, ["regeneration"]);
+  }
+  if (axisKey === "consumer-enhancement") {
+    return categoryScore(row, ["consumer-enhancement-workflow"]);
+  }
+  if (axisKey === "clean-fidelity") {
+    return finiteOrNull(row.cleanFidelity);
+  }
+  return algorithmSimplicityScore(row, allRows);
+}
+
+function categoryScore(row: BenchmarkLeaderboardRow, keys: string[]): number | null {
+  return meanNumber(
+    keys
+      .map((key) => row.categoryScores.find((category) => category.key === key)?.score)
+      .filter((value) => value != null)
+  );
+}
+
+function curvePointScore(
+  row: BenchmarkLeaderboardRow,
+  score: BenchmarkScore | null,
+  predicate: (point: BenchmarkCurvePoint) => boolean
+): number | null {
+  return meanNumber(
+    (score?.curvePoints ?? [])
+      .filter((point) => point.algorithmId === row.algorithmId && predicate(point))
+      .map((point) => point.yTprAtFpr)
+  );
+}
+
+function isViewpointAttack(point: BenchmarkCurvePoint): boolean {
+  const haystack = `${point.attackPresetId} ${point.attackMethod} ${point.attackCategory}`.toLowerCase();
+  return haystack.includes("3d") || haystack.includes("viewpoint") || haystack.includes("rerender");
+}
+
+function algorithmSimplicityScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
+  const runtime = finiteOrNull(row.runtimeMs);
+  const runtimes = rows.map((item) => finiteOrNull(item.runtimeMs)).filter((value): value is number => value != null && value > 0);
+  if (runtime == null || runtime <= 0 || runtimes.length === 0) {
+    return null;
+  }
+  const min = Math.min(...runtimes);
+  const max = Math.max(...runtimes);
+  if (max <= min) {
+    return 1;
+  }
+  const logMin = Math.log1p(min);
+  const logMax = Math.log1p(max);
+  const ratio = (Math.log1p(runtime) - logMin) / Math.max(0.0001, logMax - logMin);
+  return Math.max(0, Math.min(1, 1 - ratio));
+}
+
+function finiteOrNull(value: number | null | undefined): number | null {
+  return value == null || !Number.isFinite(value) ? null : value;
+}
+
+function meanNumber(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (!finite.length) {
+    return null;
+  }
+  return finite.reduce((total, value) => total + value, 0) / finite.length;
+}
+
+function formatParamRange(name: string, min: number, max: number): string {
+  const label = name || "strength";
+  return min === max ? `${label} ${formatStrength(min)}` : `${label} ${formatStrength(min)}-${formatStrength(max)}`;
+}
+
+function variantLabel(point: BenchmarkCurvePoint): string {
+  const label = point.attackVariantLabel?.trim();
+  return label && label !== "default" ? label : "default";
+}
+
+function formatAttackParams(params: Record<string, unknown> | undefined): string {
+  if (!params) {
+    return "default";
+  }
+  const entries = Object.entries(params)
+    .filter(([, value]) => value != null)
+    .sort(([left], [right]) => left.localeCompare(right));
+  if (!entries.length) {
+    return "default";
+  }
+  return entries.map(([key, value]) => `${key}=${String(value)}`).join(", ");
+}
+
+function qualityComboKey(point: BenchmarkCurvePoint): string {
+  return [point.datasetId || "unknown", point.algorithmId, point.attackPresetId, point.attackVariantKey ?? "default"].join(":");
+}
+
+function qualityPointKey(point: BenchmarkCurvePoint, index?: number): string {
+  return [
+    point.datasetId || "unknown",
+    point.algorithmId,
+    point.attackCategory,
+    point.attackMethod,
+    point.attackPresetId,
+    point.attackVariantKey ?? "default",
+    point.attackParamStrength ?? point.attackStrength,
+    point.attackStrength,
+    point.xNqd,
+    point.yTprAtFpr,
+    index ?? ""
+  ].join(":");
+}
+
 function buildRunSummary(results: RunResults | null, score: BenchmarkScore | null) {
   const units = results?.resultUnits ?? [];
   const algorithmCount = new Set(units.map((unit) => unit.algorithmId)).size;
@@ -909,6 +2449,16 @@ function tabLabel(tab: ResultsTab, t: ReturnType<typeof useLanguage>["t"]) {
     return t.results.qualityRobustness;
   }
   return t.results.debugResultUnits;
+}
+
+function formatThreshold(value: number | "inf" | "-inf" | null | undefined) {
+  if (value === "inf") {
+    return "inf";
+  }
+  if (value === "-inf") {
+    return "-inf";
+  }
+  return formatMetric(value ?? null);
 }
 
 function exportResultsCsv(results: RunResults | null, score: BenchmarkScore | null) {
