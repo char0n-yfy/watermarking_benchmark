@@ -33,7 +33,7 @@ export function AppShell({ active, children }: { active: ActiveNav; children: Re
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div>
+        <div className="sidebar-main">
           <div className="brand">
             <div className="brand-mark">
               <FlaskConical size={17} />

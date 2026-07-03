@@ -53,7 +53,10 @@ button {
 
 .shell {
   display: grid;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   grid-template-columns: 252px minmax(0, 1fr);
 }
 
@@ -62,9 +65,18 @@ button {
   flex-direction: column;
   justify-content: space-between;
   gap: 18px;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid var(--line);
   background: #eef5f1;
   padding: 20px 14px;
+}
+
+.sidebar-main {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .brand {
@@ -149,6 +161,7 @@ button {
 
 .language-panel {
   display: grid;
+  flex: 0 0 auto;
   gap: 8px;
 }
 
@@ -188,7 +201,11 @@ button {
 }
 
 .main {
+  height: 100vh;
+  height: 100dvh;
   min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 24px;
 }
 
@@ -5758,28 +5775,47 @@ a.button {
 @media (max-width: 1180px) {
   .shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .sidebar {
     flex-direction: row;
     align-items: center;
+    min-width: 0;
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding: 12px;
   }
 
+  .sidebar-main {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
   .brand {
+    flex: 0 0 auto;
     margin-bottom: 0;
   }
 
   .nav {
     grid-auto-flow: column;
     grid-auto-columns: max-content;
+    min-width: 0;
     overflow-x: auto;
   }
 
   .language-panel {
+    flex: 0 0 150px;
     min-width: 150px;
+  }
+
+  .main {
+    height: auto;
+    min-height: 0;
   }
 
   .console-grid {
@@ -5975,12 +6011,19 @@ a.button {
     flex-direction: column;
   }
 
+  .sidebar-main {
+    display: grid;
+    overflow-x: visible;
+    overflow-y: visible;
+  }
+
   .nav {
     grid-auto-flow: row;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 
   .language-panel {
+    flex: 0 0 auto;
     min-width: 0;
   }
 

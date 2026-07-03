@@ -138,6 +138,8 @@ type TuningForm = {
 
 type TuningPoint = {
   key: string;
+  eventIndex: number;
+  eventTime: number;
   stage: string;
   stageLabel: string;
   scopeLabel: string;
@@ -160,6 +162,8 @@ type TuningProcessGroup = {
   failedCount: number;
   bestThroughput: number;
   latestThroughput: number;
+  latestEventIndex: number;
+  latestEventTime: number;
 };
 
 type TuningCatalogStats = {
@@ -882,8 +886,16 @@ function tuningPoints(job: ParallelTuningJob | null, names: Record<string, strin
       const scopeLabel = tuningScopeLabel(stage);
       const label = tuningMethodLabel(method, stage, names);
       const groupKey = `${stage}:${method}`;
+      const parsedTime =
+        typeof event.timestamp === "number"
+          ? event.timestamp
+          : typeof event.timestamp === "string"
+            ? Date.parse(event.timestamp)
+            : NaN;
       return {
         key: `${event.timestamp ?? "point"}-${index}`,
+        eventIndex: index,
+        eventTime: Number.isFinite(parsedTime) ? parsedTime : index,
         stage,
         stageLabel,
         scopeLabel,
@@ -920,10 +932,17 @@ function buildTuningProcessGroups(points: TuningPoint[]): TuningProcessGroup[] {
         successCount: successful.length,
         failedCount: items.length - successful.length,
         bestThroughput,
-        latestThroughput: latest.throughput
+        latestThroughput: latest.throughput,
+        latestEventIndex: latest.eventIndex,
+        latestEventTime: latest.eventTime
       } satisfies TuningProcessGroup;
     })
-    .sort((left, right) => right.bestThroughput - left.bestThroughput || right.pointCount - left.pointCount);
+    .sort(
+      (left, right) =>
+        right.latestEventTime - left.latestEventTime ||
+        right.latestEventIndex - left.latestEventIndex ||
+        right.bestThroughput - left.bestThroughput
+    );
 }
 
 function variantCountForAttack(config: SavedExperimentConfig | undefined, attackId: string) {
