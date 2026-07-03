@@ -248,14 +248,14 @@ export function RobustnessCurve({
           const points = item.points.map((point) => `${xFor(point.strength)},${yFor(point.accuracy)}`).join(" ");
           return (
             <g key={item.algorithmId}>
-              <polyline fill="none" points={points} stroke={color} strokeWidth="3" />
+              <polyline fill="none" points={points} stroke={color} strokeWidth="2.2" />
               {item.points.map((point) => (
                 <circle
                   cx={xFor(point.strength)}
                   cy={yFor(point.accuracy)}
                   fill={color}
                   key={`${item.algorithmId}-${point.strength}`}
-                  r="4"
+                  r="3.4"
                 />
               ))}
             </g>
@@ -308,16 +308,28 @@ function ScoreCurve({
   showLegend: boolean;
 }) {
   const width = 540;
-  const height = 220;
-  const pad = 34;
+  const height = 260;
+  const leftPad = 48;
+  const rightPad = 30;
+  const topPad = 28;
+  const bottomPad = 52;
+  const plotWidth = width - leftPad - rightPad;
+  const plotHeight = height - topPad - bottomPad;
+  const axisY = height - bottomPad;
+  const plotCenterY = topPad + plotHeight / 2;
   const colorKeys = colorDomain?.length ? colorDomain : Array.from(new Set(series.map((item) => item.colorKey)));
   const shapeKeys = shapeDomain?.length ? shapeDomain : Array.from(new Set(series.map((item) => item.shapeKey)));
   const colorFor = (colorKey: string) => curveDomainColor(colorKeys, colorKey);
   const shapeFor = (shapeKey: string) => curveDomainShape(shapeKeys, shapeKey);
   const pointSizeStats = collectPointSizeStats(series);
   const referenceThresholds = normalizePerformanceThresholds(performanceThresholds);
-  const xFor = (nqd: number) => pad + Math.max(0, Math.min(1.2, nqd)) / 1.2 * (width - pad * 2);
-  const yFor = (tpr: number) => height - pad - Math.max(0, Math.min(1, tpr)) * (height - pad * 2);
+  const domain = buildScoreCurveDomain(series, referenceThresholds);
+  const xTicks = buildAxisTicks(domain.xMin, domain.xMax, 4);
+  const yTicks = buildAxisTicks(domain.yMin, domain.yMax, 4);
+  const xFor = (nqd: number) =>
+    leftPad + ((Math.max(domain.xMin, Math.min(domain.xMax, nqd)) - domain.xMin) / Math.max(0.0001, domain.xMax - domain.xMin)) * plotWidth;
+  const yFor = (tpr: number) =>
+    axisY - ((Math.max(domain.yMin, Math.min(domain.yMax, tpr)) - domain.yMin) / Math.max(0.0001, domain.yMax - domain.yMin)) * plotHeight;
   const labelAlgorithm = (algorithmId: string) => labelFromMap(algorithmLabels, algorithmId) ?? cleanLabel(algorithmId);
   const labelAttack = (point: BenchmarkCurvePoint) =>
     labelFromMap(attackLabels, point.attackPresetId) ??
@@ -333,39 +345,39 @@ function ScoreCurve({
         </div>
       ) : null}
       <svg className="curve-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
-        <line className="chart-axis" x1={pad} x2={pad} y1={pad} y2={height - pad} />
-        <line className="chart-axis" x1={pad} x2={width - pad} y1={height - pad} y2={height - pad} />
-        {[0, 0.25, 0.5, 0.75, 1].map((tick) => (
+        <line className="chart-axis" x1={leftPad} x2={leftPad} y1={topPad} y2={axisY} />
+        <line className="chart-axis" x1={leftPad} x2={width - rightPad} y1={axisY} y2={axisY} />
+        {yTicks.map((tick) => (
           <g key={tick}>
-            <line className="chart-grid" x1={pad} x2={width - pad} y1={yFor(tick)} y2={yFor(tick)} />
-            <text className="chart-label" x={8} y={yFor(tick) + 4}>
+            <line className="chart-grid" x1={leftPad} x2={width - rightPad} y1={yFor(tick)} y2={yFor(tick)} />
+            <text className="chart-label" textAnchor="end" x={leftPad - 8} y={yFor(tick) + 4}>
               {Math.round(tick * 100)}
             </text>
           </g>
         ))}
-        {[0, 0.4, 0.8, 1.2].map((tick) => (
-          <text className="chart-label" key={tick} x={xFor(tick) - 8} y={height - 8}>
-            {tick.toFixed(1)}
+        {xTicks.map((tick) => (
+          <text className="chart-label" key={tick} textAnchor="middle" x={xFor(tick)} y={height - 30}>
+            {formatAxisTick(tick, xTicks)}
           </text>
         ))}
         {referenceThresholds.map((threshold) => (
           <g key={threshold}>
             <line
               className="chart-reference-line"
-              x1={pad}
-              x2={width - pad}
+              x1={leftPad}
+              x2={width - rightPad}
               y1={yFor(threshold)}
               y2={yFor(threshold)}
             />
-            <text className="chart-reference-label" textAnchor="end" x={width - pad - 4} y={yFor(threshold) - 5}>
+            <text className="chart-reference-label" textAnchor="end" x={width - rightPad - 4} y={yFor(threshold) - 5}>
               Q@P{Math.round(threshold * 100)}
             </text>
           </g>
         ))}
-        <text className="chart-label" x={width - 88} y={height - 8}>
-          NQD
+        <text className="chart-axis-title" textAnchor="middle" x={leftPad + plotWidth / 2} y={height - 8}>
+          Normalized Quality Degradation
         </text>
-        <text className="chart-label" x={6} y={24}>
+        <text className="chart-axis-title" textAnchor="middle" transform={`rotate(-90 14 ${plotCenterY})`} x={14} y={plotCenterY}>
           TPR
         </text>
         {series.map((item) => {
@@ -374,7 +386,7 @@ function ScoreCurve({
           const points = item.points.map((point) => `${xFor(point.x)},${yFor(point.y)}`).join(" ");
           return (
             <g key={item.id}>
-              <polyline fill="none" points={points} stroke={color} strokeWidth="3" />
+              <polyline fill="none" points={points} stroke={color} strokeWidth="2.2" />
               {item.points.map((point, pointIndex) => (
                 <g key={`${item.id}-${point.raw.attackPresetId}-${point.raw.attackParamStrength ?? point.raw.attackStrength}-${point.x}-${pointIndex}`}>
                   <title>
@@ -421,7 +433,7 @@ function PointGlyph({
   color,
   onClick,
   shape,
-  size = 4.4,
+  size = 3.6,
   x,
   y
 }: {
@@ -481,19 +493,19 @@ function PointGlyph({
     const rotate = shape === "cross" ? `rotate(45 ${x} ${y})` : undefined;
     return (
       <g className={className} onClick={onClick} transform={rotate}>
-        <line stroke={color} strokeLinecap="round" strokeWidth="2.4" x1={x - size} x2={x + size} y1={y} y2={y} />
-        <line stroke={color} strokeLinecap="round" strokeWidth="2.4" x1={x} x2={x} y1={y - size} y2={y + size} />
+        <line stroke={color} strokeLinecap="round" strokeWidth="1.9" x1={x - size} x2={x + size} y1={y} y2={y} />
+        <line stroke={color} strokeLinecap="round" strokeWidth="1.9" x1={x} x2={x} y1={y - size} y2={y + size} />
       </g>
     );
   }
   if (shape === "star") {
-    return <path className={className} d={starPath(x, y, size + 2, size * 0.48)} fill={color} onClick={onClick} />;
+    return <path className={className} d={starPath(x, y, size + 1.4, size * 0.48)} fill={color} onClick={onClick} />;
   }
   if (shape === "hexagon") {
-    return <path className={className} d={polygonPath(x, y, size + 1.6, 6)} fill={color} onClick={onClick} />;
+    return <path className={className} d={polygonPath(x, y, size + 1.1, 6)} fill={color} onClick={onClick} />;
   }
   if (shape === "pentagon") {
-    return <path className={className} d={polygonPath(x, y, size + 1.8, 5)} fill={color} onClick={onClick} />;
+    return <path className={className} d={polygonPath(x, y, size + 1.2, 5)} fill={color} onClick={onClick} />;
   }
   return <circle className={className} cx={x} cy={y} fill={color} onClick={onClick} r={size} />;
 }
@@ -581,6 +593,106 @@ function normalizePerformanceThresholds(thresholds: number[] | undefined): numbe
   ).sort((left, right) => right - left);
 }
 
+function buildScoreCurveDomain(
+  series: Array<{
+    points: Array<{ x: number; y: number }>;
+  }>,
+  referenceThresholds: number[]
+) {
+  const xValues = series
+    .flatMap((item) => item.points.map((point) => point.x))
+    .filter((value): value is number => Number.isFinite(value));
+  const yValues = [
+    ...series.flatMap((item) => item.points.map((point) => point.y)),
+    ...referenceThresholds
+  ].filter((value): value is number => Number.isFinite(value));
+  const xDomain = paddedDomain(xValues, { floor: 0, fallbackMax: 1.2, minSpan: 0.12, padRatio: 0.08 });
+  const yDomain = paddedDomain(yValues, { floor: 0, ceiling: 1, fallbackMax: 1, minSpan: 0.16, padRatio: 0.1 });
+  return {
+    xMin: xDomain.min,
+    xMax: xDomain.max,
+    yMin: yDomain.min,
+    yMax: yDomain.max
+  };
+}
+
+function paddedDomain(
+  values: number[],
+  {
+    ceiling,
+    fallbackMax,
+    floor,
+    minSpan,
+    padRatio
+  }: { ceiling?: number; fallbackMax: number; floor: number; minSpan: number; padRatio: number }
+) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) {
+    return { min: floor, max: fallbackMax };
+  }
+  let min = Math.min(...finite);
+  let max = Math.max(...finite);
+  if (max - min < minSpan) {
+    const center = (min + max) / 2;
+    min = center - minSpan / 2;
+    max = center + minSpan / 2;
+  }
+  const padding = Math.max((max - min) * padRatio, minSpan * 0.25);
+  min -= padding;
+  max += padding;
+  min = Math.max(floor, min);
+  if (ceiling != null) {
+    max = Math.min(ceiling, max);
+    if (max - min < minSpan) {
+      min = Math.max(floor, max - minSpan);
+    }
+  }
+  if (max - min < minSpan) {
+    max = min + minSpan;
+  }
+  return { min, max };
+}
+
+function buildAxisTicks(min: number, max: number, targetCount: number): number[] {
+  const span = Math.max(0.0001, max - min);
+  const step = niceTickStep(span / Math.max(1, targetCount));
+  const first = Math.ceil(min / step) * step;
+  const ticks: number[] = [];
+  for (let value = first; value <= max + step * 0.5; value += step) {
+    const rounded = Number(value.toFixed(6));
+    if (rounded >= min - 0.000001 && rounded <= max + 0.000001) {
+      ticks.push(rounded);
+    }
+  }
+  if (ticks.length < 2) {
+    ticks.push(Number(min.toFixed(6)), Number(max.toFixed(6)));
+  }
+  return Array.from(new Set(ticks)).sort((left, right) => left - right);
+}
+
+function formatAxisTick(value: number, ticks: number[]): string {
+  const intervals = ticks.slice(1).map((tick, index) => Math.abs(tick - ticks[index]));
+  const smallestInterval = intervals.length ? Math.min(...intervals) : 1;
+  const decimals = smallestInterval < 0.1 ? 2 : 1;
+  return value.toFixed(decimals);
+}
+
+function niceTickStep(rawStep: number): number {
+  const exponent = Math.floor(Math.log10(Math.max(rawStep, 0.000001)));
+  const base = 10 ** exponent;
+  const fraction = rawStep / base;
+  if (fraction <= 1) {
+    return base;
+  }
+  if (fraction <= 2) {
+    return base * 2;
+  }
+  if (fraction <= 5) {
+    return base * 5;
+  }
+  return base * 10;
+}
+
 function collectPointSizeStats(
   series: Array<{
     points: Array<{ raw: BenchmarkCurvePoint }>;
@@ -618,13 +730,13 @@ function pointRadius(
     stats.sampleMax != null &&
     stats.sampleMax > stats.sampleMin
   ) {
-    return scaleRadius(sampleCount, stats.sampleMin, stats.sampleMax, 4.2, 7.2);
+    return scaleRadius(sampleCount, stats.sampleMin, stats.sampleMax, 3.4, 5.6);
   }
   const strength = point.attackParamStrength ?? point.attackStrength;
   if (Number.isFinite(strength) && stats.strengthMin != null && stats.strengthMax != null) {
-    return scaleRadius(strength, stats.strengthMin, stats.strengthMax, 4.0, 6.8);
+    return scaleRadius(strength, stats.strengthMin, stats.strengthMax, 3.2, 5.4);
   }
-  return 4.4;
+  return 3.6;
 }
 
 function scaleRadius(value: number, min: number, max: number, minRadius: number, maxRadius: number): number {
