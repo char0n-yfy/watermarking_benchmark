@@ -447,6 +447,7 @@ export interface ParallelTuningSummary {
   watermarkCpuWorkerOverrides?: string[];
   fixedAttackBatchOverrides?: string[];
   inheritedAttackBatchOverrides?: string[];
+  qualityPerceptualBatchOverrides?: string[];
   viewpointRerenderingTuningPolicy?: {
     primaryMethod?: string;
     appliesTo?: string[];
@@ -456,7 +457,9 @@ export interface ParallelTuningSummary {
     appliesTo?: string[];
   };
   qualityBestCpuWorkers?: Record<string, unknown> | null;
+  qualityBestCpuWorkersByMetric?: Record<string, Record<string, unknown> | null> | null;
   qualityBestPerceptualBatch?: Record<string, unknown> | null;
+  qualityBestPerceptualBatchByMetric?: Record<string, Record<string, unknown> | null> | null;
   [key: string]: unknown;
 }
 

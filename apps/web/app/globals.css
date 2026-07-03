@@ -5522,6 +5522,49 @@ a.button {
   line-height: 1.5;
 }
 
+.tuning-quality-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tuning-quality-metric {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid #dfe8e3;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 9px;
+  font-size: 12px;
+}
+
+.tuning-quality-metric input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: #0f8b7f;
+}
+
+.tuning-quality-metric span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.tuning-quality-metric strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.tuning-quality-metric small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
 .tuning-method-panel {
   display: grid;
   min-width: 0;
@@ -6626,6 +6669,7 @@ a.button {
   .tuning-config-grid,
   .tuning-stage-detail-grid,
   .tuning-stage-metrics,
+  .tuning-quality-metrics,
   .run-stage-content-grid,
   .run-monitor-grid,
   .run-monitor-overview,

@@ -2,9 +2,9 @@
   "name": "watermarking-benchmark-platform",
   "private": true,
   "scripts": {
-    "dev:web": "pnpm --filter @wm-bench/web dev",
+    "dev:web": "WATCHPACK_POLLING=true pnpm --filter @wm-bench/web dev",
     "build:web": "pnpm --filter @wm-bench/web build",
     "lint:web": "pnpm --filter @wm-bench/web lint"
   },
-  "packageManager": "pnpm@11.7.0"
+  "packageManager": "pnpm@10.23.0"
 }

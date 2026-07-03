@@ -89,7 +89,17 @@ class SmallOutputWatermark(BaseWatermark):
 
 class WatermarkBatchingTest(unittest.TestCase):
     def test_base_watermark_chunks_batch_impls(self) -> None:
-        previous = os.environ.get("WM_BENCH_WATERMARK_BATCH_SIZE")
+        env_keys = (
+            "WM_BENCH_WATERMARK_BATCH_SIZE",
+            "WM_BENCH_WATERMARK_BATCH_SIZES",
+            "WM_BENCH_WATERMARK_EMBED_BATCH_SIZE",
+            "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
+            "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZE",
+            "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES",
+        )
+        previous = {key: os.environ.get(key) for key in env_keys}
+        for key in env_keys:
+            os.environ.pop(key, None)
         os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = "2"
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -125,10 +135,11 @@ class WatermarkBatchingTest(unittest.TestCase):
                 self.assertEqual(embed_results[0].metadata["execution"]["configuredBatchSize"], 2)
                 self.assertEqual(embed_results[-1].metadata["execution"]["actualBatchSize"], 1)
         finally:
-            if previous is None:
-                os.environ.pop("WM_BENCH_WATERMARK_BATCH_SIZE", None)
-            else:
-                os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = previous
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_base_watermark_uses_stage_specific_batch_sizes(self) -> None:
         previous = {
@@ -174,7 +185,17 @@ class WatermarkBatchingTest(unittest.TestCase):
                     os.environ[key] = value
 
     def test_base_watermark_records_batch_fallback(self) -> None:
-        previous = os.environ.get("WM_BENCH_WATERMARK_BATCH_SIZE")
+        env_keys = (
+            "WM_BENCH_WATERMARK_BATCH_SIZE",
+            "WM_BENCH_WATERMARK_BATCH_SIZES",
+            "WM_BENCH_WATERMARK_EMBED_BATCH_SIZE",
+            "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
+            "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZE",
+            "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES",
+        )
+        previous = {key: os.environ.get(key) for key in env_keys}
+        for key in env_keys:
+            os.environ.pop(key, None)
         os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = "2"
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -199,10 +220,11 @@ class WatermarkBatchingTest(unittest.TestCase):
                 self.assertTrue(all(result.metadata["execution"]["fallback"] for result in extract_results))
                 self.assertIn("RuntimeError", embed_results[0].metadata["execution"]["fallbackReason"])
         finally:
-            if previous is None:
-                os.environ.pop("WM_BENCH_WATERMARK_BATCH_SIZE", None)
-            else:
-                os.environ["WM_BENCH_WATERMARK_BATCH_SIZE"] = previous
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_base_watermark_canonicalizes_embed_outputs_and_records_decode_sizes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

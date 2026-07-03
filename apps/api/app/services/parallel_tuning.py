@@ -29,6 +29,9 @@ from evaluator.watermarking.runner import (
 
 from app.services.resources import iter_image_paths, scan_dataset_resources
 from app.services.scoring import (
+    CPU_QUALITY_METRICS,
+    PERCEPTUAL_QUALITY_METRICS,
+    TUNABLE_QUALITY_METRICS,
     _compute_cpu_quality_metrics_batch_with_profile,
     _compute_perceptual_metrics_batch_with_profile,
 )
@@ -62,6 +65,7 @@ NAMED_OVERRIDE_ENV_KEYS = {
     "WM_BENCH_WATERMARK_CPU_WORKERS_BY_METHOD",
     "WM_BENCH_ATTACK_BATCH_SIZES",
     "WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD",
+    "WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC",
     "WM_BENCH_PERCEPTUAL_BATCH_SIZES",
 }
 
@@ -286,6 +290,7 @@ class TuningRequest:
     tune_watermarks: bool = True
     tune_attacks: bool = True
     tune_quality: bool = True
+    quality_metrics: list[str] = field(default_factory=lambda: list(TUNABLE_QUALITY_METRICS))
     watermark_methods: list[str] = field(default_factory=list)
     attack_methods: list[str] = field(default_factory=list)
     include_viewpoint_3d_attacks: bool = False
@@ -315,6 +320,12 @@ class TuningRequest:
         if auto_expand:
             sample_count = max(sample_count, max_batch_size * candidate_batch_count)
         search_strategy = str(payload.get("searchStrategy") or "single_pass").strip().lower() or "single_pass"
+        raw_quality_metrics = payload.get("qualityMetrics")
+        quality_metrics = _unique_preserving_order(
+            metric
+            for metric in (str(item) for item in (raw_quality_metrics or TUNABLE_QUALITY_METRICS))
+            if metric in TUNABLE_QUALITY_METRICS
+        )
         return cls(
             mode=mode,
             sample_count=sample_count,
@@ -334,6 +345,7 @@ class TuningRequest:
             tune_watermarks=bool(payload.get("tuneWatermarks", True)),
             tune_attacks=bool(payload.get("tuneAttacks", True)),
             tune_quality=bool(payload.get("tuneQuality", True)),
+            quality_metrics=quality_metrics,
             watermark_methods=[str(item) for item in payload.get("watermarkMethods") or [] if str(item)],
             attack_methods=[str(item) for item in payload.get("attackMethods") or [] if str(item)],
             include_viewpoint_3d_attacks=bool(payload.get("includeViewpoint3dAttacks", False)),
@@ -359,6 +371,7 @@ class TuningRequest:
             "tuneWatermarks": self.tune_watermarks,
             "tuneAttacks": self.tune_attacks,
             "tuneQuality": self.tune_quality,
+            "qualityMetrics": self.quality_metrics,
             "watermarkMethods": self.watermark_methods,
             "attackMethods": self.attack_methods,
             "includeViewpoint3dAttacks": self.include_viewpoint_3d_attacks,
@@ -814,7 +827,9 @@ class ParallelTuningService:
             methods = self._attack_methods_for_tuning(request)
             total += len(methods) * max(1, batch_steps)
         if request.tune_quality:
-            total += worker_steps + batch_steps
+            cpu_metric_count = len([metric for metric in request.quality_metrics if metric in CPU_QUALITY_METRICS])
+            perceptual_metric_count = len([metric for metric in request.quality_metrics if metric in PERCEPTUAL_QUALITY_METRICS])
+            total += (cpu_metric_count * worker_steps) + (perceptual_metric_count * batch_steps)
         return max(1, total)
 
     def _estimate_search_steps(self, request: TuningRequest, candidates: list[int]) -> int:
@@ -1613,7 +1628,15 @@ class ParallelTuningService:
         return entry
 
     def _benchmark_quality(self, job_id: str, request: TuningRequest, input_dir: Path) -> JsonDict:
-        record: JsonDict = {"cpuWorkers": [], "perceptualBatch": [], "_stepCount": 0}
+        cpu_metrics = tuple(metric for metric in CPU_QUALITY_METRICS if metric in request.quality_metrics)
+        perceptual_metrics = tuple(metric for metric in PERCEPTUAL_QUALITY_METRICS if metric in request.quality_metrics)
+        record: JsonDict = {
+            "cpuWorkers": [],
+            "cpuWorkersByMetric": {metric: [] for metric in cpu_metrics},
+            "perceptualBatch": [],
+            "perceptualBatchByMetric": {metric: [] for metric in perceptual_metrics},
+            "_stepCount": 0,
+        }
 
         def quality_pairs(
             stage: str,
@@ -1634,17 +1657,18 @@ class ParallelTuningService:
             paths = iter_image_paths(limited_input_dir)
             return [(path, path) for path in paths], effective_count, limited_dir_to_clean
 
-        def run_quality_cpu(workers: int, sample_count: int, measurement_phase: str) -> JsonDict:
+        def run_quality_cpu(metric: str, workers: int, sample_count: int, measurement_phase: str) -> JsonDict:
             os.environ["WM_BENCH_QUALITY_CPU_WORKERS"] = str(workers)
+            _set_named_override("WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC", metric, workers)
             pairs, effective_count, limited_dir_to_clean = quality_pairs(
-                "quality_cpu",
+                f"quality_{metric}",
                 workers,
                 sample_count,
                 measurement_phase,
             )
             started = time.perf_counter()
             try:
-                metrics, profile = _compute_cpu_quality_metrics_batch_with_profile(pairs)
+                metrics, profile = _compute_cpu_quality_metrics_batch_with_profile(pairs, metrics=(metric,))
                 elapsed = time.perf_counter() - started
                 ok = len(metrics) == len(pairs)
                 error = None
@@ -1657,6 +1681,7 @@ class ParallelTuningService:
                 if limited_dir_to_clean is not None:
                     _remove_tree(limited_dir_to_clean)
             return {
+                "metric": metric,
                 "workers": workers,
                 "measurementPhase": measurement_phase,
                 "sampleCount": effective_count,
@@ -1667,34 +1692,43 @@ class ParallelTuningService:
                 "profile": profile,
             }
 
-        def remember_quality_cpu(entry: JsonDict) -> None:
-            entry["method"] = "quality_cpu"
-            entry["stage"] = "quality_cpu"
+        def remember_quality_cpu(metric: str, entry: JsonDict) -> None:
+            entry["metric"] = metric
+            entry["method"] = f"quality_{metric}"
+            entry["stage"] = f"quality_{metric}"
             record["cpuWorkers"].append(entry)
+            record["cpuWorkersByMetric"].setdefault(metric, []).append(entry)
             record["_stepCount"] += int(entry.get("repeatCount") or 1)
-            self._event(job_id, "quality_cpu", f"quality CPU workers={entry.get('workers')}", entry)
+            self._event(job_id, f"quality_{metric}", f"{metric} workers={entry.get('workers')}", entry)
 
-        self._search_numeric_candidates(
-            job_id=job_id,
-            request=request,
-            initial_candidates=_candidates_up_to(request.worker_candidates, request.max_worker_count),
-            max_value=request.max_worker_count,
-            value_key="workers",
-            run_once=run_quality_cpu,
-            on_entry=remember_quality_cpu,
-        )
+        for metric in cpu_metrics:
+            self._search_numeric_candidates(
+                job_id=job_id,
+                request=request,
+                initial_candidates=_candidates_up_to(request.worker_candidates, request.max_worker_count),
+                max_value=request.max_worker_count,
+                value_key="workers",
+                run_once=lambda workers, sample_count, measurement_phase, metric=metric: run_quality_cpu(
+                    metric,
+                    workers,
+                    sample_count,
+                    measurement_phase,
+                ),
+                on_entry=lambda entry, metric=metric: remember_quality_cpu(metric, entry),
+            )
 
-        def run_perceptual(batch_size: int, sample_count: int, measurement_phase: str) -> JsonDict:
+        def run_perceptual(metric: str, batch_size: int, sample_count: int, measurement_phase: str) -> JsonDict:
             os.environ["WM_BENCH_PERCEPTUAL_BATCH_SIZE"] = str(batch_size)
+            _set_named_override("WM_BENCH_PERCEPTUAL_BATCH_SIZES", metric, batch_size)
             pairs, effective_count, limited_dir_to_clean = quality_pairs(
-                "quality_perceptual",
+                f"quality_{metric}",
                 batch_size,
                 sample_count,
                 measurement_phase,
             )
             started = time.perf_counter()
             try:
-                metrics, profile = _compute_perceptual_metrics_batch_with_profile(pairs)
+                metrics, profile = _compute_perceptual_metrics_batch_with_profile(pairs, metrics=(metric,))
                 elapsed = time.perf_counter() - started
                 ok = len(metrics) == len(pairs)
                 error = None
@@ -1707,6 +1741,7 @@ class ParallelTuningService:
                 if limited_dir_to_clean is not None:
                     _remove_tree(limited_dir_to_clean)
             return {
+                "metric": metric,
                 "batchSize": batch_size,
                 "measurementPhase": measurement_phase,
                 "sampleCount": effective_count,
@@ -1717,24 +1752,40 @@ class ParallelTuningService:
                 "profile": profile,
             }
 
-        def remember_perceptual(entry: JsonDict) -> None:
-            entry["method"] = "quality_perceptual"
-            entry["stage"] = "quality_perceptual"
+        def remember_perceptual(metric: str, entry: JsonDict) -> None:
+            entry["metric"] = metric
+            entry["method"] = f"quality_{metric}"
+            entry["stage"] = f"quality_{metric}"
             record["perceptualBatch"].append(entry)
+            record["perceptualBatchByMetric"].setdefault(metric, []).append(entry)
             record["_stepCount"] += int(entry.get("repeatCount") or 1)
-            self._event(job_id, "quality_perceptual", f"perceptual batch={entry.get('batchSize')}", entry)
+            self._event(job_id, f"quality_{metric}", f"{metric} batch={entry.get('batchSize')}", entry)
 
-        self._search_numeric_candidates(
-            job_id=job_id,
-            request=request,
-            initial_candidates=_candidates_up_to(request.batch_candidates, request.max_batch_size),
-            max_value=request.max_batch_size,
-            value_key="batchSize",
-            run_once=run_perceptual,
-            on_entry=remember_perceptual,
-        )
+        for metric in perceptual_metrics:
+            self._search_numeric_candidates(
+                job_id=job_id,
+                request=request,
+                initial_candidates=_candidates_up_to(request.batch_candidates, request.max_batch_size),
+                max_value=request.max_batch_size,
+                value_key="batchSize",
+                run_once=lambda batch_size, sample_count, measurement_phase, metric=metric: run_perceptual(
+                    metric,
+                    batch_size,
+                    sample_count,
+                    measurement_phase,
+                ),
+                on_entry=lambda entry, metric=metric: remember_perceptual(metric, entry),
+            )
         record["bestCpuWorkers"] = _best_by_throughput(record["cpuWorkers"])
+        record["bestCpuWorkersByMetric"] = {
+            metric: _best_by_throughput(record["cpuWorkersByMetric"].get(metric, []))
+            for metric in cpu_metrics
+        }
         record["bestPerceptualBatch"] = _best_by_throughput(record["perceptualBatch"])
+        record["bestPerceptualBatchByMetric"] = {
+            metric: _best_by_throughput(record["perceptualBatchByMetric"].get(metric, []))
+            for metric in perceptual_metrics
+        }
         return record
 
     def _build_summary(self, report: JsonDict) -> JsonDict:
@@ -1743,6 +1794,8 @@ class ParallelTuningService:
         watermark_cpu_overrides: list[str] = []
         attack_batch_overrides: list[str] = []
         attack_cpu_overrides: list[str] = []
+        quality_cpu_worker_overrides: list[str] = []
+        perceptual_batch_overrides: list[str] = []
         inherited_attack_batch_overrides: list[str] = []
         seen_attack_batch_methods: set[str] = set()
 
@@ -1812,10 +1865,28 @@ class ParallelTuningService:
         if attack_cpu_overrides:
             env_updates["WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD"] = ",".join(attack_cpu_overrides)
         best_quality_cpu = quality.get("bestCpuWorkers") if isinstance(quality, dict) else None
+        best_quality_cpu_by_metric = quality.get("bestCpuWorkersByMetric") if isinstance(quality, dict) else None
         best_perceptual = quality.get("bestPerceptualBatch") if isinstance(quality, dict) else None
-        if isinstance(best_quality_cpu, dict):
+        best_perceptual_by_metric = (
+            quality.get("bestPerceptualBatchByMetric") if isinstance(quality, dict) else None
+        )
+        if isinstance(best_perceptual_by_metric, dict):
+            for metric in ("lpips", "dists"):
+                metric_best = best_perceptual_by_metric.get(metric)
+                if isinstance(metric_best, dict) and metric_best.get("batchSize") is not None:
+                    perceptual_batch_overrides.append(f"{metric}={metric_best['batchSize']}")
+        if isinstance(best_quality_cpu_by_metric, dict):
+            for metric in CPU_QUALITY_METRICS:
+                metric_best = best_quality_cpu_by_metric.get(metric)
+                if isinstance(metric_best, dict) and metric_best.get("workers") is not None:
+                    quality_cpu_worker_overrides.append(f"{metric}={metric_best['workers']}")
+        if quality_cpu_worker_overrides:
+            env_updates["WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC"] = ",".join(quality_cpu_worker_overrides)
+        elif isinstance(best_quality_cpu, dict):
             env_updates["WM_BENCH_QUALITY_CPU_WORKERS"] = str(best_quality_cpu["workers"])
-        if isinstance(best_perceptual, dict):
+        if perceptual_batch_overrides:
+            env_updates["WM_BENCH_PERCEPTUAL_BATCH_SIZES"] = ",".join(perceptual_batch_overrides)
+        elif isinstance(best_perceptual, dict):
             env_updates["WM_BENCH_PERCEPTUAL_BATCH_SIZE"] = str(best_perceptual["batchSize"])
         return {
             "envUpdates": env_updates,
@@ -1826,6 +1897,8 @@ class ParallelTuningService:
             "fixedAttackBatchOverrides": [f"{method}={batch_size}" for method, batch_size in FIXED_ATTACK_BATCH_OVERRIDES.items()],
             "inheritedAttackBatchOverrides": inherited_attack_batch_overrides,
             "attackCpuWorkerOverrides": attack_cpu_overrides,
+            "qualityCpuWorkerOverrides": quality_cpu_worker_overrides,
+            "qualityPerceptualBatchOverrides": perceptual_batch_overrides,
             "viewpointRerenderingTuningPolicy": {
                 "primaryMethod": VIEWPOINT_RERENDERING_PRIMARY_METHOD,
                 "appliesTo": self._viewpoint_rerendering_methods(),
@@ -1835,6 +1908,8 @@ class ParallelTuningService:
                 "appliesTo": self._diffusion_regeneration_methods(),
             },
             "qualityBestCpuWorkers": best_quality_cpu,
+            "qualityBestCpuWorkersByMetric": best_quality_cpu_by_metric,
             "qualityBestPerceptualBatch": best_perceptual,
+            "qualityBestPerceptualBatchByMetric": best_perceptual_by_metric,
             "reportPath": str(self.root / str(report["jobId"]) / "report.json"),
         }

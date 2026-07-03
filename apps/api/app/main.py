@@ -30,6 +30,7 @@ from .services.resources import (
     list_watermark_resources,
     scan_dataset_resources,
 )
+from .services.scoring import PROTOCOL_ID
 from .services.weight_download import WeightDownloadService
 from .services.system_metrics import collect_system_metrics, warmup_cpu_power_sensors
 
@@ -527,7 +528,7 @@ def create_app() -> FastAPI:
         if protocol_id is None and web_out.exists():
             return exported_page_response("leaderboard")
         try:
-            return service.list_leaderboard(protocol_id or "waves-official-detection-v1")
+            return service.list_leaderboard(protocol_id or PROTOCOL_ID)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

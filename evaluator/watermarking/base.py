@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -12,6 +12,12 @@ from evaluator.image_protocol import (
     canonicalize_image_file_in_place,
     first_metadata_size,
     image_size,
+)
+from evaluator.image_batch_io import (
+    AsyncImageSavePool,
+    ImageBatchPrefetcher,
+    prefetch_rgb_batch,
+    suspend_image_save_pool,
 )
 from evaluator.execution import (
     ExecutionProfile,
@@ -94,6 +100,7 @@ class BaseWatermark:
     description = ""
     output_ext = ".png"
     thread_safe_parallel = False
+    uses_batch_image_io = False
 
     def __init__(self, **params: Any) -> None:
         self.params: JsonDict = dict(params)
@@ -290,70 +297,105 @@ class BaseWatermark:
                 for input_path, output_path, context in normalized
             ]
 
-        results: list[WatermarkEmbedResult] = []
+        results_by_index: list[WatermarkEmbedResult | None] = [None] * len(normalized)
+        deferred_payloads: list[
+            tuple[int, Path, Path, WatermarkContext, JsonDict, ExecutionProfile, float]
+        ] = []
         batch_config = self._batch_config("embed")
         batch_size = batch_config.value
-        for offset in range(0, len(normalized), batch_size):
-            chunk = normalized[offset : offset + batch_size]
-            for _input_path, output_path, _context in chunk:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-            profile = self._execution_profile(
-                stage="watermark_embed",
-                mode="batch",
-                job_count=len(normalized),
-                device=chunk[0][2].device if chunk else None,
-                configured_batch_size=batch_size,
-                actual_batch_size=len(chunk),
-                supports_batch=True,
-                config={"batchSize": batch_config.to_json()},
-            )
-            started = time.perf_counter()
-            try:
-                metadatas = [dict(metadata) for metadata in self.embed_batch_impl(chunk)]
-                if len(metadatas) != len(chunk):
-                    raise ValueError(
-                        f"embed_batch_impl returned {len(metadatas)} results for {len(chunk)} jobs"
-                    )
-            except Exception as exc:
-                fallback_profile = self._execution_profile(
+        with AsyncImageSavePool() as save_pool, ImageBatchPrefetcher(
+            enabled=bool(getattr(self, "uses_batch_image_io", False))
+        ) as prefetcher:
+            for offset in range(0, len(normalized), batch_size):
+                indexed_chunk = list(enumerate(normalized[offset : offset + batch_size], start=offset))
+                chunk = [job for _index, job in indexed_chunk]
+                next_chunk = normalized[offset + batch_size : offset + (2 * batch_size)]
+                prefetch_rgb_batch(input_path for input_path, _output_path, _context in next_chunk)
+                for _input_path, output_path, _context in chunk:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                profile = self._execution_profile(
                     stage="watermark_embed",
-                    mode="batch_fallback_serial",
+                    mode="batch",
                     job_count=len(normalized),
                     device=chunk[0][2].device if chunk else None,
                     configured_batch_size=batch_size,
                     actual_batch_size=len(chunk),
                     supports_batch=True,
-                    fallback=True,
-                    fallback_reason=f"{type(exc).__name__}: {exc}",
-                    config={"batchSize": batch_config.to_json()},
+                    config={
+                        "batchSize": batch_config.to_json(),
+                        "asyncImageSave": save_pool.profile(),
+                        "imagePrefetch": prefetcher.profile(),
+                    },
                 )
-                results.extend(
-                    replace_result_execution(self.embed(input_path, output_path, context), fallback_profile)
-                    for input_path, output_path, context in chunk
-                )
-                continue
-
-            result_payloads: list[tuple[Path, Path, WatermarkContext, JsonDict]] = []
-            for (input_path, output_path, context), metadata in zip(chunk, metadatas):
-                metadata = self._embed_protocol_metadata(input_path, output_path, metadata)
-                metadata = attach_execution_metadata(metadata, profile)
-                result_payloads.append((input_path, output_path, context, metadata))
-            elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
-            for input_path, output_path, context, metadata in result_payloads:
-                results.append(
-                    WatermarkEmbedResult(
-                        input_path=input_path,
-                        output_path=output_path,
-                        method_name=self.name,
-                        message=context.message,
-                        params=self.params,
-                        elapsed_ms=elapsed_ms,
-                        ok=True,
-                        error=None,
-                        metadata=metadata,
+                started = time.perf_counter()
+                try:
+                    metadatas = [dict(metadata) for metadata in self.embed_batch_impl(chunk)]
+                    if len(metadatas) != len(chunk):
+                        raise ValueError(
+                            f"embed_batch_impl returned {len(metadatas)} results for {len(chunk)} jobs"
+                        )
+                except Exception as exc:
+                    save_pool.flush()
+                    fallback_profile = self._execution_profile(
+                        stage="watermark_embed",
+                        mode="batch_fallback_serial",
+                        job_count=len(normalized),
+                        device=chunk[0][2].device if chunk else None,
+                        configured_batch_size=batch_size,
+                        actual_batch_size=len(chunk),
+                        supports_batch=True,
+                        fallback=True,
+                        fallback_reason=f"{type(exc).__name__}: {exc}",
+                        config={
+                            "batchSize": batch_config.to_json(),
+                            "asyncImageSave": save_pool.profile(),
+                            "imagePrefetch": prefetcher.profile(),
+                        },
                     )
-                )
-        return results
+                    with suspend_image_save_pool():
+                        for index, (input_path, output_path, context) in indexed_chunk:
+                            results_by_index[index] = replace_result_execution(
+                                self.embed(input_path, output_path, context),
+                                fallback_profile,
+                            )
+                    continue
+
+                elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
+                for (index, (input_path, output_path, context)), metadata in zip(indexed_chunk, metadatas):
+                    deferred_payloads.append((index, input_path, output_path, context, metadata, profile, elapsed_ms))
+
+            save_pool.flush()
+            async_save_profile = save_pool.profile()
+            image_prefetch_profile = prefetcher.profile()
+
+        for index, input_path, output_path, context, metadata, profile, elapsed_ms in deferred_payloads:
+            profile = replace(
+                profile,
+                config={
+                    **dict(profile.config),
+                    "asyncImageSave": async_save_profile,
+                    "imagePrefetch": image_prefetch_profile,
+                },
+            )
+            metadata = self._embed_protocol_metadata(input_path, output_path, metadata)
+            metadata = attach_execution_metadata(metadata, profile)
+            results_by_index[index] = WatermarkEmbedResult(
+                input_path=input_path,
+                output_path=output_path,
+                method_name=self.name,
+                message=context.message,
+                params=self.params,
+                elapsed_ms=elapsed_ms,
+                ok=True,
+                error=None,
+                metadata=metadata,
+            )
+
+        return [
+            result
+            for result in results_by_index
+            if result is not None
+        ]
 
     def extract_many(
         self,

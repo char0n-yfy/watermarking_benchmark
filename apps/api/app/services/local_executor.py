@@ -7,7 +7,9 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,9 +20,15 @@ from PIL import Image
 from evaluator.attacks.base import AttackResult
 from evaluator.attacks.registry import ATTACK_REGISTRY
 from evaluator.attacks.runner import AttackJob, get_cached_attack, run_attack_dir_with_attack
-from evaluator.image_protocol import quality_alignment_metadata
+from evaluator.image_protocol import (
+    CANONICAL_IMAGE_SIZE,
+    CANONICAL_OUTPUT_POLICY,
+    CANONICAL_PREPROCESS_POLICY,
+    image_size,
+    quality_alignment_metadata,
+)
 from evaluator.execution import ExecutionProfile, summarize_execution_profiles
-from evaluator.watermarking.base import WatermarkContext, WatermarkEmbedResult
+from evaluator.watermarking.base import WatermarkEmbedResult
 from evaluator.watermarking.runner import WatermarkEmbedJob, get_cached_watermark, run_watermark_embed_dir_with_method
 
 from app.core.storage import safe_segment
@@ -36,6 +44,8 @@ from app.services.experiment_stages import (
     CANONICAL_MANIFEST_NAME,
     DatasetStage,
     DetectionStage,
+    ExtractStage,
+    QualityStage,
     WatermarkStage,
     normalize_attack_params_for_runtime,
 )
@@ -64,7 +74,7 @@ from app.services.local_artifacts import (
     write_json as _write_json,
     write_run_status as _write_run_status,
 )
-from app.services.runtime_resource_manager import RuntimeResourceManager
+from app.services.runtime_resource_manager import RuntimeResourceManager, clear_transient_experiment_caches
 from app.services.scoring import compute_image_quality_pairs_with_profile
 
 
@@ -120,6 +130,64 @@ class MaterializedCellState:
     negative_attack_results: list[Any] = field(default_factory=list)
     positive_extract_results: list[Any] = field(default_factory=list)
     negative_extract_results: list[Any] = field(default_factory=list)
+
+
+def _operation_error(results: list[Any]) -> str | None:
+    errors = [
+        str(getattr(result, "error"))
+        for result in results
+        if not getattr(result, "ok", False) and getattr(result, "error", None)
+    ]
+    return "; ".join(errors) or None
+
+
+def _operation_status(results: list[Any]) -> str:
+    return "failed" if _operation_error(results) else "succeeded"
+
+
+def _stage_status_and_error(
+    results: list[Any],
+    *,
+    fallback_error: str | None = None,
+    expected_count: int = 0,
+) -> tuple[str, str | None]:
+    error = _operation_error(results)
+    if error is None and fallback_error and expected_count > 0 and not results:
+        error = fallback_error
+    return ("failed" if error else "succeeded", error)
+
+
+def _mark_state_operation_result(state: MaterializedCellState, results: list[Any]) -> str | None:
+    error = _operation_error(results)
+    if error:
+        state.status = "failed"
+        state.error = error if state.error is None else f"{state.error}; {error}"
+    return error
+
+
+def _scene_cache_hit_count(results: list[Any]) -> int:
+    total = 0
+    for result in results:
+        metadata = getattr(result, "metadata", None)
+        if isinstance(metadata, dict) and metadata.get("scene_cache_hit") is True:
+            total += 1
+    return total
+
+
+def _quality_pair_cache_hit_count(runtime_profiles: list[JsonDict]) -> int:
+    total = 0
+    for profile in runtime_profiles:
+        metadata = profile.get("metadata") if isinstance(profile, dict) else None
+        execution = metadata.get("execution") if isinstance(metadata, dict) else None
+        if not isinstance(execution, dict):
+            continue
+        if isinstance(execution.get("cacheHits"), int):
+            total += int(execution["cacheHits"])
+            continue
+        details = execution.get("details")
+        if isinstance(details, dict) and isinstance(details.get("cacheHits"), int):
+            total += int(details["cacheHits"])
+    return total
 
 
 @dataclass(frozen=True)
@@ -182,8 +250,73 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
 STOP_INTENT_CANCEL = "cancel"
 STOP_INTENT_PAUSE = "pause"
-MATERIALIZED_CACHE_SCHEMA_VERSION = 4
+MATERIALIZED_CACHE_SCHEMA_VERSION = 5
 _WEIGHT_FINGERPRINT_CACHE: dict[tuple[str, str, str], JsonDict | None] = {}
+
+
+def _quality_pair_cache_enabled() -> bool:
+    return os.getenv("WM_BENCH_QUALITY_PAIR_CACHE", "1") != "0"
+
+
+def _quality_pair_cache_max_entries() -> int:
+    raw = os.getenv("WM_BENCH_QUALITY_PAIR_CACHE_MAX_ENTRIES", "200000")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 200000
+    return max(0, value)
+
+
+def _file_fingerprint(path: Path) -> JsonDict:
+    try:
+        resolved = str(path.resolve())
+    except OSError:
+        resolved = str(path.absolute())
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"path": resolved, "exists": False}
+    return {
+        "path": resolved,
+        "exists": True,
+        "mtimeNs": int(stat.st_mtime_ns),
+        "sizeBytes": int(stat.st_size),
+    }
+
+
+class QualityPairCache:
+    def __init__(self) -> None:
+        self.enabled = _quality_pair_cache_enabled()
+        self.max_entries = _quality_pair_cache_max_entries()
+        self._lock = threading.Lock()
+        self._metrics: OrderedDict[str, JsonDict] = OrderedDict()
+
+    def get(self, key: str) -> JsonDict | None:
+        if not self.enabled or self.max_entries <= 0:
+            return None
+        with self._lock:
+            cached = self._metrics.get(key)
+            if cached is None:
+                return None
+            self._metrics.move_to_end(key)
+            return dict(cached)
+
+    def set(self, key: str, metrics: JsonDict) -> None:
+        if not self.enabled or self.max_entries <= 0:
+            return
+        with self._lock:
+            self._metrics[key] = dict(metrics)
+            self._metrics.move_to_end(key)
+            while len(self._metrics) > self.max_entries:
+                self._metrics.popitem(last=False)
+
+    def stats(self) -> JsonDict:
+        with self._lock:
+            return {
+                "enabled": self.enabled,
+                "maxEntries": self.max_entries,
+                "entryCount": len(self._metrics),
+            }
 
 
 def _stop_status_from_callback(callback: StopIntentCallback | None) -> str | None:
@@ -210,11 +343,10 @@ def _image_sample_id(path: Path, root: Path) -> str:
 
 
 def _image_size(path: Path) -> tuple[int | None, int | None]:
-    try:
-        with Image.open(path) as image:
-            return image.size
-    except Exception:
+    size = image_size(path)
+    if size is None:
         return None, None
+    return int(size[0]), int(size[1])
 
 
 def _is_intermediate_artifact(path: Path) -> bool:
@@ -335,6 +467,93 @@ def _pair_images(reference_dir: Path, target_dir: Path) -> list[tuple[Path, Path
     return pairs
 
 
+def _quality_pair_cache_key(reference_path: Path, target_path: Path) -> str:
+    alignment = quality_alignment_metadata(reference_path, target_path)
+    return json.dumps(
+        {
+            "schema": "quality-pair-v1",
+            "reference": _file_fingerprint(reference_path),
+            "target": _file_fingerprint(target_path),
+            "alignmentPolicy": alignment.get("alignmentPolicy"),
+            "referenceSize": alignment.get("referenceSize"),
+            "targetSize": alignment.get("targetSize"),
+            "alignedSize": alignment.get("alignedSize"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _compute_quality_metrics_with_cache(
+    pairs: list[tuple[Path, Path]],
+    *,
+    quality_pair_cache: QualityPairCache | None = None,
+) -> tuple[list[JsonDict], JsonDict]:
+    if not pairs or quality_pair_cache is None or not quality_pair_cache.enabled:
+        return compute_image_quality_pairs_with_profile(pairs)
+
+    metrics_by_pair: list[JsonDict | None] = [None] * len(pairs)
+    misses: list[tuple[Path, Path]] = []
+    miss_indexes: list[int] = []
+    miss_keys: list[str] = []
+    cache_hits = 0
+    for index, (reference_path, target_path) in enumerate(pairs):
+        key = _quality_pair_cache_key(reference_path, target_path)
+        cached = quality_pair_cache.get(key)
+        if cached is None:
+            misses.append((reference_path, target_path))
+            miss_indexes.append(index)
+            miss_keys.append(key)
+            continue
+        cache_hits += 1
+        metrics_by_pair[index] = cached
+
+    if misses:
+        miss_metrics, miss_profile = compute_image_quality_pairs_with_profile(misses)
+        for index, key, metrics in zip(miss_indexes, miss_keys, miss_metrics):
+            copied = dict(metrics)
+            metrics_by_pair[index] = copied
+            quality_pair_cache.set(key, copied)
+    else:
+        miss_profile = None
+
+    if any(metrics is None for metrics in metrics_by_pair):
+        raise RuntimeError("quality pair cache produced incomplete metrics")
+
+    if misses and cache_hits:
+        execution_profile = {
+            "stage": "quality",
+            "method": "image_quality",
+            "mode": "hybrid_pair_cache",
+            "jobCount": len(pairs),
+            "cacheHits": cache_hits,
+            "cacheMisses": len(misses),
+            "cache": quality_pair_cache.stats(),
+            "missExecution": miss_profile,
+        }
+    elif misses:
+        execution_profile = {
+            **dict(miss_profile or {}),
+            "cacheHits": 0,
+            "cacheMisses": len(misses),
+            "cache": quality_pair_cache.stats(),
+        }
+    else:
+        execution_profile = ExecutionProfile(
+            stage="quality",
+            method="image_quality",
+            mode="pair_cache",
+            job_count=len(pairs),
+            details={
+                "cacheHits": cache_hits,
+                "cacheMisses": 0,
+                "cache": quality_pair_cache.stats(),
+            },
+        ).to_json()
+
+    return [dict(metrics or {}) for metrics in metrics_by_pair], execution_profile
+
+
 def _list_image_files(directory: Path) -> list[Path]:
     return [
         path
@@ -369,6 +588,9 @@ def _dataset_fingerprint(dataset_path: Path) -> str:
     return _stable_json_digest(
         {
             "cacheSchemaVersion": MATERIALIZED_CACHE_SCHEMA_VERSION,
+            "canonicalPreprocessPolicy": CANONICAL_PREPROCESS_POLICY,
+            "canonicalOutputPolicy": CANONICAL_OUTPUT_POLICY,
+            "canonicalImageSize": list(CANONICAL_IMAGE_SIZE),
             "samplePool": "all_sorted_images",
             "entries": entries,
         },
@@ -467,6 +689,23 @@ def _runtime_cache_fingerprint(
         "implementationVersion": MATERIALIZED_CACHE_SCHEMA_VERSION,
         "weights": _resource_weight_fingerprint(resources_root, resource),
     }
+
+
+def _configure_3d_scene_cache_runtime_min(max_samples: int) -> JsonDict:
+    runtime_min = max(0, int(max_samples) * 2)
+    try:
+        import importlib
+
+        module = importlib.import_module("evaluator.attacks.3d_viewpoint_rerendering.attacks")
+        configure = getattr(module, "set_sharp_scene_cache_runtime_min_entries", None)
+        stats = getattr(module, "sharp_scene_cache_stats", None)
+        if callable(configure):
+            configure(runtime_min)
+        if callable(stats):
+            return dict(stats())
+    except Exception as exc:
+        return {"runtimeMinEntries": runtime_min, "error": f"{type(exc).__name__}: {exc}"}
+    return {"runtimeMinEntries": runtime_min}
 
 
 def _sample_count_dir_name(max_samples: int, digest: str) -> str:
@@ -658,12 +897,16 @@ def _record_quality_pairs(
     reference_dir: Path,
     target_dir: Path,
     device: str = "cpu",
+    quality_pair_cache: QualityPairCache | None = None,
 ) -> list[JsonDict]:
     pairs = _pair_images(reference_dir, target_dir)
     started = time.perf_counter()
     target_paths = [target_path for _reference_path, target_path in pairs]
     try:
-        metrics_by_pair, execution_profile = compute_image_quality_pairs_with_profile(pairs)
+        metrics_by_pair, execution_profile = _compute_quality_metrics_with_cache(
+            pairs,
+            quality_pair_cache=quality_pair_cache,
+        )
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
         _record_runtime_profile(
@@ -1159,6 +1402,25 @@ def _write_json_array_file(path: Path, records: list[JsonDict]) -> None:
     path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _reflink_file(source: Path, target: Path) -> bool:
+    if sys.platform != "linux":
+        return False
+    try:
+        import fcntl
+
+        ficlone = 0x40049409
+        with source.open("rb") as src, target.open("wb") as dst:
+            fcntl.ioctl(dst.fileno(), ficlone, src.fileno())
+        shutil.copystat(source, target, follow_symlinks=True)
+        return True
+    except OSError:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
 def _link_or_copy_file(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
@@ -1166,7 +1428,18 @@ def _link_or_copy_file(source: Path, target: Path) -> None:
     try:
         target.hardlink_to(source)
     except OSError:
-        shutil.copy2(source, target)
+        if not _reflink_file(source, target):
+            shutil.copy2(source, target)
+    if source.suffix.lower() in IMAGE_EXTS:
+        size = image_size(source)
+        if size is not None:
+            try:
+                from evaluator.image_protocol import invalidate_image_metadata, register_image_size
+
+                invalidate_image_metadata(target)
+                register_image_size(target, size)
+            except Exception:
+                pass
 
 
 def _compatible_sample_dirs(parent_dir: Path, digest: str, target_dir: Path) -> list[Path]:
@@ -1423,6 +1696,7 @@ def _record_reused_watermark_embed(
     copied_samples: list[Path],
     results: list[WatermarkEmbedResult],
     device: str,
+    quality_pair_cache: QualityPairCache | None = None,
 ) -> list[JsonDict]:
     _record_watermark_embed_results(
         paths,
@@ -1461,6 +1735,7 @@ def _record_reused_watermark_embed(
         reference_dir=input_dir,
         target_dir=output_dir,
         device=device,
+        quality_pair_cache=quality_pair_cache,
     )
 
 
@@ -1522,122 +1797,6 @@ def _record_reused_attack(
     )
 
 
-def _run_batched_extract_groups(
-    *,
-    paths: dict[str, Path],
-    run_id: str,
-    algorithm: JsonDict,
-    algorithm_params: JsonDict,
-    watermark_method: Any,
-    groups: list[JsonDict],
-    device: str,
-    message: str,
-    reset_gpu_peak: Callable[[str], None],
-) -> dict[str, list[Any]]:
-    method_name = str(getattr(watermark_method, "name", algorithm["method"]))
-    method_params = dict(getattr(watermark_method, "params", algorithm_params) or algorithm_params)
-    grouped_results: dict[str, list[Any]] = {str(group["id"]): [] for group in groups}
-    grouped_inputs: dict[str, list[Path]] = {}
-    jobs: list[tuple[Path, WatermarkContext]] = []
-    owners: list[str] = []
-
-    for group in groups:
-        group_id = str(group["id"])
-        input_dir = Path(group["input_dir"])
-        output_dir = Path(group["output_dir"])
-        output_dir.mkdir(parents=True, exist_ok=True)
-        image_paths = _list_image_files(input_dir)
-        grouped_inputs[group_id] = image_paths
-        for index, input_path in enumerate(image_paths):
-            relative = input_path.relative_to(input_dir)
-            context = WatermarkContext(
-                run_id=run_id,
-                sample_id=str(relative.with_suffix("")),
-                method_name=method_name,
-                params=method_params,
-                workspace_dir=output_dir,
-                device=device,
-                seed=None if group.get("seed") is None else int(group["seed"]) + index,
-                message=message,
-            )
-            jobs.append((input_path, context))
-            owners.append(group_id)
-
-    if not jobs:
-        for group in groups:
-            group_id = str(group["id"])
-            output_dir = Path(group["output_dir"])
-            watermark_method.write_extract_manifest(output_dir / "watermark_extract_manifest.json", [])
-            _record_runtime_profile(
-                paths,
-                run_id=run_id,
-                cell_key=str(group["cell_key"]),
-                stage=str(group["runtime_stage"]),
-                method=algorithm["method"],
-                device=device,
-                elapsed_ms=0.0,
-                image_paths=grouped_inputs.get(group_id, []),
-                status="succeeded",
-                metadata={"execution": {"profileCount": 0}},
-            )
-        return grouped_results
-
-    reset_gpu_peak(device)
-    started = time.perf_counter()
-    try:
-        results = watermark_method.extract_many(jobs)
-    except Exception as exc:
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        error = f"{type(exc).__name__}: {exc}"
-        for group in groups:
-            group_id = str(group["id"])
-            output_dir = Path(group["output_dir"])
-            watermark_method.write_extract_manifest(output_dir / "watermark_extract_manifest.json", [])
-            _record_runtime_profile(
-                paths,
-                run_id=run_id,
-                cell_key=str(group["cell_key"]),
-                stage=str(group["runtime_stage"]),
-                method=algorithm["method"],
-                device=device,
-                elapsed_ms=elapsed_ms,
-                image_paths=grouped_inputs.get(group_id, []),
-                status="failed",
-                error=error,
-            )
-        raise
-
-    elapsed_ms = (time.perf_counter() - started) * 1000
-    for owner, result in zip(owners, results):
-        grouped_results.setdefault(owner, []).append(result)
-
-    total_results = max(1, len(results))
-    for group in groups:
-        group_id = str(group["id"])
-        output_dir = Path(group["output_dir"])
-        results_for_group = grouped_results.get(group_id, [])
-        watermark_method.write_extract_manifest(
-            output_dir / "watermark_extract_manifest.json",
-            results_for_group,
-        )
-        error = "; ".join(result.error for result in results_for_group if getattr(result, "error", None))
-        _record_runtime_profile(
-            paths,
-            run_id=run_id,
-            cell_key=str(group["cell_key"]),
-            stage=str(group["runtime_stage"]),
-            method=algorithm["method"],
-            device=device,
-            elapsed_ms=elapsed_ms * (len(results_for_group) / total_results),
-            image_paths=grouped_inputs.get(group_id, []),
-            status="failed" if error else "succeeded",
-            error=error or None,
-            metadata={"execution": summarize_execution_profiles(results_for_group)},
-        )
-
-    return grouped_results
-
-
 def _quality_runtime_profile(
     *,
     cell_key: str,
@@ -1674,12 +1833,16 @@ def _compute_quality_pairs_deferred(
     reference_dir: Path,
     target_dir: Path,
     device: str,
+    quality_pair_cache: QualityPairCache | None = None,
 ) -> DeferredQualityResult:
     pairs = _pair_images(reference_dir, target_dir)
     target_paths = [target_path for _reference_path, target_path in pairs]
     started = time.perf_counter()
     try:
-        metrics_by_pair, execution_profile = compute_image_quality_pairs_with_profile(pairs)
+        metrics_by_pair, execution_profile = _compute_quality_metrics_with_cache(
+            pairs,
+            quality_pair_cache=quality_pair_cache,
+        )
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         return DeferredQualityResult(
@@ -1858,7 +2021,12 @@ def _compute_identity_quality_deferred(
     )
 
 
-def _compute_attack_quality_deferred(state: MaterializedCellState, *, device: str) -> DeferredQualityResult:
+def _compute_attack_quality_deferred(
+    state: MaterializedCellState,
+    *,
+    device: str,
+    quality_pair_cache: QualityPairCache | None = None,
+) -> DeferredQualityResult:
     results: list[DeferredQualityResult]
     if str(state.attack["method"]).lower() == "identity":
         results = [
@@ -1905,6 +2073,7 @@ def _compute_attack_quality_deferred(state: MaterializedCellState, *, device: st
                 reference_dir=state.canonical_input_dir,
                 target_dir=state.attacked_dir,
                 device=device,
+                quality_pair_cache=quality_pair_cache,
             ),
             _compute_quality_pairs_deferred(
                 cell_key=state.cell_key,
@@ -1918,6 +2087,7 @@ def _compute_attack_quality_deferred(state: MaterializedCellState, *, device: st
                 reference_dir=state.watermarked_dir,
                 target_dir=state.attacked_dir,
                 device=device,
+                quality_pair_cache=quality_pair_cache,
             ),
         ]
 
@@ -1965,6 +2135,9 @@ def run_local_experiment(
         expected_samples_by_dataset[dataset_id] = len(_list_image_files(dataset.path)[: int(selection["maxSamples"])])
     expected_sample_total = sum(expected_samples_by_dataset.values())
     expected_watermark_images = expected_sample_total * len(selection["algorithmIds"]) * len(selection["seeds"])
+    scene_cache_runtime = _configure_3d_scene_cache_runtime_min(
+        max(expected_samples_by_dataset.values(), default=int(selection["maxSamples"]))
+    )
     stop_status: str | None = None
     negative_attack_cache: dict[str, dict[str, Any]] = {}
     attack_order = {
@@ -2007,19 +2180,26 @@ def run_local_experiment(
         request.run_id,
         "run",
         "started",
-        expectedCells=expected_cells,
-        resumedResultUnits=len(result_units),
-        pendingCells=sum(len(variants) for variants in pending_groups.values()),
-        skippedResultUnits=skipped_units,
-        resumeMode="pending_result_units_only",
-        materializedRoot=str(materialized_root),
-    )
+            expectedCells=expected_cells,
+            resumedResultUnits=len(result_units),
+            pendingCells=sum(len(variants) for variants in pending_groups.values()),
+            skippedResultUnits=skipped_units,
+            resumeMode="pending_result_units_only",
+            materializedRoot=str(materialized_root),
+            sceneCache=scene_cache_runtime,
+        )
 
     existing_sample_keys = {
         (str(record.get("datasetId")), str(record.get("sampleId")))
         for record in _read_jsonl(paths["sampleManifest"])
         if record.get("datasetId") is not None and record.get("sampleId") is not None
     }
+    quality_pair_cache = QualityPairCache()
+
+    def record_quality_pairs_cached(*args: Any, **kwargs: Any) -> list[JsonDict]:
+        kwargs.setdefault("quality_pair_cache", quality_pair_cache)
+        return _record_quality_pairs(*args, **kwargs)
+
     dataset_stage = DatasetStage(
         paths=paths,
         run_id=request.run_id,
@@ -2036,7 +2216,7 @@ def run_local_experiment(
         reset_gpu_peak=_reset_gpu_peak,
         record_runtime_profile=_record_runtime_profile,
         record_watermark_embed_results=_record_watermark_embed_results,
-        record_quality_pairs=_record_quality_pairs,
+        record_quality_pairs=record_quality_pairs_cached,
         stage_event=_stage_event,
     )
     attack_stage = AttackStage(
@@ -2048,11 +2228,24 @@ def run_local_experiment(
         record_runtime_profile=_record_runtime_profile,
         record_attack_results=_record_attack_results,
     )
+    extract_stage = ExtractStage(
+        paths=paths,
+        run_id=request.run_id,
+        device=request.device,
+        message=request.message,
+        reset_gpu_peak=_reset_gpu_peak,
+        list_image_files=_list_image_files,
+        record_runtime_profile=_record_runtime_profile,
+    )
     detection_stage = DetectionStage(
         paths=paths,
         run_id=request.run_id,
         append_jsonl=_append_jsonl,
         detection_record=_detection_record,
+    )
+    quality_stage = QualityStage(
+        device=request.device,
+        compute_attack_quality=_compute_attack_quality_deferred,
     )
     resource_manager = RuntimeResourceManager(
         paths=paths,
@@ -2068,6 +2261,7 @@ def run_local_experiment(
             return
         run_cleanup_done = True
         negative_attack_cache.clear()
+        clear_transient_experiment_caches()
         resource_manager.cleanup(
             scope="run",
             reason=reason,
@@ -2283,7 +2477,7 @@ def run_local_experiment(
                 "watermark_embed",
                 total=expected_watermark_images,
                 current_item={"algorithmCount": len(selection["algorithmIds"]), "seedCount": len(selection["seeds"])},
-                counters={"imagesDone": 0, "groupsDone": 0, "cacheHits": 0},
+                counters={"imagesDone": 0, "groupsDone": 0, "cacheHits": 0, "artifactCacheHits": 0},
             )
             watermark_images_done = 0
             watermark_groups_done = 0
@@ -2401,6 +2595,7 @@ def run_local_experiment(
                                         "imagesDone": watermark_images_done,
                                         "groupsDone": watermark_groups_done,
                                         "cacheHits": watermark_cache_hits,
+                                        "artifactCacheHits": watermark_cache_hits,
                                     },
                                     artifact_refs={"latestManifest": str(embed_manifest)},
                                 )
@@ -2435,6 +2630,7 @@ def run_local_experiment(
                                         copied_samples=copied_samples,
                                         results=reused_embed_results,
                                         device=request.device,
+                                        quality_pair_cache=quality_pair_cache,
                                     )
                                     _stage_event(
                                         paths,
@@ -2468,6 +2664,7 @@ def run_local_experiment(
                                                 copied_samples=copied_samples[: len(prefix_embed_results)],
                                                 results=prefix_embed_results,
                                                 device=request.device,
+                                                quality_pair_cache=quality_pair_cache,
                                             )
                                         )
                                         suffix_inputs = copied_samples[len(prefix_embed_results) :]
@@ -2544,6 +2741,7 @@ def run_local_experiment(
                                             reference_dir=suffix_input_dir,
                                             target_dir=watermarked_dir,
                                             device=request.device,
+                                            quality_pair_cache=quality_pair_cache,
                                         )
                                         embed_quality_records.extend(suffix_quality_records)
                                         embed_error = "; ".join(
@@ -2753,6 +2951,7 @@ def run_local_experiment(
                     "imagesDone": watermark_images_done,
                     "groupsDone": watermark_groups_done,
                     "cacheHits": watermark_cache_hits,
+                    "artifactCacheHits": watermark_cache_hits,
                 },
             )
 
@@ -2767,6 +2966,7 @@ def run_local_experiment(
             positive_attack_images_done = 0
             negative_attack_images_done = 0
             attack_cache_hits = 0
+            attack_scene_cache_hits = 0
             attack_backend_done = 0
             counted_negative_attack_keys: set[str] = set()
             attack_model_groups: dict[str, list[MaterializedCellState]] = {}
@@ -2784,6 +2984,8 @@ def run_local_experiment(
                     "imagesDone": 0,
                     "backendDone": 0,
                     "cacheHits": 0,
+                    "artifactCacheHits": 0,
+                    "sceneCacheHits": 0,
                     "positiveImagesDone": 0,
                     "negativeImagesDone": 0,
                 },
@@ -2918,6 +3120,7 @@ def run_local_experiment(
                                         materializedDir=str(state.negative_attacked_dir),
                                     )
                                     state.negative_attack_results = cached_negative
+                                    _mark_state_operation_result(state, cached_negative)
                                 else:
                                     prefix_negative = _attack_prefix_from_manifest(
                                         state.negative_attacked_dir / "attack_manifest.json",
@@ -3044,6 +3247,8 @@ def run_local_experiment(
                                             "error": suffix_error or None,
                                         }
                                         state.negative_attack_results = combined_negative
+                                        attack_scene_cache_hits += _scene_cache_hit_count(suffix_results)
+                                        _mark_state_operation_result(state, combined_negative)
                                     else:
                                         _clean_output_dir(state.negative_attacked_dir)
                                         negative_attack = attack_stage.negative_control(
@@ -3063,6 +3268,8 @@ def run_local_experiment(
                                             attack_instance=attack_instance,
                                         )
                                         state.negative_attack_results = negative_attack.results
+                                        attack_scene_cache_hits += _scene_cache_hit_count(negative_attack.results)
+                                        _mark_state_operation_result(state, negative_attack.results)
                                         state.negative_attacked_dir = negative_attack.output_dir
                                         _stage_event(
                                             paths,
@@ -3104,6 +3311,11 @@ def run_local_experiment(
                             )
                             negative_control_root.mkdir(parents=True, exist_ok=True)
                             negative_control_manifest = negative_control_root / "manifest.json"
+                            negative_attack_status, negative_attack_error = _stage_status_and_error(
+                                state.negative_attack_results,
+                                fallback_error=state.error,
+                                expected_count=len(state.copied_samples),
+                            )
                             _write_json(
                                 negative_control_manifest,
                                 {
@@ -3116,8 +3328,10 @@ def run_local_experiment(
                                     "variantKey": state.variant_key,
                                     "sampleCount": len(state.copied_samples),
                                     "materializedDir": str(state.negative_attacked_dir),
-                                    "status": state.status,
-                                    "error": state.error,
+                                    "status": negative_attack_status,
+                                    "error": negative_attack_error,
+                                    "cellStatus": state.status,
+                                    "cellError": state.error,
                                 },
                             )
                             state_writer.upsert_tree_path(
@@ -3161,6 +3375,8 @@ def run_local_experiment(
                                     "imagesDone": attack_images_done,
                                     "backendDone": attack_backend_done,
                                     "cacheHits": attack_cache_hits,
+                                    "artifactCacheHits": attack_cache_hits,
+                                    "sceneCacheHits": attack_scene_cache_hits,
                                     "positiveImagesDone": positive_attack_images_done,
                                     "negativeImagesDone": negative_attack_images_done,
                                 },
@@ -3222,6 +3438,7 @@ def run_local_experiment(
                                         materializedDir=str(state.attacked_dir),
                                     )
                                     state.positive_attack_results = cached_positive
+                                    _mark_state_operation_result(state, cached_positive)
                                 else:
                                     prefix_positive = _attack_prefix_from_manifest(
                                         state.attacked_dir / "attack_manifest.json",
@@ -3342,6 +3559,8 @@ def run_local_experiment(
                                         )
                                         shutil.rmtree(suffix_input_dir, ignore_errors=True)
                                         state.positive_attack_results = combined_positive
+                                        attack_scene_cache_hits += _scene_cache_hit_count(suffix_results)
+                                        _mark_state_operation_result(state, combined_positive)
                                     else:
                                         _clean_output_dir(state.attacked_dir)
                                         _attack_instance, positive_attack = attack_stage.positive(
@@ -3357,6 +3576,8 @@ def run_local_experiment(
                                             output_dir=state.attacked_dir,
                                         )
                                         state.positive_attack_results = positive_attack.results
+                                        attack_scene_cache_hits += _scene_cache_hit_count(positive_attack.results)
+                                        _mark_state_operation_result(state, positive_attack.results)
                                         _stage_event(
                                             paths,
                                             request.run_id,
@@ -3389,6 +3610,12 @@ def run_local_experiment(
                                     error=state.error,
                                     materializedDir=str(state.attacked_dir),
                                 )
+                            positive_expected_count = len(_list_image_files(state.watermarked_dir))
+                            positive_attack_status, positive_attack_error = _stage_status_and_error(
+                                state.positive_attack_results,
+                                fallback_error=state.error,
+                                expected_count=positive_expected_count,
+                            )
                             positive_attack_manifest = state.variant_root / "positive_attacked" / "manifest.json"
                             _write_json(
                                 positive_attack_manifest,
@@ -3402,11 +3629,13 @@ def run_local_experiment(
                                     "attackStrength": state.strength,
                                     "attackParams": state.attack_params,
                                     "variantKey": state.variant_key,
-                                    "sampleCount": len(_list_image_files(state.watermarked_dir)),
+                                    "sampleCount": positive_expected_count,
                                     "materializedDir": str(state.attacked_dir),
                                     "negativeControlDir": str(state.negative_attacked_dir),
-                                    "status": state.status,
-                                    "error": state.error,
+                                    "status": positive_attack_status,
+                                    "error": positive_attack_error,
+                                    "cellStatus": state.status,
+                                    "cellError": state.error,
                                 },
                             )
                             state_writer.upsert_tree_path(
@@ -3449,6 +3678,8 @@ def run_local_experiment(
                                     "imagesDone": attack_images_done,
                                     "backendDone": attack_backend_done,
                                     "cacheHits": attack_cache_hits,
+                                    "artifactCacheHits": attack_cache_hits,
+                                    "sceneCacheHits": attack_scene_cache_hits,
                                     "positiveImagesDone": positive_attack_images_done,
                                     "negativeImagesDone": negative_attack_images_done,
                                 },
@@ -3496,6 +3727,8 @@ def run_local_experiment(
                             "imagesDone": attack_images_done,
                             "backendDone": attack_backend_done,
                             "cacheHits": attack_cache_hits,
+                            "artifactCacheHits": attack_cache_hits,
+                            "sceneCacheHits": attack_scene_cache_hits,
                             "positiveImagesDone": positive_attack_images_done,
                             "negativeImagesDone": negative_attack_images_done,
                         },
@@ -3507,6 +3740,8 @@ def run_local_experiment(
                     "imagesDone": attack_images_done,
                     "backendDone": attack_backend_done,
                     "cacheHits": attack_cache_hits,
+                    "artifactCacheHits": attack_cache_hits,
+                    "sceneCacheHits": attack_scene_cache_hits,
                     "positiveImagesDone": positive_attack_images_done,
                     "negativeImagesDone": negative_attack_images_done,
                 },
@@ -3580,16 +3815,11 @@ def run_local_experiment(
                                 "seed": state.seed,
                             }
                         )
-                    extract_results_by_id = _run_batched_extract_groups(
-                        paths=paths,
-                        run_id=request.run_id,
+                    extract_results_by_id = extract_stage.run_groups(
                         algorithm=first_state.algorithm,
                         algorithm_params=first_state.algorithm_params,
                         watermark_method=watermark_method,
                         groups=extract_groups,
-                        device=request.device,
-                        message=request.message,
-                        reset_gpu_peak=_reset_gpu_peak,
                     )
                     for state in extract_states:
                         state.positive_extract_results = extract_results_by_id.get(
@@ -3599,6 +3829,18 @@ def run_local_experiment(
                         state.negative_extract_results = extract_results_by_id.get(
                             f"{state.cell_key}:negative",
                             [],
+                        )
+                        _mark_state_operation_result(state, state.positive_extract_results)
+                        _mark_state_operation_result(state, state.negative_extract_results)
+                        positive_extract_status, positive_extract_error = _stage_status_and_error(
+                            state.positive_extract_results,
+                            fallback_error=state.error,
+                            expected_count=len(state.positive_attack_results),
+                        )
+                        negative_extract_status, negative_extract_error = _stage_status_and_error(
+                            state.negative_extract_results,
+                            fallback_error=state.error,
+                            expected_count=len(state.negative_attack_results),
                         )
                         positive_extract_manifest = state.variant_root / "extracted_positive" / "manifest.json"
                         negative_extract_manifest = state.variant_root / "extracted_negative" / "manifest.json"
@@ -3614,7 +3856,8 @@ def run_local_experiment(
                                 "inputDir": str(state.attacked_dir),
                                 "outputDir": str(state.extracted_dir),
                                 "sampleCount": len(state.positive_extract_results),
-                                "status": "succeeded",
+                                "status": positive_extract_status,
+                                "error": positive_extract_error,
                             },
                         )
                         _write_json(
@@ -3629,7 +3872,8 @@ def run_local_experiment(
                                 "inputDir": str(state.negative_attacked_dir),
                                 "outputDir": str(state.negative_extracted_dir),
                                 "sampleCount": len(state.negative_extract_results),
-                                "status": "succeeded",
+                                "status": negative_extract_status,
+                                "error": negative_extract_error,
                             },
                         )
                         positive_count = len(state.positive_extract_results)
@@ -3681,6 +3925,40 @@ def run_local_experiment(
                     for state in extract_states:
                         state.status = "failed"
                         state.error = error if state.error is None else f"{state.error}; {error}"
+                        positive_extract_manifest = state.variant_root / "extracted_positive" / "manifest.json"
+                        negative_extract_manifest = state.variant_root / "extracted_negative" / "manifest.json"
+                        _write_json(
+                            positive_extract_manifest,
+                            {
+                                "runId": request.run_id,
+                                "datasetId": state.dataset_id,
+                                "algorithmId": state.algorithm_id,
+                                "seed": state.seed,
+                                "attackPresetId": state.attack_id,
+                                "variantKey": state.variant_key,
+                                "inputDir": str(state.attacked_dir),
+                                "outputDir": str(state.extracted_dir),
+                                "sampleCount": 0,
+                                "status": "failed",
+                                "error": error,
+                            },
+                        )
+                        _write_json(
+                            negative_extract_manifest,
+                            {
+                                "runId": request.run_id,
+                                "datasetId": state.dataset_id,
+                                "algorithmId": state.algorithm_id,
+                                "seed": state.seed,
+                                "attackPresetId": state.attack_id,
+                                "variantKey": state.variant_key,
+                                "inputDir": str(state.negative_attacked_dir),
+                                "outputDir": str(state.negative_extracted_dir),
+                                "sampleCount": 0,
+                                "status": "failed",
+                                "error": error,
+                            },
+                        )
                 finally:
                     resource_manager.cleanup(
                         scope="watermark_extract",
@@ -3741,11 +4019,12 @@ def run_local_experiment(
             quality_total_pairs = sum(len(state.copied_samples) * 2 for state in all_states)
             quality_pairs_done = 0
             quality_failed_units = 0
+            quality_pair_cache_hits = 0
             state_writer.phase_start(
                 "quality",
                 total=quality_total_pairs,
                 current_item={"workerMode": "async", "resultUnitCount": len(all_states)},
-                counters={"pairsDone": 0, "failedUnits": 0},
+                counters={"pairsDone": 0, "failedUnits": 0, "qualityPairCacheHits": 0},
             )
             quality_states: list[MaterializedCellState] = []
             for state in all_states:
@@ -3762,8 +4041,11 @@ def run_local_experiment(
                 ]
                 if operation_errors:
                     state.status = "failed"
-                    error = "; ".join(str(item) for item in operation_errors)
-                    state.error = error if state.error is None else f"{state.error}; {error}"
+                    existing_error = state.error or ""
+                    fresh_errors = [str(item) for item in operation_errors if str(item) not in existing_error]
+                    if fresh_errors:
+                        error = "; ".join(fresh_errors)
+                        state.error = error if state.error is None else f"{state.error}; {error}"
 
                 try:
                     detection_stage.append_results(
@@ -3813,17 +4095,17 @@ def run_local_experiment(
                 )
                 if quality_workers <= 1:
                     for state in quality_states:
-                        quality_results[state.cell_key] = _compute_attack_quality_deferred(
+                        quality_results[state.cell_key] = quality_stage.compute_for_cell(
                             state,
-                            device=request.device,
+                            quality_pair_cache=quality_pair_cache,
                         )
                 else:
                     with ThreadPoolExecutor(max_workers=quality_workers) as executor:
                         futures = {
                             executor.submit(
-                                _compute_attack_quality_deferred,
+                                quality_stage.compute_for_cell,
                                 state,
-                                device=request.device,
+                                quality_pair_cache=quality_pair_cache,
                             ): state
                             for state in quality_states
                         }
@@ -3877,6 +4159,7 @@ def run_local_experiment(
                             error=profile.get("error"),
                             metadata=dict(profile.get("metadata") or {}),
                         )
+                    quality_pair_cache_hits += _quality_pair_cache_hit_count(quality_result.runtime_profiles)
                     if quality_result.error:
                         state.status = "failed"
                         state.error = (
@@ -3941,6 +4224,7 @@ def run_local_experiment(
                             "pairsDone": quality_pairs_done,
                             "failedUnits": quality_failed_units,
                             "workerCount": quality_workers,
+                            "qualityPairCacheHits": quality_pair_cache_hits,
                         },
                         artifact_refs={"latestManifest": str(quality_manifest)},
                     )
@@ -3958,6 +4242,7 @@ def run_local_experiment(
                 counters={
                     "pairsDone": quality_pairs_done,
                     "failedUnits": quality_failed_units,
+                    "qualityPairCacheHits": quality_pair_cache_hits,
                 },
             )
 

@@ -132,6 +132,7 @@ type TuningForm = {
   tuneAttacks: boolean;
   includeViewpoint3dAttacks: boolean;
   tuneQuality: boolean;
+  selectedQualityMetrics: string[];
   selectedWatermarkMethods: string[];
   selectedAttackMethods: string[];
 };
@@ -214,6 +215,16 @@ const rawArtifactFiles = [
 ];
 const experimentStageOrder: ExperimentStageKey[] = ["canonical", "watermark", "attack", "extract", "quality", "summary"];
 
+const tuningQualityMetricOptions = [
+  { id: "psnr", label: "PSNR", kind: "workers" },
+  { id: "ssim", label: "SSIM", kind: "workers" },
+  { id: "ms_ssim", label: "MS-SSIM", kind: "workers" },
+  { id: "nmi", label: "NMI", kind: "workers" },
+  { id: "lpips", label: "LPIPS", kind: "batch" },
+  { id: "dists", label: "DISTS", kind: "batch" }
+];
+const allTuningQualityMetrics = tuningQualityMetricOptions.map((option) => option.id);
+
 const quickTuningDefaults: TuningForm = {
   mode: "quick",
   sampleCount: 16,
@@ -231,6 +242,7 @@ const quickTuningDefaults: TuningForm = {
   tuneAttacks: true,
   includeViewpoint3dAttacks: false,
   tuneQuality: true,
+  selectedQualityMetrics: allTuningQualityMetrics,
   selectedWatermarkMethods: [],
   selectedAttackMethods: []
 };
@@ -252,6 +264,7 @@ const fullTuningDefaults: TuningForm = {
   tuneAttacks: true,
   includeViewpoint3dAttacks: false,
   tuneQuality: true,
+  selectedQualityMetrics: allTuningQualityMetrics,
   selectedWatermarkMethods: [],
   selectedAttackMethods: []
 };
@@ -581,8 +594,10 @@ function buildTuningPayload(form: TuningForm) {
   );
   const watermarkMethods = [...new Set(form.selectedWatermarkMethods)].sort();
   const attackMethods = normalizeTuningAttackMethods(form.selectedAttackMethods);
+  const qualityMetrics = allTuningQualityMetrics.filter((metric) => form.selectedQualityMetrics.includes(metric));
   const tuneWatermarks = form.tuneWatermarks && watermarkMethods.length > 0;
   const tuneAttacks = form.tuneAttacks && attackMethods.length > 0;
+  const tuneQuality = form.tuneQuality && qualityMetrics.length > 0;
   return {
     mode: form.mode,
     sampleCount,
@@ -604,7 +619,8 @@ function buildTuningPayload(form: TuningForm) {
     watermarkMethods,
     attackMethods,
     includeViewpoint3dAttacks: tuneAttacks && attackMethods.some(isViewpointTuningMethod),
-    tuneQuality: form.tuneQuality
+    tuneQuality,
+    qualityMetrics
   };
 }
 
@@ -650,7 +666,7 @@ function tuningParameterSegmentCount(payload: ReturnType<typeof buildTuningPaylo
     total += 2;
   }
   if (payload.tuneQuality) {
-    total += 2;
+    total += payload.qualityMetrics.length;
   }
   return total;
 }
@@ -666,7 +682,9 @@ function tuningCombinationCount(payload: ReturnType<typeof buildTuningPayload>) 
     total += payload.attackMethods.length * batchSearchCount;
   }
   if (payload.tuneQuality) {
-    total += batchSearchCount + workerSearchCount;
+    const selectedCpuMetrics = payload.qualityMetrics.filter((metric) => ["psnr", "ssim", "ms_ssim", "nmi"].includes(metric)).length;
+    const selectedPerceptualMetrics = payload.qualityMetrics.filter((metric) => ["lpips", "dists"].includes(metric)).length;
+    total += selectedCpuMetrics * workerSearchCount + selectedPerceptualMetrics * batchSearchCount;
   }
   return Math.max(0, total);
 }
@@ -703,9 +721,9 @@ function buildTuningStageDetails(
     {
       key: "quality",
       title: "quality 指标",
-      badge: payload.tuneQuality ? "生成 2 类覆盖" : "跳过",
+      badge: payload.tuneQuality ? `${payload.qualityMetrics.length}/${allTuningQualityMetrics.length} 项` : "跳过",
       checked: payload.tuneQuality,
-      description: "搜索质量评估阶段的 CPU workers 与感知指标 batch，避免评估阶段成为正式实验瓶颈。"
+      description: "选择需要搜索的视觉质量指标；CPU 指标写入 workers，感知指标写入 batch。"
     }
   ];
 }
@@ -834,7 +852,13 @@ function tuningStageLabel(stage: string) {
     attack_batch: "攻击 batch",
     attack_cpu: "攻击 CPU workers",
     quality_cpu: "quality CPU workers",
-    quality_perceptual: "感知质量 batch"
+    quality_perceptual: "感知质量 batch",
+    quality_lpips: "LPIPS batch",
+    quality_dists: "DISTS batch",
+    quality_psnr: "PSNR workers",
+    quality_ssim: "SSIM workers",
+    quality_ms_ssim: "MS-SSIM workers",
+    quality_nmi: "NMI workers"
   };
   return labels[stage] ?? humanizeId(stage);
 }
@@ -1644,8 +1668,10 @@ export default function RunsPage() {
         ...defaults,
         selectedWatermarkMethods: current.selectedWatermarkMethods,
         selectedAttackMethods: normalizeTuningAttackMethods(current.selectedAttackMethods),
+        selectedQualityMetrics: current.selectedQualityMetrics.length ? current.selectedQualityMetrics : allTuningQualityMetrics,
         tuneWatermarks: current.selectedWatermarkMethods.length > 0,
         tuneAttacks: normalizeTuningAttackMethods(current.selectedAttackMethods).length > 0,
+        tuneQuality: current.selectedQualityMetrics.length > 0,
         includeViewpoint3dAttacks: normalizeTuningAttackMethods(current.selectedAttackMethods).some(isViewpointTuningMethod)
       };
     });
@@ -1677,7 +1703,22 @@ export default function RunsPage() {
       });
       return;
     }
-    updateTuningForm({ tuneQuality: checked });
+    updateTuningForm({
+      tuneQuality: checked,
+      selectedQualityMetrics: checked
+        ? (tuningForm.selectedQualityMetrics.length ? tuningForm.selectedQualityMetrics : allTuningQualityMetrics)
+        : []
+    });
+  };
+
+  const updateSelectedQualityMetrics = (metric: string, checked: boolean) => {
+    const nextMetrics = checked
+      ? addIds(tuningForm.selectedQualityMetrics, [metric])
+      : tuningForm.selectedQualityMetrics.filter((item) => item !== metric);
+    updateTuningForm({
+      selectedQualityMetrics: allTuningQualityMetrics.filter((item) => nextMetrics.includes(item)),
+      tuneQuality: nextMetrics.length > 0
+    });
   };
 
   const updateSelectedWatermarkMethods = (methods: string[]) => {
@@ -2353,6 +2394,23 @@ export default function RunsPage() {
                                 totalCount={tuningAttackOptions.length}
                                 visibleMethods={visibleTuningAttackMethods}
                               />
+                            ) : null}
+                            {detail.key === "quality" ? (
+                              <div className="tuning-quality-metrics">
+                                {tuningQualityMetricOptions.map((metric) => (
+                                  <label className="tuning-quality-metric" key={metric.id}>
+                                    <input
+                                      checked={tuningForm.selectedQualityMetrics.includes(metric.id)}
+                                      onChange={(event) => updateSelectedQualityMetrics(metric.id, event.target.checked)}
+                                      type="checkbox"
+                                    />
+                                    <span>
+                                      <strong>{metric.label}</strong>
+                                      <small>{metric.kind === "batch" ? "batch size" : "CPU workers"}</small>
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
                             ) : null}
                           </div>
                         </section>

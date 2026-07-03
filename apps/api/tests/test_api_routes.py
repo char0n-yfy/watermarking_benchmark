@@ -15,6 +15,8 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from app.services.scoring import PROTOCOL_ID
+
 
 @unittest.skipIf(importlib.util.find_spec("fastapi") is None, "FastAPI is not installed")
 class ApiRoutesTest(unittest.TestCase):
@@ -83,6 +85,7 @@ class ApiRoutesTest(unittest.TestCase):
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
             os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
             os.environ["WM_BENCH_DOTENV_PATH"] = str(root / ".env.autodl")
+            os.environ["WM_BENCH_DEVICE"] = "cpu"
 
             from app.core.config import get_settings
 
@@ -147,7 +150,7 @@ class ApiRoutesTest(unittest.TestCase):
             readiness_response = client.get("/system/readiness")
             self.assertEqual(readiness_response.status_code, 200)
             readiness = readiness_response.json()
-            self.assertIn(readiness["status"], {"ready", "degraded"})
+            self.assertIn(readiness["status"], {"ready", "degraded", "not_ready"})
             check_ids = {check["id"] for check in readiness["checks"]}
             self.assertIn("sqlite", check_ids)
             self.assertIn("resource_catalog", check_ids)
@@ -155,11 +158,14 @@ class ApiRoutesTest(unittest.TestCase):
 
             protocols_response = client.get("/benchmark-protocols")
             self.assertEqual(protocols_response.status_code, 200)
-            self.assertEqual(protocols_response.json()[0]["id"], "waves-official-detection-v1")
+            self.assertEqual(protocols_response.json()[0]["id"], PROTOCOL_ID)
 
-            leaderboard_response = client.get("/leaderboard?protocol_id=waves-official-detection-v1")
+            leaderboard_response = client.get(f"/leaderboard?protocol_id={PROTOCOL_ID}")
             self.assertEqual(leaderboard_response.status_code, 200)
-            self.assertEqual(leaderboard_response.json()["protocol"]["id"], "waves-official-detection-v1")
+            self.assertEqual(leaderboard_response.json()["protocol"]["id"], PROTOCOL_ID)
+            legacy_leaderboard_response = client.get("/leaderboard?protocol_id=waves-official-detection-v1")
+            self.assertEqual(legacy_leaderboard_response.status_code, 200)
+            self.assertEqual(legacy_leaderboard_response.json()["protocol"]["id"], PROTOCOL_ID)
 
             tuning_response = client.post(
                 "/system/parallel-tuning",

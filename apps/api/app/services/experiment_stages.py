@@ -9,7 +9,13 @@ from typing import Any, Callable
 
 from evaluator.attacks.runner import AttackJob, get_cached_attack, run_attack_dir_with_attack
 from evaluator.execution import summarize_execution_profiles
-from evaluator.image_protocol import canonical_preprocess_image
+from evaluator.image_protocol import (
+    CANONICAL_IMAGE_SIZE,
+    CANONICAL_OUTPUT_POLICY,
+    CANONICAL_PREPROCESS_POLICY,
+    canonical_preprocess_image,
+)
+from evaluator.watermarking.base import WatermarkContext
 from evaluator.watermarking.runner import (
     WatermarkEmbedJob,
     WatermarkExtractJob,
@@ -135,11 +141,20 @@ def _write_canonical_manifest(output_dir: Path, records: list[JsonDict]) -> None
 def _manifest_record_matches(record: JsonDict, signature: JsonDict, target: Path) -> bool:
     if not target.is_file():
         return False
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    canonical_size = list(CANONICAL_IMAGE_SIZE)
     return (
         record.get("sourceRelative") == signature.get("sourceRelative")
         and record.get("sourceSize") == signature.get("sourceSize")
         and record.get("sourceMtimeNs") == signature.get("sourceMtimeNs")
         and Path(str(record.get("outputPath", ""))) == target
+        and metadata.get("preprocessPolicy") == CANONICAL_PREPROCESS_POLICY
+        and metadata.get("canonicalSize") == canonical_size
+        and record.get("preprocessPolicy") == CANONICAL_PREPROCESS_POLICY
+        and record.get("canonicalSize") == canonical_size
+        and record.get("canonicalOutputPolicy") == CANONICAL_OUTPUT_POLICY
     )
 
 
@@ -171,6 +186,9 @@ def copy_canonical_samples(dataset_path: Path, output_dir: Path, max_samples: in
                 "sourcePath": str(sample_path),
                 "outputPath": str(target),
                 "outputRelative": target.relative_to(output_dir).as_posix(),
+                "preprocessPolicy": CANONICAL_PREPROCESS_POLICY,
+                "canonicalSize": list(CANONICAL_IMAGE_SIZE),
+                "canonicalOutputPolicy": CANONICAL_OUTPUT_POLICY,
                 "metadata": metadata,
             }
         )
@@ -617,96 +635,133 @@ class ExtractStage:
         )
         return ExtractStageResult(results=results, elapsed_ms=elapsed_ms, error=error or None)
 
+    def run_groups(
+        self,
+        *,
+        algorithm: JsonDict,
+        algorithm_params: JsonDict,
+        watermark_method: Any,
+        groups: list[JsonDict],
+    ) -> dict[str, list[Any]]:
+        method_name = str(getattr(watermark_method, "name", algorithm["method"]))
+        method_params = dict(getattr(watermark_method, "params", algorithm_params) or algorithm_params)
+        grouped_results: dict[str, list[Any]] = {str(group["id"]): [] for group in groups}
+        grouped_inputs: dict[str, list[Path]] = {}
+        jobs: list[tuple[Path, WatermarkContext]] = []
+        owners: list[str] = []
+
+        for group in groups:
+            group_id = str(group["id"])
+            input_dir = Path(group["input_dir"])
+            output_dir = Path(group["output_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            image_paths = self.list_image_files(input_dir)
+            grouped_inputs[group_id] = image_paths
+            for index, input_path in enumerate(image_paths):
+                relative = input_path.relative_to(input_dir)
+                context = WatermarkContext(
+                    run_id=self.run_id,
+                    sample_id=str(relative.with_suffix("")),
+                    method_name=method_name,
+                    params=method_params,
+                    workspace_dir=output_dir,
+                    device=self.device,
+                    seed=None if group.get("seed") is None else int(group["seed"]) + index,
+                    message=self.message,
+                )
+                jobs.append((input_path, context))
+                owners.append(group_id)
+
+        if not jobs:
+            for group in groups:
+                group_id = str(group["id"])
+                output_dir = Path(group["output_dir"])
+                watermark_method.write_extract_manifest(output_dir / "watermark_extract_manifest.json", [])
+                self.record_runtime_profile(
+                    self.paths,
+                    run_id=self.run_id,
+                    cell_key=str(group["cell_key"]),
+                    stage=str(group["runtime_stage"]),
+                    method=algorithm["method"],
+                    device=self.device,
+                    elapsed_ms=0.0,
+                    image_paths=grouped_inputs.get(group_id, []),
+                    status="succeeded",
+                    metadata={"execution": {"profileCount": 0}},
+                )
+            return grouped_results
+
+        self.reset_gpu_peak(self.device)
+        started = time.perf_counter()
+        try:
+            results = watermark_method.extract_many(jobs)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            error = f"{type(exc).__name__}: {exc}"
+            for group in groups:
+                group_id = str(group["id"])
+                output_dir = Path(group["output_dir"])
+                watermark_method.write_extract_manifest(output_dir / "watermark_extract_manifest.json", [])
+                self.record_runtime_profile(
+                    self.paths,
+                    run_id=self.run_id,
+                    cell_key=str(group["cell_key"]),
+                    stage=str(group["runtime_stage"]),
+                    method=algorithm["method"],
+                    device=self.device,
+                    elapsed_ms=elapsed_ms,
+                    image_paths=grouped_inputs.get(group_id, []),
+                    status="failed",
+                    error=error,
+                )
+            raise
+
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        for owner, result in zip(owners, results):
+            grouped_results.setdefault(owner, []).append(result)
+
+        total_results = max(1, len(results))
+        for group in groups:
+            group_id = str(group["id"])
+            output_dir = Path(group["output_dir"])
+            results_for_group = grouped_results.get(group_id, [])
+            watermark_method.write_extract_manifest(
+                output_dir / "watermark_extract_manifest.json",
+                results_for_group,
+            )
+            error = "; ".join(result.error for result in results_for_group if getattr(result, "error", None))
+            self.record_runtime_profile(
+                self.paths,
+                run_id=self.run_id,
+                cell_key=str(group["cell_key"]),
+                stage=str(group["runtime_stage"]),
+                method=algorithm["method"],
+                device=self.device,
+                elapsed_ms=elapsed_ms * (len(results_for_group) / total_results),
+                image_paths=grouped_inputs.get(group_id, []),
+                status="failed" if error else "succeeded",
+                error=error or None,
+                metadata={"execution": summarize_execution_profiles(results_for_group)},
+            )
+
+        return grouped_results
+
 
 @dataclass
 class QualityStage:
-    paths: dict[str, Path]
-    run_id: str
     device: str
-    record_quality_pairs: Callable[..., list[JsonDict]]
-    record_reused_quality_records: Callable[..., list[JsonDict]]
-    record_identity_quality_pairs: Callable[..., list[JsonDict]]
+    compute_attack_quality: Callable[..., Any]
 
-    def record_attack_quality(
+    def compute_for_cell(
         self,
+        state: Any,
         *,
-        is_identity: bool,
-        cell_key: str,
-        dataset_id: str,
-        algorithm_id: str,
-        attack_id: str,
-        attack_method: str,
-        attack_strength: float,
-        seed: int,
-        canonical_input_dir: Path,
-        watermarked_dir: Path,
-        attacked_dir: Path,
-        embed_quality_records: list[JsonDict],
-    ) -> list[JsonDict]:
-        if is_identity:
-            original_records = self.record_reused_quality_records(
-                self.paths,
-                run_id=self.run_id,
-                cell_key=cell_key,
-                scope="original_vs_attacked_watermarked",
-                dataset_id=dataset_id,
-                algorithm_id=algorithm_id,
-                attack_id=attack_id,
-                attack_method=attack_method,
-                attack_strength=attack_strength,
-                seed=seed,
-                source_records=embed_quality_records,
-                source_scope="original_vs_watermarked",
-                target_dir=attacked_dir,
-                device=self.device,
-                reuse_policy="identity_attack_watermarked_copy",
-            )
-            watermarked_records = self.record_identity_quality_pairs(
-                self.paths,
-                run_id=self.run_id,
-                cell_key=cell_key,
-                scope="watermarked_vs_attacked_watermarked",
-                dataset_id=dataset_id,
-                algorithm_id=algorithm_id,
-                attack_id=attack_id,
-                attack_method=attack_method,
-                attack_strength=attack_strength,
-                seed=seed,
-                reference_dir=watermarked_dir,
-                target_dir=attacked_dir,
-                device=self.device,
-            )
-            return [*original_records, *watermarked_records]
-
-        original_records = self.record_quality_pairs(
-            self.paths,
-            run_id=self.run_id,
-            cell_key=cell_key,
-            scope="original_vs_attacked_watermarked",
-            dataset_id=dataset_id,
-            algorithm_id=algorithm_id,
-            attack_id=attack_id,
-            attack_method=attack_method,
-            attack_strength=attack_strength,
-            seed=seed,
-            reference_dir=canonical_input_dir,
-            target_dir=attacked_dir,
+        quality_pair_cache: Any | None = None,
+    ) -> Any:
+        return self.compute_attack_quality(
+            state,
             device=self.device,
-        )
-        watermarked_records = self.record_quality_pairs(
-            self.paths,
-            run_id=self.run_id,
-            cell_key=cell_key,
-            scope="watermarked_vs_attacked_watermarked",
-            dataset_id=dataset_id,
-            algorithm_id=algorithm_id,
-            attack_id=attack_id,
-            attack_method=attack_method,
-            attack_strength=attack_strength,
-            seed=seed,
-            reference_dir=watermarked_dir,
-            target_dir=attacked_dir,
-            device=self.device,
+            quality_pair_cache=quality_pair_cache,
         )
         return [*original_records, *watermarked_records]
 

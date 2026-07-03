@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import importlib
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -34,6 +35,7 @@ def release_runtime_resources(
         run_action("clear_perceptual_backend", _clear_perceptual_backend)
     if release_auxiliary:
         run_action("clear_auxiliary_model_caches", _clear_auxiliary_model_caches)
+        run_action("clear_transient_experiment_caches", clear_transient_experiment_caches)
     run_action("gc_collect", gc.collect)
     run_action("torch_cleanup", _torch_cleanup)
     return errors
@@ -68,6 +70,26 @@ def _clear_auxiliary_model_caches() -> None:
         from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import restoration_sr
 
         restoration_sr.clear_model_cache()
+    except Exception:
+        pass
+
+
+def clear_transient_experiment_caches() -> None:
+    try:
+        module = importlib.import_module("evaluator.attacks.3d_viewpoint_rerendering.attacks")
+        clear_cache = getattr(module, "clear_sharp_scene_cache", None)
+        if callable(clear_cache):
+            clear_cache()
+        reset_runtime_min = getattr(module, "reset_sharp_scene_cache_runtime_min_entries", None)
+        if callable(reset_runtime_min):
+            reset_runtime_min()
+    except Exception:
+        pass
+    try:
+        module = importlib.import_module("evaluator.attacks.consumer_enhancement_workflow_attacks.attacks")
+        clear_cache = getattr(module, "clear_cew_step_cache", None)
+        if callable(clear_cache):
+            clear_cache()
     except Exception:
         pass
 

@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_batch_io import load_rgb_batch, save_image_batch, to_tensor_batch
 from evaluator.image_io import save_png_image
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
@@ -26,6 +27,7 @@ from evaluator.watermarking.utils import (
 class VideoSealWatermark(BaseWatermark):
     name = "videoseal"
     description = "VideoSeal v1.0 image-mode wrapper using packaged 256-bit image checkpoint."
+    uses_batch_image_io = True
 
     def __init__(
         self,
@@ -123,29 +125,37 @@ class VideoSealWatermark(BaseWatermark):
         assert self._tf is not None
         assert self._model is not None
 
-        loaded: list[tuple[int, Path, list[int], Any, Any]] = []
-        for index, (input_path, output_path, context) in enumerate(jobs):
+        images = load_rgb_batch([input_path for input_path, _output_path, _context in jobs])
+        loaded: list[tuple[int, Path, list[int], Any, Any, Any]] = []
+        for index, ((_input_path, output_path, context), image) in enumerate(zip(jobs, images)):
             bits = bits_from_message(context.message, self.payload_bits, seed=context.seed)
             message = self._torch.tensor(bits, dtype=self._torch.float32)
-            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB"))
-            loaded.append((index, output_path, bits, tensor, message))
+            loaded.append((index, output_path, bits, image, message, tuple(image.size)))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
-        grouped: dict[tuple[int, int], list[tuple[int, Path, list[int], Any, Any]]] = {}
+        grouped: dict[tuple[int, int], list[tuple[int, Path, list[int], Any, Any, Any]]] = {}
         for item in loaded:
-            grouped.setdefault(tuple(item[3].shape[-2:]), []).append(item)
+            grouped.setdefault(tuple(item[5]), []).append(item)
 
         to_pil = self._tf.ToPILImage()
         internal_size = self._internal_size()
         device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = move_tensor_to_device(self._torch.stack([item[3] for item in items], dim=0), device)
+                tensors = to_tensor_batch(
+                    [item[3] for item in items],
+                    transform=self._tf.ToTensor(),
+                    torch_module=self._torch,
+                    device=device,
+                )
                 messages = move_tensor_to_device(self._torch.stack([item[4] for item in items], dim=0), device)
                 outputs = self._model.embed(tensors, **self._embed_kwargs(messages))
                 watermarked = outputs["imgs_w"].detach().cpu().clamp(0, 1)
-                for batch_index, (result_index, output_path, bits, _tensor, _message) in enumerate(items):
-                    save_png_image(to_pil(watermarked[batch_index]), output_path)
+                save_image_batch(
+                    (to_pil(watermarked[batch_index]), output_path)
+                    for batch_index, (_result_index, output_path, _bits, _image, _message, _size) in enumerate(items)
+                )
+                for _batch_index, (result_index, _output_path, bits, _image, _message, _size) in enumerate(items):
                     results[result_index] = {
                         "bits": bits_to_string(bits),
                         "payload_bits": self.payload_bits,
@@ -165,24 +175,29 @@ class VideoSealWatermark(BaseWatermark):
         assert self._tf is not None
         assert self._model is not None
 
-        loaded: list[tuple[int, WatermarkContext, Any]] = []
-        for index, (input_path, context) in enumerate(jobs):
-            tensor = self._tf.ToTensor()(Image.open(input_path).convert("RGB"))
-            loaded.append((index, context, tensor))
+        images = load_rgb_batch([input_path for input_path, _context in jobs])
+        loaded: list[tuple[int, WatermarkContext, Any, Any]] = []
+        for index, ((_input_path, context), image) in enumerate(zip(jobs, images)):
+            loaded.append((index, context, image, tuple(image.size)))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
-        grouped: dict[tuple[int, int], list[tuple[int, WatermarkContext, Any]]] = {}
+        grouped: dict[tuple[int, int], list[tuple[int, WatermarkContext, Any, Any]]] = {}
         for item in loaded:
-            grouped.setdefault(tuple(item[2].shape[-2:]), []).append(item)
+            grouped.setdefault(tuple(item[3]), []).append(item)
 
         device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = move_tensor_to_device(self._torch.stack([item[2] for item in items], dim=0), device)
+                tensors = to_tensor_batch(
+                    [item[2] for item in items],
+                    transform=self._tf.ToTensor(),
+                    torch_module=self._torch,
+                    device=device,
+                )
                 detected = self._model.detect(tensors, **self._detect_kwargs())
                 decoded_batch = (detected["preds"][:, 1:] > 0).int().detach().cpu().tolist()
                 internal_size = self._internal_size()
-                for (result_index, context, _tensor), decoded_bits in zip(items, decoded_batch):
+                for (result_index, context, _image, _size), decoded_bits in zip(items, decoded_batch):
                     metadata: dict[str, Any] = {
                         "bits": bits_to_string(decoded_bits),
                         "payload_bits": len(decoded_bits),

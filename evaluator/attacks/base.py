@@ -87,6 +87,7 @@ class BaseAttack:
     thread_safe_parallel = False
     batch_stage = "attack"
     batch_capability: AttackBatchCapability | Mapping[str, Any] | str | bool | None = "auto"
+    uses_batch_image_io = False
 
     def __init__(self, **params: Any) -> None:
         self.params: JsonDict = dict(params)

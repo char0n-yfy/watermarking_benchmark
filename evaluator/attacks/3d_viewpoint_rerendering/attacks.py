@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -32,6 +34,126 @@ DEFAULT_SHARP_MOTIONS = ("swipe", "shake", "rotate", "rotate_forward")
 DEFAULT_SHARP_PHASES = tuple(index / 8 for index in range(8))
 DEFAULT_SHARP_LOOKAT_MODES = ("point", "ahead")
 DEFAULT_MAX_DISPARITY_LEVELS = (0.01, 0.02, 0.1)
+_SHARP_SCENE_CACHE_LOCK = threading.Lock()
+_SHARP_SCENE_CACHE: OrderedDict[str, Mapping[str, Any]] = OrderedDict()
+_SHARP_SCENE_CACHE_RUNTIME_MIN_ENTRIES = 0
+
+
+def _scene_cache_enabled() -> bool:
+    return os.getenv("WM_BENCH_3D_SCENE_CACHE", "1") != "0"
+
+
+def _configured_scene_cache_max_entries() -> int:
+    raw = os.getenv("WM_BENCH_3D_SCENE_CACHE_MAX_ENTRIES", "128")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 128
+    return max(0, value)
+
+
+def set_sharp_scene_cache_runtime_min_entries(value: int | None) -> None:
+    global _SHARP_SCENE_CACHE_RUNTIME_MIN_ENTRIES
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError):
+        parsed = 0
+    _SHARP_SCENE_CACHE_RUNTIME_MIN_ENTRIES = max(0, parsed)
+
+
+def _scene_cache_runtime_min_entries() -> int:
+    return int(_SHARP_SCENE_CACHE_RUNTIME_MIN_ENTRIES)
+
+
+def _scene_cache_max_entries() -> int:
+    configured = _configured_scene_cache_max_entries()
+    if configured <= 0:
+        return 0
+    return max(configured, _scene_cache_runtime_min_entries())
+
+
+def _file_fingerprint(path: Path) -> Mapping[str, Any]:
+    try:
+        resolved = str(path.resolve())
+    except OSError:
+        resolved = str(path.absolute())
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"path": resolved, "exists": False}
+    return {
+        "path": resolved,
+        "exists": True,
+        "mtimeNs": int(stat.st_mtime_ns),
+        "sizeBytes": int(stat.st_size),
+    }
+
+
+def _sharp_scene_cache_key(
+    *,
+    input_path: Path,
+    checkpoint_path: Path,
+    source_root: Path | None,
+    device: str,
+) -> str:
+    return json.dumps(
+        {
+            "schema": "sharp-scene-v1",
+            "input": _file_fingerprint(input_path),
+            "checkpoint": _file_fingerprint(checkpoint_path),
+            "sourceRoot": str(source_root) if source_root is not None else None,
+            "device": str(device),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _get_sharp_scene_cache(key: str) -> Mapping[str, Any] | None:
+    if not _scene_cache_enabled() or _scene_cache_max_entries() <= 0:
+        return None
+    with _SHARP_SCENE_CACHE_LOCK:
+        cached = _SHARP_SCENE_CACHE.get(key)
+        if cached is None:
+            return None
+        _SHARP_SCENE_CACHE.move_to_end(key)
+        return cached
+
+
+def _set_sharp_scene_cache(key: str, value: Mapping[str, Any]) -> None:
+    if not _scene_cache_enabled():
+        return
+    max_entries = _scene_cache_max_entries()
+    if max_entries <= 0:
+        return
+    with _SHARP_SCENE_CACHE_LOCK:
+        _SHARP_SCENE_CACHE[key] = dict(value)
+        _SHARP_SCENE_CACHE.move_to_end(key)
+        while len(_SHARP_SCENE_CACHE) > max_entries:
+            _SHARP_SCENE_CACHE.popitem(last=False)
+
+
+def sharp_scene_cache_stats() -> Mapping[str, Any]:
+    configured = _configured_scene_cache_max_entries()
+    runtime_min = _scene_cache_runtime_min_entries()
+    effective = _scene_cache_max_entries()
+    return {
+        "enabled": _scene_cache_enabled(),
+        "configuredMaxEntries": configured,
+        "runtimeMinEntries": runtime_min,
+        "effectiveMaxEntries": effective,
+        "maxEntries": effective,
+        "entryCount": len(_SHARP_SCENE_CACHE),
+    }
+
+
+def clear_sharp_scene_cache() -> None:
+    with _SHARP_SCENE_CACHE_LOCK:
+        _SHARP_SCENE_CACHE.clear()
+
+
+def reset_sharp_scene_cache_runtime_min_entries() -> None:
+    set_sharp_scene_cache_runtime_min_entries(0)
 
 
 def _hash_prefix_from_filename(filename: str) -> str | None:
@@ -215,6 +337,59 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
         self._source_root: Path | None = None
         self._sharp_modules: dict[str, Any] = {}
 
+    @classmethod
+    def model_cache_params(cls, params: Mapping[str, Any]) -> dict[str, Any]:
+        heavyweight_keys = {"source_root", "checkpoint_path", "device", "allow_download"}
+        return {key: params[key] for key in heavyweight_keys if key in params}
+
+    def configure_runtime(self, params: Mapping[str, Any]) -> None:
+        runtime = dict(params)
+        strength = runtime.get("strength")
+        max_disparity = runtime.get("max_disparity")
+        if strength is not None:
+            parsed_strength = _clamp_unit_strength(float(strength))
+            parsed_max_disparity = _max_disparity_from_strength(parsed_strength)
+        elif max_disparity is not None:
+            parsed_max_disparity = float(max_disparity)
+            parsed_strength = _strength_from_max_disparity(parsed_max_disparity)
+        else:
+            parsed_strength = self.strength
+            parsed_max_disparity = self.max_disparity
+        if parsed_max_disparity < 0.0:
+            raise ValueError("max_disparity must be non-negative")
+
+        image_size = runtime.get("image_size", self.image_size)
+        if image_size is not None and int(image_size) <= 0:
+            raise ValueError("image_size must be positive when provided")
+
+        self.strength = float(parsed_strength)
+        self.max_disparity = float(parsed_max_disparity)
+        self.image_size = None if image_size is None else int(image_size)
+        if "device" in runtime:
+            self.device_override = runtime.get("device")
+        if "progress" in runtime:
+            self.progress = bool(runtime.get("progress"))
+        if "save_intermediates" in runtime:
+            self.save_intermediates = bool(runtime.get("save_intermediates"))
+
+        self.params = {
+            **dict(self.params),
+            **runtime,
+            "strength": self.strength,
+            "max_disparity": self.max_disparity,
+            "max_disparity_levels": list(DEFAULT_MAX_DISPARITY_LEVELS),
+            "motion": self.motion,
+            "trajectory_type": self.motion,
+            "max_zoom": 0.0,
+            "phase_policy": "random_per_sample",
+            "phase_choices": list(range(len(DEFAULT_SHARP_PHASES))),
+            "lookat_mode": self.lookat_mode,
+            "image_size": self.image_size,
+            "device": self.device_override,
+            "allow_download": self.allow_download,
+            "save_intermediates": self.save_intermediates,
+        }
+
     def _select_phase_index(self, context: AttackContext) -> int:
         if context.seed is None:
             return random.randrange(len(DEFAULT_SHARP_PHASES))
@@ -390,10 +565,33 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
         save_ply = self._sharp_modules["save_ply"]
         gsplat = self._sharp_modules["gsplat"]
 
-        image_np, _, f_px = io.load_rgb(input_path)
-        height, width = image_np.shape[:2]
-        gaussians = predict_image(self._predictor, image_np, f_px, torch_device)
-        metadata = SceneMetaData(float(f_px), (width, height), "linearRGB")
+        scene_cache_key = _sharp_scene_cache_key(
+            input_path=input_path,
+            checkpoint_path=self._checkpoint_path,
+            source_root=self._source_root,
+            device=str(torch_device),
+        )
+        scene_cache_hit = False
+        cached_scene = _get_sharp_scene_cache(scene_cache_key)
+        if cached_scene is not None:
+            scene_cache_hit = True
+            gaussians = cached_scene["gaussians"].to(torch_device)
+            metadata = cached_scene["metadata"]
+            f_px = float(cached_scene["f_px"])
+            width, height = metadata.resolution_px
+        else:
+            image_np, _, f_px = io.load_rgb(input_path)
+            height, width = image_np.shape[:2]
+            gaussians = predict_image(self._predictor, image_np, f_px, torch_device)
+            metadata = SceneMetaData(float(f_px), (width, height), "linearRGB")
+            _set_sharp_scene_cache(
+                scene_cache_key,
+                {
+                    "gaussians": gaussians.to(torch.device("cpu")),
+                    "metadata": metadata,
+                    "f_px": float(f_px),
+                },
+            )
         phase_index = self._select_phase_index(context)
         phase = DEFAULT_SHARP_PHASES[phase_index]
 
@@ -443,6 +641,8 @@ class ViewpointRerendering3DVariantAttack(BaseAttack):
             "variant_output_path": str(variant_path) if self.save_intermediates else None,
             "input_size": [width, height],
             "output_size": list(rendered.size),
+            "scene_cache_hit": scene_cache_hit,
+            "scene_cache": dict(sharp_scene_cache_stats()),
         }
 
     def apply_batch_impl(
