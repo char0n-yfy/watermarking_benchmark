@@ -2093,24 +2093,29 @@ a.button {
 
 .quality-analysis-grid {
   display: grid;
-  grid-template-columns: minmax(540px, 1.25fr) minmax(520px, 0.95fr);
+  grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 12px;
 }
 
+.quality-chart-panel .curve-chart {
+  min-height: 360px;
+}
+
 .quality-combo-list {
   display: grid;
-  gap: 6px;
-  max-height: 430px;
-  overflow-x: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 8px;
+  max-height: 220px;
+  overflow-x: clip;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 .quality-combo-row {
   display: grid;
-  grid-template-columns: auto minmax(110px, 0.82fr) minmax(180px, 1.16fr) minmax(150px, 0.98fr);
-  gap: 6px 9px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2118,8 +2123,8 @@ a.button {
   color: var(--ink);
   cursor: pointer;
   font: inherit;
-  min-height: 62px;
-  padding: 8px 10px;
+  min-height: 46px;
+  padding: 9px 11px;
   text-align: left;
 }
 
@@ -2135,30 +2140,19 @@ a.button {
 }
 
 .quality-combo-row span {
-  display: grid;
+  display: block;
   min-width: 0;
-  gap: 2px;
 }
 
-.quality-combo-row strong,
-.quality-combo-row em {
+.quality-combo-row strong {
   overflow: visible;
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: normal;
-}
-
-.quality-combo-row strong {
   color: var(--ink);
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-.quality-combo-row em {
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1.2;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.25;
 }
 
 .quality-chart-guide {
@@ -2293,11 +2287,11 @@ a.button {
   }
 
   .quality-combo-row {
-    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .quality-combo-row .combo-variant {
-    grid-column: 2 / -1;
+  .quality-combo-list {
+    grid-template-columns: 1fr;
   }
 
   .quality-filter-body {

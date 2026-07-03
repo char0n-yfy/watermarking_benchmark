@@ -698,7 +698,7 @@ export default function ResultsPage() {
         <InteractiveScoreBars metric={rankingMetric} rows={scoreRows} setMetric={setRankingMetric} />
 
         <section className="results-grid">
-          <div className="panel">
+          <div className="panel quality-chart-panel">
             <div className="panel-header">
               <h2>{t.results.benchmarkScore}</h2>
               <Trophy size={16} />
@@ -714,7 +714,7 @@ export default function ResultsPage() {
             </div>
           </div>
 
-          <div className="panel">
+          <div className="panel quality-combo-panel">
             <div className="panel-header">
               <h2>{t.results.radar}</h2>
               <BarChart3 size={16} />
@@ -1128,19 +1128,12 @@ export default function ResultsPage() {
                     color={curveDomainColor(qualitySeriesDomain, combo.key)}
                     shape={curveDomainShape(qualitySeriesDomain, combo.key)}
                   />
-                  <span className="combo-watermark">
-                    <strong>{displayAlgorithm(combo.algorithmId, resourceAlgorithmNames)}</strong>
-                    <em>{combo.datasetId}</em>
-                  </span>
-                  <span className="combo-attack">
-                    <strong>{displayAttackByIds(combo.attackPresetId, combo.attackMethod, resourceAttackNames)}</strong>
-                    <em>{displayAttackSubtitle(combo.attackMethod, combo.strengthName)}</em>
-                  </span>
-                  <span className="combo-variant">
-                    <strong>{combo.variantLabel}</strong>
-                    <em>
-                      {formatParamRange(combo.strengthName, combo.strengthMin, combo.strengthMax)}
-                    </em>
+                  <span className="combo-main">
+                    <strong>
+                      {displayAlgorithm(combo.algorithmId, resourceAlgorithmNames)} -{" "}
+                      {displayAttackByIds(combo.attackPresetId, combo.attackMethod, resourceAttackNames)} -{" "}
+                      {combo.variantLabel}
+                    </strong>
                   </span>
                 </button>
               ))}
