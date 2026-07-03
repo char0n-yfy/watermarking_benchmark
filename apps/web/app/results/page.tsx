@@ -45,8 +45,12 @@ import type {
 
 type ResultsTab = "overview" | "attack" | "quality" | "debug";
 type RankingMetric = "waves" | "robustness" | "fidelity" | "complexity";
+type QualitySelectorKey = "dataset" | "algorithm" | "attack";
 type StatusFilter = RunStatus | "all";
 type StringArraySetter = (value: string[] | ((current: string[]) => string[])) => void;
+type QualitySelectorSetter = (
+  value: QualitySelectorKey | null | ((current: QualitySelectorKey | null) => QualitySelectorKey | null)
+) => void;
 
 type ChartInsight = {
   kind: "run" | "algorithm" | "category" | "attack" | "curve";
@@ -142,6 +146,7 @@ export default function ResultsPage() {
   const [qualityDatasetIds, setQualityDatasetIds] = useState<string[]>([]);
   const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<string[]>([]);
   const [qualityAttackIds, setQualityAttackIds] = useState<string[]>([]);
+  const [activeQualitySelectorKey, setActiveQualitySelectorKey] = useState<QualitySelectorKey | null>("attack");
   const [debugStatus, setDebugStatus] = useState<StatusFilter>("all");
   const [debugAttack, setDebugAttack] = useState("all");
   const [debugSearch, setDebugSearch] = useState("");
@@ -270,49 +275,87 @@ export default function ResultsPage() {
 
   useEffect(() => {
     if (!selectedRunId) {
+      setResults(null);
+      setScore(null);
+      setLoading(false);
       return;
     }
     let cancelled = false;
-    setLoading(true);
     setNotice("");
-    fetchRunResults(selectedRunId)
-      .then((nextResults) => {
+    const selectedRun = runs.find((run) => run.id === selectedRunId);
+    if (selectedRun) {
+      setResults((current) =>
+        current?.run.id === selectedRun.id ? { ...current, run: selectedRun } : makeRunResultsShell(selectedRun)
+      );
+      setActiveInsight({
+        kind: "run",
+        title: selectedRun.taskName || selectedRun.configName || selectedRun.id,
+        body: `${selectedRun.completedProgress}/${selectedRun.cells} result units, status ${selectedRun.status}`,
+        meta: selectedRun.artifactRoot
+      });
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    const applyFullResults = (nextResults: RunResults) => {
+      if (!cancelled) {
+        setResults(nextResults);
+        setScore(nextResults.score ?? null);
+        setActiveInsight({
+          kind: "run",
+          title: nextResults.run.taskName || nextResults.run.configName || nextResults.run.id,
+          body: `${nextResults.resultUnits.length} result units, status ${nextResults.run.status}`,
+          meta: nextResults.run.artifactRoot
+        });
+      }
+    };
+
+    const loadFullResults = (showFailureNotice: boolean) => {
+      fetchRunResults(selectedRunId)
+        .then(applyFullResults)
+        .catch(() => {
+          if (!cancelled && showFailureNotice) {
+            setResults(null);
+            setScore(null);
+            setNotice(t.results.apiUnavailable);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    };
+
+    fetchRunScore(selectedRunId)
+      .then((scoreResponse) => {
         if (!cancelled) {
-          setResults(nextResults);
-          setScore(nextResults.score ?? null);
+          setScore(scoreResponse.score);
+          setResults((current) => ({
+            ...(current?.run.id === scoreResponse.run.id ? current : makeRunResultsShell(scoreResponse.run)),
+            run: scoreResponse.run,
+            score: scoreResponse.score,
+            summaryPath: scoreResponse.summaryPath,
+            summaryExists: scoreResponse.summaryExists
+          }));
           setActiveInsight({
             kind: "run",
-            title: nextResults.run.taskName || nextResults.run.configName || nextResults.run.id,
-            body: `${nextResults.resultUnits.length} result units, status ${nextResults.run.status}`,
-            meta: nextResults.run.artifactRoot
+            title: scoreResponse.run.taskName || scoreResponse.run.configName || scoreResponse.run.id,
+            body: `${scoreResponse.score.curvePoints.length} curve points, status ${scoreResponse.run.status}`,
+            meta: scoreResponse.run.artifactRoot
           });
-          if (!nextResults.score) {
-            fetchRunScore(nextResults.run.id)
-              .then((scoreResponse) => {
-                if (!cancelled) {
-                  setScore(scoreResponse.score);
-                }
-              })
-              .catch(() => undefined);
-          }
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setResults(null);
-          setScore(null);
-          setNotice(t.results.apiUnavailable);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
           setLoading(false);
         }
+        loadFullResults(false);
+      })
+      .catch(() => {
+        loadFullResults(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedRunId, t.results.apiUnavailable]);
+  }, [runs, selectedRunId, t.results.apiUnavailable]);
 
   const selectedSet = useMemo(() => new Set(selectedAlgorithmIds), [selectedAlgorithmIds]);
   const selectedScoreRows = useMemo(
@@ -560,6 +603,8 @@ export default function ResultsPage() {
           score={score}
           scoreRows={selectedScoreRows}
           selectedAlgorithmIds={selectedAlgorithmIds}
+          activeSelectorKey={activeQualitySelectorKey}
+          setActiveSelectorKey={setActiveQualitySelectorKey}
           setQualityAlgorithmIds={setQualityAlgorithmIds}
           setQualityAttackFilter={setQualityAttackFilter}
           setQualityAttackIds={setQualityAttackIds}
@@ -698,7 +743,7 @@ export default function ResultsPage() {
         <InteractiveScoreBars metric={rankingMetric} rows={scoreRows} setMetric={setRankingMetric} />
 
         <section className="results-grid">
-          <div className="panel quality-chart-panel">
+          <div className="panel">
             <div className="panel-header">
               <h2>{t.results.benchmarkScore}</h2>
               <Trophy size={16} />
@@ -895,6 +940,8 @@ export default function ResultsPage() {
     score,
     selectedAlgorithmIds,
     scoreRows,
+    activeSelectorKey,
+    setActiveSelectorKey,
     setQualityAlgorithmIds,
     setQualityAttackFilter,
     setQualityAttackIds,
@@ -910,6 +957,8 @@ export default function ResultsPage() {
     score: BenchmarkScore | null;
     selectedAlgorithmIds: string[];
     scoreRows: BenchmarkLeaderboardRow[];
+    activeSelectorKey: QualitySelectorKey | null;
+    setActiveSelectorKey: QualitySelectorSetter;
     setQualityAlgorithmIds: StringArraySetter;
     setQualityAttackFilter: (value: string) => void;
     setQualityAttackIds: StringArraySetter;
@@ -948,54 +997,46 @@ export default function ResultsPage() {
       filteredCurvePoints.map((point) => `${point.attackPresetId}:${point.attackParamStrength ?? point.attackStrength}`)
     ).size;
     const selectedVariantCount = new Set(filteredCurvePoints.map((point) => point.attackVariantKey ?? "default")).size;
-    const selectorPanel = ({
-      options,
-      selectedIds,
-      setSelectedIds,
-      title
-    }: {
+    const selectorConfigs: Array<{
+      key: QualitySelectorKey;
       options: QualitySelectorOption[];
       selectedIds: string[];
       setSelectedIds: StringArraySetter;
       title: string;
-    }) => (
-      <details className="quality-selector">
-        <summary>
-          <span>{title}</span>
-          <strong>
-            {selectedIds.length}/{options.length}
-          </strong>
-        </summary>
-        <div className="quality-selector-actions">
-          <button onClick={() => setSelectedIds(options.map((item) => item.id))} type="button">
-            {uiText("全选", "All")}
-          </button>
-          <button onClick={() => setSelectedIds([])} type="button">
-            {uiText("清空", "Clear")}
-          </button>
-        </div>
-        <div className="quality-selector-list">
-          {options.map((item) => (
-            <label className="quality-selector-option" key={item.id}>
-              <input
-                checked={selectedIds.includes(item.id)}
-                onChange={() =>
-                  setSelectedIds((current) =>
-                    current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
-                  )
-                }
-                type="checkbox"
-              />
-              <span>
-                <strong>{item.label}</strong>
-                <em>{item.meta}</em>
-              </span>
-              <b>{item.count}</b>
-            </label>
-          ))}
-        </div>
-      </details>
-    );
+    }> = [
+      {
+        key: "dataset",
+        options: datasetOptions,
+        selectedIds: qualityDatasetIds,
+        setSelectedIds: setQualityDatasetIds,
+        title: uiText("数据集", "Datasets")
+      },
+      {
+        key: "algorithm",
+        options: algorithmOptions,
+        selectedIds: qualityAlgorithmIds,
+        setSelectedIds: setQualityAlgorithmIds,
+        title: uiText("水印算法", "Watermark algorithms")
+      },
+      {
+        key: "attack",
+        options: attackOptions.map((item) => ({
+          id: item.attackPresetId,
+          label: displayAttackByIds(item.attackPresetId, item.attackMethod, resourceAttackNames),
+          meta: `${item.attackPresetId} / ${item.attackCategory} / ${item.variantCount} ${uiText("个变体", "variants")}`,
+          count: item.pointCount
+        })),
+        selectedIds: qualityAttackIds,
+        setSelectedIds: (value) => {
+          setQualityAttackIds(value);
+          if (typeof value !== "function") {
+            setQualityAttackFilter(value.length === 1 ? value[0] : "all");
+          }
+        },
+        title: uiText("攻击方法", "Attack methods")
+      }
+    ];
+    const activeSelector = activeSelectorKey ? selectorConfigs.find((item) => item.key === activeSelectorKey) ?? null : null;
 
     return (
       <>
@@ -1006,35 +1047,53 @@ export default function ResultsPage() {
           </div>
           <div className="panel-body">
             <div className="quality-selector-grid">
-              {selectorPanel({
-                options: datasetOptions,
-                selectedIds: qualityDatasetIds,
-                setSelectedIds: setQualityDatasetIds,
-                title: uiText("数据集", "Datasets")
-              })}
-              {selectorPanel({
-                options: algorithmOptions,
-                selectedIds: qualityAlgorithmIds,
-                setSelectedIds: setQualityAlgorithmIds,
-                title: uiText("水印算法", "Watermark algorithms")
-              })}
-              {selectorPanel({
-                options: attackOptions.map((item) => ({
-                  id: item.attackPresetId,
-                  label: displayAttackByIds(item.attackPresetId, item.attackMethod, resourceAttackNames),
-                  meta: `${item.attackPresetId} / ${item.attackCategory} / ${item.variantCount} ${uiText("个变体", "variants")}`,
-                  count: item.pointCount
-                })),
-                selectedIds: qualityAttackIds,
-                setSelectedIds: (value) => {
-                  setQualityAttackIds(value);
-                  if (typeof value !== "function") {
-                    setQualityAttackFilter(value.length === 1 ? value[0] : "all");
-                  }
-                },
-                title: uiText("攻击方法", "Attack methods")
-              })}
+              {selectorConfigs.map((config) => (
+                <button
+                  aria-expanded={activeSelectorKey === config.key}
+                  className={activeSelectorKey === config.key ? "quality-selector-trigger active" : "quality-selector-trigger"}
+                  key={config.key}
+                  onClick={() => setActiveSelectorKey((current) => (current === config.key ? null : config.key))}
+                  type="button"
+                >
+                  <span>{config.title}</span>
+                  <strong>
+                    {config.selectedIds.length}/{config.options.length}
+                  </strong>
+                </button>
+              ))}
             </div>
+            {activeSelector ? (
+            <div className="quality-selector-drawer">
+              <div className="quality-selector-actions">
+                <button onClick={() => activeSelector.setSelectedIds(activeSelector.options.map((item) => item.id))} type="button">
+                  {uiText("全选", "All")}
+                </button>
+                <button onClick={() => activeSelector.setSelectedIds([])} type="button">
+                  {uiText("清空", "Clear")}
+                </button>
+              </div>
+              <div className="quality-selector-list">
+                {activeSelector.options.map((item) => (
+                  <label className="quality-selector-option" key={item.id}>
+                    <input
+                      checked={activeSelector.selectedIds.includes(item.id)}
+                      onChange={() =>
+                        activeSelector.setSelectedIds((current) =>
+                          current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{item.label}</strong>
+                      <em>{item.meta}</em>
+                    </span>
+                    <b>{item.count}</b>
+                  </label>
+                ))}
+              </div>
+            </div>
+            ) : null}
             <div className="quality-selection-summary">
               <span>
                 {filteredCurvePoints.length} {uiText("个曲线点", "curve points")} / {comboSummaries.length}{" "}
@@ -1053,7 +1112,7 @@ export default function ResultsPage() {
         </section>
 
         <section className="quality-analysis-grid">
-          <div className="panel">
+          <div className="panel quality-chart-panel">
             <div className="panel-header">
               <h2>{t.results.qualityRobustness}</h2>
               <BarChart3 size={16} />
@@ -2016,7 +2075,7 @@ function displayAlgorithm(id: string, resourceNames: Record<string, string> = {}
 
 function displayAttack(value: string, resourceNames: Record<string, string> = {}): string {
   const normalized = value.replace(/^atk[-_]/, "").replace(/-/g, "_");
-  return (
+  return fixMojibakeLabel(
     resourceNames[value] ??
     resourceNames[normalized] ??
     RESULT_ATTACK_LABELS[normalized] ??
@@ -2026,7 +2085,7 @@ function displayAttack(value: string, resourceNames: Record<string, string> = {}
 }
 
 function displayAttackByIds(presetId: string, method: string, resourceNames: Record<string, string> = {}): string {
-  return resourceNames[presetId] ?? displayAttack(method || presetId, resourceNames);
+  return fixMojibakeLabel(resourceNames[presetId] ?? displayAttack(method || presetId, resourceNames));
 }
 
 function displayAttackPoint(point: BenchmarkCurvePoint, resourceNames: Record<string, string> = {}): string {
@@ -2062,10 +2121,11 @@ function localizedAlgorithmResourceName(language: string, algorithm: AlgorithmVe
 }
 
 function localizedAttackResourceName(language: string, attack: AttackPreset): string {
+  const fallback = RESULT_ATTACK_LABELS[attack.method] ?? displayParameterizedAttack(attack.method) ?? attack.name;
   if (language === "zh") {
-    return RESULT_ATTACK_LABELS[attack.method] ?? displayParameterizedAttack(attack.method) ?? attack.name;
+    return fixMojibakeLabel(fallback);
   }
-  return attack.name || RESULT_ATTACK_LABELS[attack.method] || displayParameterizedAttack(attack.method) || displayAttack(attack.method);
+  return fixMojibakeLabel(attack.name || fallback || displayAttack(attack.method));
 }
 
 function displayParameterizedAttack(method: string): string | null {
@@ -2073,15 +2133,28 @@ function displayParameterizedAttack(method: string): string | null {
   const viewpoint = normalized.match(/^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)$/);
   if (viewpoint) {
     const motion: Record<string, string> = {
-      rotate: "鏃嬭浆",
-      rotate_forward: "鍓嶅悜鏃嬭浆",
-      shake: "鏅冨姩",
-      swipe: "骞崇Щ"
+      rotate: "旋转",
+      rotate_forward: "前向旋转",
+      shake: "晃动",
+      swipe: "平移"
     };
-    const target = viewpoint[2] === "point" ? "瀹氱偣" : "鍓嶈";
-    return `3D 瑙嗚閲嶆覆鏌?${motion[viewpoint[1]] ?? viewpoint[1]}-${target}`;
+    const target = viewpoint[2] === "point" ? "定点" : "前视";
+    return `3D 视角重渲染-${motion[viewpoint[1]] ?? viewpoint[1]}-${target}`;
   }
   return null;
+}
+
+function fixMojibakeLabel(value: string): string {
+  return value
+    .replaceAll("鏃嬭浆", "旋转")
+    .replaceAll("鍓嶅悜鏃嬭浆", "前向旋转")
+    .replaceAll("鏅冨姩", "晃动")
+    .replaceAll("骞崇Щ", "平移")
+    .replaceAll("瀹氱偣", "定点")
+    .replaceAll("鍓嶈", "前视")
+    .replaceAll("瑙嗚", "视角")
+    .replaceAll("閲嶆覆鏌?", "重渲染")
+    .replaceAll("3D 视角重渲染?", "3D 视角重渲染");
 }
 
 function displayTokenLabel(value: string): string {
@@ -2358,6 +2431,17 @@ function qualityPointKey(point: BenchmarkCurvePoint, index?: number): string {
     point.yTprAtFpr,
     index ?? ""
   ].join(":");
+}
+
+function makeRunResultsShell(run: DemoRunRecord): RunResults {
+  return {
+    run,
+    resultUnits: [],
+    summaryPath: `${run.artifactRoot}/run_summary.json`,
+    summaryExists: false,
+    summary: null,
+    aggregates: []
+  };
 }
 
 function buildRunSummary(results: RunResults | null, score: BenchmarkScore | null) {

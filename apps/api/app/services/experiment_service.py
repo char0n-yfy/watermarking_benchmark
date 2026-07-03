@@ -120,6 +120,9 @@ class ExperimentService:
         self.resources_root = resources_root
         self.runs_root = runs_root
         self.database.initialize()
+        self._cache_lock = threading.Lock()
+        self._result_units_cache: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+        self._score_cache: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 
     def create_config(self, name: str, selection: dict[str, Any]) -> dict[str, Any]:
         now = utc_now()
@@ -746,6 +749,16 @@ class ExperimentService:
 
     def list_run_result_units(self, run_id: str) -> list[dict[str, Any]]:
         run = self.get_run(run_id)
+        return self._list_run_result_units_for_run(run)
+
+    def _list_run_result_units_for_run(self, run: dict[str, Any]) -> list[dict[str, Any]]:
+        cache_key = str(run["id"])
+        signature = self._run_artifact_signature(run, include_summary=False)
+        with self._cache_lock:
+            cached = self._result_units_cache.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+
         result_units = read_jsonl(Path(run["artifactRoot"]) / "result_units.jsonl")
         latest: dict[str, dict[str, Any]] = {}
         for unit in result_units:
@@ -753,7 +766,10 @@ class ExperimentService:
             if isinstance(key, str):
                 latest[key] = unit
         units = sorted(latest.values(), key=lambda unit: str(unit.get("resultUnitKey") or unit.get("cellKey") or ""))
-        return self._attach_scoring_from_run_records(run, units)
+        scored_units = self._attach_scoring_from_run_records(run, units)
+        with self._cache_lock:
+            self._result_units_cache[cache_key] = (signature, scored_units)
+        return scored_units
 
     def _attach_scoring_from_run_records(self, run: dict[str, Any], result_units: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not result_units or all(isinstance(unit.get("scoring"), dict) for unit in result_units):
@@ -826,39 +842,112 @@ class ExperimentService:
 
     def get_run_results(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
-        summary_path = Path(run["artifactRoot"]) / "run_summary.json"
-        result_units = self.list_run_result_units(run_id)
-        summary = None
-        if summary_path.exists():
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            if isinstance(summary, dict):
-                summary = {
-                    **summary,
-                    "runId": run["id"],
-                    "status": run["status"],
-                    "progress": run["progress"],
-                    "completedProgress": run["completedProgress"],
-                    "progressKind": summary.get("progressKind") or run["progressKind"],
-                }
+        summary_path, summary_exists, summary = self._read_run_summary(run)
+        result_units = self._list_run_result_units_for_run(run)
+        score = self._score_for_run(run, summary, result_units)
+        response_summary = self._summary_for_response(summary)
         return {
             "run": run,
             "resultUnits": result_units,
             "summaryPath": str(summary_path),
-            "summaryExists": summary_path.exists(),
-            "summary": summary,
-            "aggregates": summary.get("aggregates", []) if isinstance(summary, dict) else [],
-            "score": self._score_from_summary_or_result_units(summary, result_units),
+            "summaryExists": summary_exists,
+            "summary": response_summary,
+            "aggregates": response_summary.get("aggregates", []) if isinstance(response_summary, dict) else [],
+            "score": score,
         }
 
     def get_run_score(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
-        results = self.get_run_results(run_id)
+        summary_path = Path(run["artifactRoot"]) / "run_summary.json"
+        summary_exists = summary_path.exists()
+        signature = self._run_artifact_signature(run, include_summary=True)
+        with self._cache_lock:
+            cached = self._score_cache.get(str(run["id"]))
+            if cached is not None and cached[0] == signature:
+                return {
+                    "run": run,
+                    "score": cached[1],
+                    "summaryPath": str(summary_path),
+                    "summaryExists": summary_exists,
+                }
+        summary_path, summary_exists, summary = self._read_run_summary(run)
         return {
             "run": run,
-            "score": results["score"],
-            "summaryPath": results["summaryPath"],
-            "summaryExists": results["summaryExists"],
+            "score": self._score_for_run(run, summary),
+            "summaryPath": str(summary_path),
+            "summaryExists": summary_exists,
         }
+
+    def _read_run_summary(self, run: dict[str, Any]) -> tuple[Path, bool, dict[str, Any] | None]:
+        summary_path = Path(run["artifactRoot"]) / "run_summary.json"
+        if not summary_path.exists():
+            return summary_path, False, None
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if not isinstance(summary, dict):
+            return summary_path, True, None
+        return (
+            summary_path,
+            True,
+            {
+                **summary,
+                "runId": run["id"],
+                "status": run["status"],
+                "progress": run["progress"],
+                "completedProgress": run["completedProgress"],
+                "progressKind": summary.get("progressKind") or run["progressKind"],
+            },
+        )
+
+    @staticmethod
+    def _summary_for_response(summary: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(summary, dict):
+            return summary
+        result_units = summary.get("resultUnits")
+        if not isinstance(result_units, list):
+            return summary
+        response_summary = dict(summary)
+        response_summary["resultUnitCount"] = len(result_units)
+        response_summary.pop("resultUnits", None)
+        return response_summary
+
+    def _score_for_run(
+        self,
+        run: dict[str, Any],
+        summary: dict[str, Any] | None,
+        result_units: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        cache_key = str(run["id"])
+        signature = self._run_artifact_signature(run, include_summary=True)
+        with self._cache_lock:
+            cached = self._score_cache.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+
+        if isinstance(summary, dict) and isinstance(summary.get("score"), dict):
+            score = summary["score"]
+        else:
+            if result_units is None:
+                result_units = self._list_run_result_units_for_run(run)
+            score = self._score_from_summary_or_result_units(summary, result_units)
+        with self._cache_lock:
+            self._score_cache[cache_key] = (signature, score)
+        return score
+
+    def _run_artifact_signature(self, run: dict[str, Any], *, include_summary: bool) -> tuple[Any, ...]:
+        artifact_root = Path(str(run["artifactRoot"]))
+        filenames = ["result_units.jsonl", "image_detection.jsonl", "image_quality.jsonl"]
+        if include_summary:
+            filenames.append("run_summary.json")
+        parts: list[Any] = [str(artifact_root)]
+        for filename in filenames:
+            path = artifact_root / filename
+            try:
+                stat = path.stat()
+            except OSError:
+                parts.append((filename, None, None))
+            else:
+                parts.append((filename, stat.st_mtime_ns, stat.st_size))
+        return tuple(parts)
 
     def list_benchmark_protocols(self) -> list[dict[str, Any]]:
         return benchmark_protocols()
@@ -955,6 +1044,8 @@ class ExperimentService:
             )
 
     def _prune_dead_worker_heartbeats(self, connection: Any) -> None:
+        if os.name != "posix" or not Path("/proc").exists():
+            return
         rows = connection.execute("SELECT worker_id, pid FROM worker_heartbeats").fetchall()
         dead_ids = [
             row["worker_id"]

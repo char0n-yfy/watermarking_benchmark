@@ -22,6 +22,7 @@ from app.services.local_artifacts import (
     compact_result_units_file,
     write_jsonl,
 )
+from app.services.scoring import PROTOCOL_ID
 
 
 class ExperimentServiceTest(unittest.TestCase):
@@ -179,11 +180,11 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(extract_manifest[0]["decodedBits"], extract_manifest[0]["expectedBits"])
             self.assertNotIn("bitAccuracy", results["resultUnits"][0])
             self.assertEqual(results["aggregates"], [])
-            self.assertEqual(results["score"]["protocolId"], "waves-official-detection-v1")
+            self.assertEqual(results["score"]["protocolId"], PROTOCOL_ID)
             self.assertEqual(score["score"]["status"], "provisional")
             self.assertNotIn("score", results["summary"])
             self.assertNotIn("aggregates", results["summary"])
-            self.assertEqual(service.list_benchmark_protocols()[0]["id"], "waves-official-detection-v1")
+            self.assertEqual(service.list_benchmark_protocols()[0]["id"], PROTOCOL_ID)
             self.assertTrue(results["summaryExists"])
 
     def test_create_run_records_task_name(self) -> None:
