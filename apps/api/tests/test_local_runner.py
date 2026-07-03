@@ -167,6 +167,16 @@ class LocalRunnerTest(unittest.TestCase):
                 self.assertNotIn(field, runtime_record)
             self.assertFalse((Path(result_unit["outputDir"]) / "attacked").exists())
 
+            runtime_elapsed_before_resume = sum(
+                float(json.loads(line).get("elapsedMs") or 0.0)
+                for line in (run_root / "runtime_profile.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+            summary_path = run_root / "run_summary.json"
+            stored_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            stored_summary["elapsedMs"] = 1.0
+            summary_path.write_text(json.dumps(stored_summary), encoding="utf-8")
+
             with patch.dict(os.environ, {"WM_BENCH_CACHE_ROOT": ""}):
                 resumed = run_local_experiment(
                     LocalRunRequest(
@@ -185,6 +195,26 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertEqual(resumed["status"], "succeeded")
             self.assertEqual(resumed["resultUnitCount"], 1)
             self.assertEqual(resumed["skippedResultUnits"], 1)
+            self.assertGreaterEqual(resumed["elapsedMs"], runtime_elapsed_before_resume)
+
+            resumed_phase_state = json.loads((run_root / "phase_state.json").read_text(encoding="utf-8"))
+            phase_by_key = {phase["key"]: phase for phase in resumed_phase_state["phases"]}
+            for phase_key in (
+                "canonical",
+                "watermark_embed",
+                "attack",
+                "watermark_extract",
+                "quality",
+                "summary",
+            ):
+                self.assertEqual(phase_by_key[phase_key]["current"], phase_by_key[phase_key]["total"])
+            self.assertEqual(phase_by_key["canonical"]["counters"]["imagesDone"], 1)
+            self.assertEqual(phase_by_key["watermark_embed"]["counters"]["imagesDone"], 1)
+            self.assertEqual(phase_by_key["attack"]["counters"]["positiveImagesDone"], 1)
+            self.assertEqual(phase_by_key["attack"]["counters"]["negativeImagesDone"], 1)
+            self.assertEqual(phase_by_key["watermark_extract"]["counters"]["imagesDone"], 2)
+            self.assertEqual(phase_by_key["quality"]["counters"]["pairsDone"], 2)
+            self.assertEqual(phase_by_key["summary"]["counters"]["skippedUnits"], 1)
 
     def test_negative_attack_outputs_are_reused_across_algorithms(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

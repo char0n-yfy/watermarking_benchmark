@@ -203,7 +203,6 @@ class DatasetStage:
     paths: dict[str, Path]
     run_id: str
     append_jsonl: Callable[..., None]
-    stage_event: Callable[..., None]
     image_sample_id: Callable[[Path, Path], str]
     utc_timestamp: Callable[[], str]
 
@@ -216,7 +215,6 @@ class DatasetStage:
         max_samples: int,
         existing_sample_keys: set[tuple[str, str]],
     ) -> DatasetStageResult:
-        self.stage_event(self.paths, self.run_id, "dataset", "started", datasetId=dataset_id)
         staged_samples = copy_canonical_samples(dataset_path, input_dir, max_samples)
         copied_samples = [sample.path for sample in staged_samples]
         if not staged_samples:
@@ -271,7 +269,6 @@ class WatermarkStage:
     record_runtime_profile: Callable[..., None]
     record_watermark_embed_results: Callable[..., None]
     record_quality_pairs: Callable[..., list[JsonDict]]
-    stage_event: Callable[..., None]
 
     def embed(
         self,
@@ -286,16 +283,6 @@ class WatermarkStage:
         output_dir: Path,
         copied_samples: list[Path],
     ) -> WatermarkStageResult:
-        self.stage_event(
-            self.paths,
-            self.run_id,
-            "watermark_embed",
-            "started",
-            cellKey=embed_key,
-            datasetId=dataset_id,
-            algorithmId=algorithm_id,
-            seed=seed,
-        )
         self.reset_gpu_peak(self.device)
         started = time.perf_counter()
         watermark_method = get_cached_watermark(algorithm["method"], algorithm_params, self.device)
@@ -357,14 +344,6 @@ class WatermarkStage:
             reference_dir=input_dir,
             target_dir=output_dir,
             device=self.device,
-        )
-        self.stage_event(
-            self.paths,
-            self.run_id,
-            "watermark_embed",
-            "succeeded",
-            cellKey=embed_key,
-            elapsedMs=elapsed_ms,
         )
         return WatermarkStageResult(
             method=watermark_method,
@@ -763,7 +742,6 @@ class QualityStage:
             device=self.device,
             quality_pair_cache=quality_pair_cache,
         )
-        return [*original_records, *watermarked_records]
 
 
 @dataclass
