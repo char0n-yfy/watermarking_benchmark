@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,13 +11,14 @@ from uuid import uuid4
 from app.core.local_db import (
     LocalDatabase,
     dumps_json,
-    row_to_cell,
     row_to_config,
     row_to_run,
 )
 from app.core.storage import safe_segment
+from app.services.local_artifacts import default_phase_states, read_json_object, read_jsonl
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
 from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
+from app.services.runtime_resource_manager import release_runtime_resources
 from app.services.runtime_parallel_config import apply_runtime_parallel_env
 from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols
 
@@ -48,6 +51,28 @@ def _selection_override_keys(selection: dict[str, Any], field: str) -> list[str]
     if not isinstance(value, dict):
         raise ValueError(f"{field} must be an object")
     return [str(item) for item in value.keys()]
+
+
+def _tail_lines(path: Path, max_lines: int, *, chunk_size: int = 64 * 1024) -> list[str]:
+    if max_lines <= 0 or not path.exists():
+        return []
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            chunks: list[bytes] = []
+            newline_count = 0
+            while position > 0 and newline_count <= max_lines:
+                read_size = min(chunk_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                chunks.append(chunk)
+                newline_count += chunk.count(b"\n")
+            data = b"".join(reversed(chunks))
+    except OSError:
+        return []
+    return data.decode("utf-8", errors="replace").splitlines()[-max_lines:]
 
 
 def validate_selection_resource_ids(selection: dict[str, Any], resources_root: Path) -> None:
@@ -275,23 +300,26 @@ class ExperimentService:
         config = self.get_config(run["configId"])
         now = utc_now()
         log_path_value = str(log_path) if log_path is not None else run.get("logPath")
-        existing_completed = sum(
-            1 for cell in self.list_run_cells(run_id) if cell.get("status") == "succeeded"
-        )
-        initial_progress = int(round((existing_completed / max(1, run["cells"])) * 100))
         with self.database.connect() as connection:
             connection.execute(
                 """
                 UPDATE experiment_runs
-                SET status = ?, progress = ?, worker_id = COALESCE(?, worker_id),
+                SET status = ?, worker_id = COALESCE(?, worker_id),
                     log_path = COALESCE(?, log_path),
                     started_at = COALESCE(started_at, ?), updated_at = ?
                 WHERE id = ?
                 """,
-                ("running", initial_progress, worker_id, log_path_value, now, now, run_id),
+                ("running", worker_id, log_path_value, now, now, run_id),
             )
 
-        completed = existing_completed
+        heartbeat_stop: threading.Event | None = None
+        heartbeat_thread: threading.Thread | None = None
+        if worker_id:
+            heartbeat_stop, heartbeat_thread = self._start_run_heartbeat(
+                worker_id=worker_id,
+                device=device,
+                run_id=run_id,
+            )
 
         def stop_intent() -> str | None:
             try:
@@ -302,47 +330,10 @@ class ExperimentService:
                 return self._stop_intent(current_run)
             return None
 
-        def record_cell(cell: dict[str, Any]) -> None:
-            nonlocal completed
-            completed += 1
-            progress = int(round((completed / max(1, run["cells"])) * 100))
-            cell_id = f"{run_id}:{cell['cellKey']}"
+        def record_run_state(state: dict[str, Any]) -> None:
+            progress = int(state.get("overallProgress") or state.get("progress") or 0)
             timestamp = utc_now()
             with self.database.connect() as connection:
-                connection.execute(
-                    """
-                    INSERT OR REPLACE INTO experiment_cells (
-                      id, run_id, cell_key, status, dataset_id, algorithm_id,
-                      watermark_method, attack_preset_id, attack_method,
-                      attack_strength, seed, sample_count, bit_accuracy,
-                      bit_error_rate, elapsed_ms, manifest_path, output_dir,
-                      error, summary_json, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        cell_id,
-                        run_id,
-                        cell["cellKey"],
-                        cell["status"],
-                        cell["datasetId"],
-                        cell["algorithmId"],
-                        cell["watermarkMethod"],
-                        cell["attackPresetId"],
-                        cell["attackMethod"],
-                        cell["attackStrength"],
-                        cell["seed"],
-                        cell["sampleCount"],
-                        cell.get("bitAccuracy"),
-                        cell.get("bitErrorRate"),
-                        cell.get("elapsedMs"),
-                        cell["manifestPath"],
-                        cell["outputDir"],
-                        cell["error"],
-                        dumps_json(cell),
-                        timestamp,
-                    ),
-                )
                 connection.execute(
                     """
                     UPDATE experiment_runs
@@ -362,7 +353,7 @@ class ExperimentService:
                     device=device,
                     resume=True,
                 ),
-                on_cell=record_cell,
+                on_state=record_run_state,
                 should_cancel=stop_intent,
             )
             status = self._run_status_from_summary(run_id, summary["status"])
@@ -371,12 +362,20 @@ class ExperimentService:
             summary = None
             status = "failed"
             error = f"{type(exc).__name__}: {exc}"
+            cleanup_errors = release_runtime_resources()
+            if cleanup_errors:
+                error = f"{error}; cleanup errors: {'; '.join(cleanup_errors)}"
+        finally:
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=2.0)
 
         finished = utc_now()
         final_progress = (
             summary["progress"]
             if summary is not None
-            else int(round((len(self.list_run_cells(run_id)) / max(1, run["cells"])) * 100))
+            else self.get_run(run_id).get("progress", 0)
         )
         with self.database.connect() as connection:
             connection.execute(
@@ -389,16 +388,41 @@ class ExperimentService:
             )
         return self.get_run(run_id)
 
+    def _start_run_heartbeat(
+        self,
+        *,
+        worker_id: str,
+        device: str,
+        run_id: str,
+    ) -> tuple[threading.Event, threading.Thread]:
+        stop = threading.Event()
+        interval = max(1.0, min(10.0, _worker_poll_seconds()))
+
+        def beat() -> None:
+            while not stop.is_set():
+                try:
+                    self.update_worker_heartbeat(
+                        worker_id=worker_id,
+                        status="running",
+                        pid=os.getpid(),
+                        device=device,
+                        current_run_id=run_id,
+                        message=f"executing {run_id}",
+                    )
+                except Exception:
+                    pass
+                stop.wait(interval)
+
+        thread = threading.Thread(target=beat, name=f"wmbench-heartbeat-{run_id}", daemon=True)
+        thread.start()
+        return stop, thread
+
     def resume_run(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
         if run["status"] in {"queued", "running"}:
             return run
         if run["status"] not in RESUMABLE_STATUSES:
             raise ValueError(f"Run cannot be resumed from status: {run['status']}")
-        existing_completed = sum(
-            1 for cell in self.list_run_cells(run_id) if cell.get("status") == "succeeded"
-        )
-        progress = int(round((existing_completed / max(1, run["cells"])) * 100))
         now = utc_now()
         with self.database.connect() as connection:
             connection.execute(
@@ -408,7 +432,7 @@ class ExperimentService:
                     stop_intent = NULL, worker_id = NULL, finished_at = NULL, updated_at = ?
                 WHERE id = ?
                 """,
-                ("queued", progress, now, run_id),
+                ("queued", run["progress"], now, run_id),
             )
         return self.get_run(run_id)
 
@@ -467,7 +491,7 @@ class ExperimentService:
                     """,
                     tuple(active_statuses),
                 ).fetchall()
-                return [row_to_run(row) for row in rows]
+                return [self._enrich_run_with_state(row_to_run(row)) for row in rows]
             if scope == "unfinished":
                 rows = connection.execute(
                     """
@@ -486,11 +510,11 @@ class ExperimentService:
                     """,
                     tuple(unfinished_statuses),
                 ).fetchall()
-                return [row_to_run(row) for row in rows]
+                return [self._enrich_run_with_state(row_to_run(row)) for row in rows]
             rows = connection.execute(
                 "SELECT * FROM experiment_runs ORDER BY created_at DESC"
             ).fetchall()
-        return [row_to_run(row) for row in rows]
+        return [self._enrich_run_with_state(row_to_run(row)) for row in rows]
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:
@@ -500,20 +524,92 @@ class ExperimentService:
             ).fetchone()
         if row is None:
             raise KeyError(f"Unknown run id: {run_id}")
-        return row_to_run(row)
+        return self._enrich_run_with_state(row_to_run(row))
 
-    def list_run_cells(self, run_id: str) -> list[dict[str, Any]]:
-        with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM experiment_cells WHERE run_id = ? ORDER BY cell_key",
-                (run_id,),
-            ).fetchall()
-        return [row_to_cell(row) for row in rows]
+    def _run_state_path(self, run: dict[str, Any]) -> Path:
+        return Path(str(run["artifactRoot"])) / "run_state.json"
+
+    def _phase_state_path(self, run: dict[str, Any]) -> Path:
+        return Path(str(run["artifactRoot"])) / "phase_state.json"
+
+    def _artifact_tree_path(self, run: dict[str, Any]) -> Path:
+        return Path(str(run["artifactRoot"])) / "artifact_tree.json"
+
+    def _enrich_run_with_state(self, run: dict[str, Any]) -> dict[str, Any]:
+        state = read_json_object(self._run_state_path(run))
+        if not state:
+            current_phase = "summary" if run["status"] in TERMINAL_STATUSES else "canonical"
+            return {
+                **run,
+                "progressKind": "phaseOperations",
+                "currentPhase": current_phase,
+                "phases": default_phase_states(),
+                "runStatePath": str(self._run_state_path(run)),
+                "phaseStatePath": str(self._phase_state_path(run)),
+                "artifactTreePath": str(self._artifact_tree_path(run)),
+            }
+        progress = int(state.get("overallProgress") or state.get("progress") or run.get("progress") or 0)
+        return {
+            **run,
+            "progress": progress,
+            "completedProgress": progress,
+            "progressKind": str(state.get("progressKind") or "phaseOperations"),
+            "currentPhase": state.get("currentPhase"),
+            "phases": state.get("phases") if isinstance(state.get("phases"), list) else [],
+            "runStatePath": str(self._run_state_path(run)),
+            "phaseStatePath": str(self._phase_state_path(run)),
+            "artifactTreePath": str(self._artifact_tree_path(run)),
+        }
+
+    def get_run_state(self, run_id: str) -> dict[str, Any]:
+        run = self.get_run(run_id)
+        state = read_json_object(self._run_state_path(run))
+        if not state:
+            phases = default_phase_states()
+            current_phase = "summary" if run["status"] in TERMINAL_STATUSES else "canonical"
+            state = {
+                "runId": run_id,
+                "status": run["status"],
+                "currentPhase": current_phase,
+                "overallProgress": run["progress"],
+                "progress": run["progress"],
+                "progressKind": "phaseOperations",
+                "expectedResultUnits": run["cells"],
+                "artifactRoot": run["artifactRoot"],
+                "phaseStatePath": str(self._phase_state_path(run)),
+                "artifactTreePath": str(self._artifact_tree_path(run)),
+                "summaryPath": str(Path(run["artifactRoot"]) / "run_summary.json"),
+                "phases": phases,
+                "updatedAt": run.get("updatedAt"),
+            }
+        return {**state, "run": run}
+
+    def get_run_tree(self, run_id: str) -> dict[str, Any]:
+        run = self.get_run(run_id)
+        tree = read_json_object(self._artifact_tree_path(run))
+        if not tree:
+            return {
+                "runId": run_id,
+                "artifactRoot": run["artifactRoot"],
+                "datasets": {},
+                "exists": False,
+            }
+        return {**tree, "exists": True, "artifactRoot": run["artifactRoot"]}
+
+    def list_run_result_units(self, run_id: str) -> list[dict[str, Any]]:
+        run = self.get_run(run_id)
+        result_units = read_jsonl(Path(run["artifactRoot"]) / "result_units.jsonl")
+        latest: dict[str, dict[str, Any]] = {}
+        for unit in result_units:
+            key = unit.get("resultUnitKey") or unit.get("cellKey")
+            if isinstance(key, str):
+                latest[key] = unit
+        return sorted(latest.values(), key=lambda unit: str(unit.get("resultUnitKey") or unit.get("cellKey") or ""))
 
     def get_run_results(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
-        cells = self.list_run_cells(run_id)
         summary_path = Path(run["artifactRoot"]) / "run_summary.json"
+        result_units = self.list_run_result_units(run_id)
         summary = None
         if summary_path.exists():
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -524,16 +620,16 @@ class ExperimentService:
                     "status": run["status"],
                     "progress": run["progress"],
                     "completedProgress": run["completedProgress"],
-                    "progressKind": run["progressKind"],
+                    "progressKind": summary.get("progressKind") or run["progressKind"],
                 }
         return {
             "run": run,
-            "cells": cells,
+            "resultUnits": result_units,
             "summaryPath": str(summary_path),
             "summaryExists": summary_path.exists(),
             "summary": summary,
             "aggregates": summary.get("aggregates", []) if isinstance(summary, dict) else [],
-            "score": self._score_from_summary_or_cells(summary, cells),
+            "score": self._score_from_summary_or_result_units(summary, result_units),
         }
 
     def get_run_score(self, run_id: str) -> dict[str, Any]:
@@ -587,35 +683,12 @@ class ExperimentService:
         exists = path.exists()
         lines: list[str] = []
         if exists:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            lines = text.splitlines()[-max_lines:]
+            lines = _tail_lines(path, max_lines)
         return {
             "runId": run_id,
             "logPath": log_path,
             "exists": exists,
             "lines": lines,
-        }
-
-    def get_run_events(self, run_id: str, *, max_events: int = 80) -> dict[str, Any]:
-        run = self.get_run(run_id)
-        event_path = Path(run["artifactRoot"]) / "stage_events.jsonl"
-        exists = event_path.exists()
-        events: list[dict[str, Any]] = []
-        if exists:
-            for line in event_path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(item, dict):
-                    events.append(item)
-        return {
-            "runId": run_id,
-            "eventPath": str(event_path),
-            "exists": exists,
-            "events": events[-max_events:],
         }
 
     def update_worker_heartbeat(
@@ -738,20 +811,16 @@ class ExperimentService:
             return str(intent)
         return STOP_INTENT_PAUSE
 
-    def _score_from_summary_or_cells(
+    def _score_from_summary_or_result_units(
         self,
         summary: dict[str, Any] | None,
-        cells: list[dict[str, Any]],
+        result_units: list[dict[str, Any]],
     ) -> dict[str, Any]:
         if isinstance(summary, dict) and isinstance(summary.get("score"), dict):
             return summary["score"]
-        if isinstance(summary, dict) and isinstance(summary.get("cells"), list):
-            return aggregate_benchmark_score(summary["cells"])
-        hydrated_cells: list[dict[str, Any]] = []
-        for cell in cells:
-            cell_summary = cell.get("summary") if isinstance(cell.get("summary"), dict) else {}
-            hydrated_cells.append({**cell, **cell_summary})
-        return aggregate_benchmark_score(hydrated_cells)
+        if isinstance(summary, dict) and isinstance(summary.get("resultUnits"), list):
+            return aggregate_benchmark_score(summary["resultUnits"])
+        return aggregate_benchmark_score(result_units)
 
 
 def utc_now() -> str:

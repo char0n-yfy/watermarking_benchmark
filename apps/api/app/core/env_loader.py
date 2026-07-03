@@ -7,6 +7,12 @@ _LOADED = False
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
+def _looks_like_autodl_host() -> bool:
+    if os.getenv("AUTODL_CONTAINER_ID") or os.getenv("AUTODL_PROJECT_ID"):
+        return True
+    return Path("/root/autodl-fs").exists() or Path("/root/autodl-tmp").exists()
+
+
 def _env_file_path() -> Path:
     configured = os.getenv("WM_BENCH_DOTENV_PATH")
     if configured:
@@ -14,6 +20,10 @@ def _env_file_path() -> Path:
         if not path.is_absolute():
             path = PROJECT_ROOT / path
         return path.resolve()
+    default_env = PROJECT_ROOT / ".env"
+    autodl_env = PROJECT_ROOT / ".env.autodl"
+    if _looks_like_autodl_host() and not default_env.is_file() and autodl_env.is_file():
+        return autodl_env.resolve()
     return PROJECT_ROOT / ".env"
 
 

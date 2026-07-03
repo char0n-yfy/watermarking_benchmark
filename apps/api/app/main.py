@@ -67,6 +67,17 @@ def create_app() -> FastAPI:
         accept = request.headers.get("accept", "").lower()
         return "text/html" in accept and "application/json" not in accept
 
+    def request_api_port(request: Request) -> int:
+        server = request.scope.get("server")
+        if isinstance(server, (list, tuple)) and len(server) >= 2:
+            try:
+                return int(server[1])
+            except (TypeError, ValueError):
+                pass
+        if request.url.port is not None:
+            return int(request.url.port)
+        return settings.api_port
+
     app = FastAPI(
         title="Watermark Benchmark API",
         version="0.1.0",
@@ -91,19 +102,23 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health(request: Request) -> dict[str, str]:
         return {
             "status": "ok",
             "environment": settings.environment,
+            "device": settings.device,
             "data_root": str(settings.data_root),
             "resources_root": str(settings.resources_root),
             "runs_root": str(settings.runs_root),
             "database_path": str(settings.database_path),
+            "api_port": str(request_api_port(request)),
+            "configured_api_port": str(settings.api_port),
         }
 
     @app.get("/system/runtime")
-    def runtime() -> dict[str, object]:
+    def runtime(request: Request) -> dict[str, object]:
         workers = service.list_worker_heartbeats()
+        effective_api_port = request_api_port(request)
         return {
             "environment": settings.environment,
             "device": settings.device,
@@ -112,7 +127,8 @@ def create_app() -> FastAPI:
             "runsRoot": str(settings.runs_root),
             "databasePath": str(settings.database_path),
             "apiHost": settings.api_host,
-            "apiPort": settings.api_port,
+            "apiPort": effective_api_port,
+            "configuredApiPort": settings.api_port,
             "workerPollSeconds": settings.worker_poll_seconds,
             "workers": [worker for worker in workers if is_fresh_worker(worker, settings.worker_poll_seconds)],
             "knownWorkerCount": len(workers),
@@ -443,10 +459,23 @@ def create_app() -> FastAPI:
     @app.get("/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, object]:
         try:
-            run = service.get_run(run_id)
+            return service.get_run(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {**run, "cellsDetail": service.list_run_cells(run_id)}
+
+    @app.get("/runs/{run_id}/state")
+    def get_run_state(run_id: str) -> dict[str, object]:
+        try:
+            return service.get_run_state(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/tree")
+    def get_run_tree(run_id: str) -> dict[str, object]:
+        try:
+            return service.get_run_tree(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/runs/{run_id}/results")
     def get_run_results(run_id: str) -> dict[str, object]:
@@ -466,13 +495,6 @@ def create_app() -> FastAPI:
     def get_run_logs(run_id: str) -> dict[str, object]:
         try:
             return service.get_run_logs(run_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    @app.get("/runs/{run_id}/events")
-    def get_run_events(run_id: str) -> dict[str, object]:
-        try:
-            return service.get_run_events(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

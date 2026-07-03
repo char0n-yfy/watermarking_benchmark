@@ -920,6 +920,81 @@ class _BaseRegenDiffusionAttack(BaseAttack):
         self._model_repo_id: str | None = None
         self._torch_dtype: Any | None = None
 
+    @classmethod
+    def model_cache_params(cls, params: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "image_size": int(params.get("image_size", 512)),
+            "model_root": str(params.get("model_root") or DEFAULT_DIFFUSION_MODEL_ROOT),
+            "weight_root": str(params.get("weight_root") or DEFAULT_WEIGHT_ROOT),
+            "allow_download": bool(params.get("allow_download", True)),
+            "local_files_only": bool(params.get("local_files_only", True)),
+            "dtype": str(params.get("dtype", "auto")),
+            "passes": cls.passes,
+        }
+
+    @classmethod
+    def _runtime_config_from_params(cls, params: Mapping[str, Any]) -> dict[str, Any]:
+        default_noise_step_min, default_noise_step_max = cls.noise_step_range
+        noise_step_min = int(params.get("noise_step_min", default_noise_step_min))
+        noise_step_max = int(params.get("noise_step_max", default_noise_step_max))
+        if noise_step_min < 0:
+            raise ValueError("noise_step_min must be non-negative")
+        if noise_step_max < noise_step_min:
+            raise ValueError("noise_step_max must be >= noise_step_min")
+
+        strength_value = params.get("strength")
+        noise_step_value = params.get("noise_step")
+        if strength_value is not None:
+            strength = _clamp_unit_strength(float(strength_value))
+            noise_step = _noise_step_from_strength(strength, noise_step_min, noise_step_max)
+        elif noise_step_value is None:
+            strength = 0.5
+            noise_step = _noise_step_from_strength(strength, noise_step_min, noise_step_max)
+        else:
+            noise_step = int(noise_step_value)
+            strength = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
+
+        num_inference_steps = int(params.get("num_inference_steps", 50))
+        if noise_step < 0:
+            raise ValueError("noise_step must be non-negative")
+        if num_inference_steps <= 0:
+            raise ValueError("num_inference_steps must be positive")
+        head_start_step = params.get("head_start_step")
+        if head_start_step is not None:
+            head_start_step = int(head_start_step)
+
+        return {
+            "noise_step": noise_step,
+            "strength": float(strength),
+            "noise_step_min": noise_step_min,
+            "noise_step_max": noise_step_max,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": float(params.get("guidance_scale", 7.5)),
+            "prompt": str(params.get("prompt", "")),
+            "negative_prompt": params.get("negative_prompt"),
+            "seed": params.get("seed", 1024),
+            "eta": float(params.get("eta", 0.0)),
+            "head_start_step": head_start_step,
+            "save_intermediates": bool(params.get("save_intermediates", False)),
+            "passes": cls.passes,
+        }
+
+    def configure_runtime(self, params: Mapping[str, Any]) -> None:
+        runtime = self._runtime_config_from_params(params)
+        self.noise_step = int(runtime["noise_step"])
+        self.strength = float(runtime["strength"])
+        self.noise_step_min = int(runtime["noise_step_min"])
+        self.noise_step_max = int(runtime["noise_step_max"])
+        self.num_inference_steps = int(runtime["num_inference_steps"])
+        self.guidance_scale = float(runtime["guidance_scale"])
+        self.prompt = str(runtime["prompt"])
+        self.negative_prompt = runtime["negative_prompt"]
+        self.seed = runtime["seed"]
+        self.eta = float(runtime["eta"])
+        self.head_start_step = runtime["head_start_step"]
+        self.save_intermediates = bool(runtime["save_intermediates"])
+        self.params.update(runtime)
+
     def _ensure_pipe(self, device: str) -> None:
         if self._pipe is not None and self._pipe_device == device:
             return
@@ -1238,6 +1313,79 @@ class NoiseToImageAttack(BaseAttack):
         self._canny_impl: Any | None = None
         self._color_match: Any | None = None
         self._resolved_paths: dict[str, Any] = {}
+
+    @classmethod
+    def model_cache_params(cls, params: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "source_root": str(params.get("source_root") or DEFAULT_NOISE_TO_IMAGE_SOURCE_ROOT),
+            "weight_root": str(params.get("weight_root") or DEFAULT_WEIGHT_ROOT),
+            "base_model": str(params.get("base_model") or DEFAULT_CTRLREGEN_BASE_REPO_ID),
+            "spatial_control_path": (
+                str(params["spatial_control_path"]) if params.get("spatial_control_path") is not None else None
+            ),
+            "semantic_control_path": (
+                str(params["semantic_control_path"]) if params.get("semantic_control_path") is not None else None
+            ),
+            "semantic_control_name": str(params.get("semantic_control_name", "semantic_control_ckp_435000.bin")),
+            "image_encoder": str(params.get("image_encoder") or DEFAULT_CTRLREGEN_IMAGE_ENCODER_REPO_ID),
+            "vae_model": str(params.get("vae_model") or DEFAULT_CTRLREGEN_VAE_REPO_ID),
+            "image_size": int(params.get("image_size", 512)),
+            "square_mode": str(params.get("square_mode", "fit")),
+            "allow_download": bool(params.get("allow_download", True)),
+            "dtype": str(params.get("dtype", "auto")),
+        }
+
+    @staticmethod
+    def _runtime_config_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
+        num_inference_steps = int(params.get("num_inference_steps", 50))
+        if num_inference_steps <= 0:
+            raise ValueError("num_inference_steps must be positive")
+        step = max(0.0, min(1.0, float(params.get("step", 1.0))))
+        noise_step_min = int(params.get("noise_step_min", DEFAULT_CTRLREGEN_NOISE_STEP_RANGE[0]))
+        noise_step_max = int(params.get("noise_step_max", DEFAULT_CTRLREGEN_NOISE_STEP_RANGE[1]))
+        if noise_step_min < 0:
+            raise ValueError("noise_step_min must be non-negative")
+        if noise_step_max < noise_step_min:
+            raise ValueError("noise_step_max must be >= noise_step_min")
+        noise_step_value = params.get("noise_step")
+        if noise_step_value is None:
+            noise_step = _noise_step_from_strength(step, noise_step_min, noise_step_max)
+        else:
+            noise_step = int(noise_step_value)
+            step = _strength_from_noise_step(noise_step, noise_step_min, noise_step_max)
+
+        return {
+            "step": step,
+            "noise_step": noise_step,
+            "noise_step_min": noise_step_min,
+            "noise_step_max": noise_step_max,
+            "seed": params.get("seed", 1),
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": float(params.get("guidance_scale", 2.0)),
+            "controlnet_conditioning_scale": float(params.get("controlnet_conditioning_scale", 1.0)),
+            "low_threshold": int(params.get("low_threshold", 100)),
+            "high_threshold": int(params.get("high_threshold", 150)),
+            "prompt": str(params.get("prompt", "best quality, high quality")),
+            "negative_prompt": str(
+                params.get("negative_prompt", "monochrome, lowres, bad anatomy, worst quality, low quality")
+            ),
+        }
+
+    def configure_runtime(self, params: Mapping[str, Any]) -> None:
+        runtime = self._runtime_config_from_params(params)
+        self.step = float(runtime["step"])
+        self.noise_step = int(runtime["noise_step"])
+        self.noise_step_min = int(runtime["noise_step_min"])
+        self.noise_step_max = int(runtime["noise_step_max"])
+        self.seed = runtime["seed"]
+        self.num_inference_steps = int(runtime["num_inference_steps"])
+        self.guidance_scale = float(runtime["guidance_scale"])
+        self.controlnet_conditioning_scale = float(runtime["controlnet_conditioning_scale"])
+        self.low_threshold = int(runtime["low_threshold"])
+        self.high_threshold = int(runtime["high_threshold"])
+        self.prompt = str(runtime["prompt"])
+        self.negative_prompt = str(runtime["negative_prompt"])
+        self.params.update(runtime)
 
     def _seed_for_context(self, context: AttackContext) -> int:
         if self.seed is not None:
@@ -1754,6 +1902,41 @@ class ImageToVedioAttack(BaseAttack):
         self._model_image_size: int | None = None
         self._torch_dtype: Any | None = None
         self._source_root: Path | None = None
+
+    @classmethod
+    def model_cache_params(cls, params: Mapping[str, Any]) -> dict[str, Any]:
+        model_root = params.get("model_root")
+        if model_root is None:
+            model_root = params.get("model_id_or_path")
+        return {
+            "source_root": str(params.get("source_root") or DEFAULT_IMAGE_TO_VEDIO_SOURCE_ROOT),
+            "model_root": str(model_root or DEFAULT_DIFFUSION_MODEL_ROOT),
+            "weight_root": str(params.get("weight_root") or DEFAULT_WEIGHT_ROOT),
+            "image_size": int(params.get("image_size", 512)),
+            "square_mode": str(params.get("square_mode", "fit")),
+            "enforce_model_image_size": bool(params.get("enforce_model_image_size", True)),
+            "allow_download": bool(params.get("allow_download", True)),
+            "local_files_only": bool(params.get("local_files_only", True)),
+            "dtype": str(params.get("dtype", "auto")),
+        }
+
+    @staticmethod
+    def _runtime_config_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
+        num_inference_steps = int(params.get("num_inference_steps", 10))
+        if num_inference_steps <= 0:
+            raise ValueError("num_inference_steps must be positive")
+        return {
+            "num_inference_steps": num_inference_steps,
+            "xy": int(params.get("xy", 40)),
+            "seed": params.get("seed", 1234),
+        }
+
+    def configure_runtime(self, params: Mapping[str, Any]) -> None:
+        runtime = self._runtime_config_from_params(params)
+        self.num_inference_steps = int(runtime["num_inference_steps"])
+        self.xy = int(runtime["xy"])
+        self.seed = runtime["seed"]
+        self.params.update(runtime)
 
     def _seed_for_context(self, context: AttackContext) -> int:
         if self.seed is not None:

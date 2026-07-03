@@ -18,7 +18,7 @@ from . import (  # noqa: F401 - import registers default attacks
     regeneration_attacks,
 )
 from .base import AttackContext, AttackResult, BaseAttack
-from .registry import build_attack
+from .registry import ATTACK_REGISTRY, build_attack
 from evaluator.execution import (
     ExecutionProfile,
     attach_execution_metadata,
@@ -90,9 +90,14 @@ class AttackJob:
 
 
 def _cache_key(name: str, params: dict[str, Any], device: str) -> str:
+    key = str(name).lower()
+    attack_cls = ATTACK_REGISTRY.get(key)
+    cache_params = dict(params)
+    if attack_cls is not None:
+        cache_params = attack_cls.model_cache_params(params)
     payload = {
-        "name": str(name).lower(),
-        "params": params,
+        "name": key,
+        "params": cache_params,
         "device": str(device),
     }
     return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
@@ -103,14 +108,18 @@ def get_cached_attack(name: str, params: dict[str, Any], device: str = "cpu") ->
     key = _cache_key(name, params, device)
     max_entries = _cache_max_entries()
     if max_entries == 0:
-        return build_attack(name, **params)
+        attack = build_attack(name, **params)
+        attack.configure_runtime(params)
+        return attack
 
     attack = _ATTACK_INSTANCE_CACHE.get(key)
     if attack is not None:
         _ATTACK_INSTANCE_CACHE.move_to_end(key)
+        attack.configure_runtime(params)
         return attack
 
     attack = build_attack(name, **params)
+    attack.configure_runtime(params)
     _ATTACK_INSTANCE_CACHE[key] = attack
     while len(_ATTACK_INSTANCE_CACHE) > max_entries:
         _old_key, old_attack = _ATTACK_INSTANCE_CACHE.popitem(last=False)

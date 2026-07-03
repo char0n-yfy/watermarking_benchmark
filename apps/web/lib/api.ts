@@ -13,7 +13,7 @@ import type {
   ParallelTuningJob,
   ParallelTuningSaveResult,
   ReadinessReport,
-  RunEvents,
+  RunState,
   RunLogs,
   RunResults,
   RunScoreResponse,
@@ -25,16 +25,17 @@ import type {
 } from "./types";
 
 const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+const devApiPort = process.env.NEXT_PUBLIC_API_PORT ?? "6006";
 
 function defaultApiBaseUrl() {
   if (typeof window === "undefined") {
-    return process.env.NODE_ENV === "development" ? "http://localhost:8000" : "";
+    return process.env.NODE_ENV === "development" ? `http://localhost:${devApiPort}` : "";
   }
 
   const { hostname, port, protocol } = window.location;
   const isLocalDevHost = hostname === "localhost" || hostname === "127.0.0.1";
   if (isLocalDevHost && port === "3000") {
-    return `${protocol}//${hostname}:8000`;
+    return `${protocol}//${hostname}:${devApiPort}`;
   }
 
   return "";
@@ -251,6 +252,10 @@ export function fetchRun(runId: string): Promise<DemoRunRecord> {
   return requestJson<DemoRunRecord>(`/runs/${encodeURIComponent(runId)}`);
 }
 
+export function fetchRunState(runId: string): Promise<RunState> {
+  return requestJson<RunState>(`/runs/${encodeURIComponent(runId)}/state`);
+}
+
 export function createRun(configId: string, name?: string): Promise<DemoRunRecord> {
   return requestJson<DemoRunRecord>("/runs", {
     method: "POST",
@@ -294,10 +299,6 @@ export function resumeRun(runId: string): Promise<DemoRunRecord> {
 
 export function fetchRunLogs(runId: string): Promise<RunLogs> {
   return requestJson<RunLogs>(`/runs/${runId}/logs`);
-}
-
-export function fetchRunEvents(runId: string): Promise<RunEvents> {
-  return requestJson<RunEvents>(`/runs/${runId}/events`);
 }
 
 export function fetchRuntime(): Promise<RuntimeInfo> {

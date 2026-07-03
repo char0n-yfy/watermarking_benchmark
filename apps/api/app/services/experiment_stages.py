@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ JsonDict = dict[str, Any]
 VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
     r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
 )
+CANONICAL_MANIFEST_NAME = "canonical_manifest.json"
 
 
 def normalize_attack_params_for_runtime(method: str, params: JsonDict) -> JsonDict:
@@ -72,17 +74,82 @@ class ExtractStageResult:
     error: str | None
 
 
-def canonical_target_path(output_dir: Path, relative: Path, index: int) -> Path:
+def canonical_target_path(output_dir: Path, relative: Path, index: int, occupied: set[Path] | None = None) -> Path:
     target = (output_dir / relative).with_suffix(".png")
-    if not target.exists():
+    if occupied is None:
+        if not target.exists():
+            return target
+        return target.with_name(f"{target.stem}_{index:04d}.png")
+    if target not in occupied:
+        occupied.add(target)
         return target
-    return target.with_name(f"{target.stem}_{index:04d}.png")
+    target = target.with_name(f"{target.stem}_{index:04d}.png")
+    occupied.add(target)
+    return target
+
+
+def _source_signature(path: Path, dataset_path: Path) -> JsonDict:
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    try:
+        relative = path.relative_to(dataset_path).as_posix()
+    except ValueError:
+        relative = path.name
+    return {
+        "sourceRelative": relative,
+        "sourceSize": stat.st_size,
+        "sourceMtimeNs": stat.st_mtime_ns,
+    }
+
+
+def _read_canonical_manifest(output_dir: Path) -> dict[str, JsonDict]:
+    path = output_dir / CANONICAL_MANIFEST_NAME
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, list):
+        return {}
+    records: dict[str, JsonDict] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_relative = item.get("sourceRelative")
+        output_path = item.get("outputPath")
+        metadata = item.get("metadata")
+        if isinstance(source_relative, str) and isinstance(output_path, str) and isinstance(metadata, dict):
+            records[source_relative] = item
+    return records
+
+
+def _write_canonical_manifest(output_dir: Path, records: list[JsonDict]) -> None:
+    path = output_dir / CANONICAL_MANIFEST_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _manifest_record_matches(record: JsonDict, signature: JsonDict, target: Path) -> bool:
+    if not target.is_file():
+        return False
+    return (
+        record.get("sourceRelative") == signature.get("sourceRelative")
+        and record.get("sourceSize") == signature.get("sourceSize")
+        and record.get("sourceMtimeNs") == signature.get("sourceMtimeNs")
+        and Path(str(record.get("outputPath", ""))) == target
+    )
 
 
 def copy_canonical_samples(dataset_path: Path, output_dir: Path, max_samples: int) -> list[StagedSample]:
     sample_paths = iter_image_paths(dataset_path)[:max_samples]
     output_dir.mkdir(parents=True, exist_ok=True)
+    existing_manifest = _read_canonical_manifest(output_dir)
     staged: list[StagedSample] = []
+    manifest_records: list[JsonDict] = []
+    occupied_targets: set[Path] = set()
 
     for index, sample_path in enumerate(sample_paths, start=1):
         try:
@@ -91,10 +158,25 @@ def copy_canonical_samples(dataset_path: Path, output_dir: Path, max_samples: in
             relative = Path(f"sample_{index:04d}{sample_path.suffix.lower()}")
         if relative.name.startswith("."):
             relative = Path(f"sample_{index:04d}{sample_path.suffix.lower()}")
-        target = canonical_target_path(output_dir, relative, index)
-        metadata = canonical_preprocess_image(sample_path, target)
+        target = canonical_target_path(output_dir, relative, index, occupied_targets)
+        signature = _source_signature(sample_path, dataset_path)
+        existing = existing_manifest.get(str(signature.get("sourceRelative", "")))
+        if existing is not None and _manifest_record_matches(existing, signature, target):
+            metadata = dict(existing.get("metadata") or {})
+        else:
+            metadata = canonical_preprocess_image(sample_path, target)
+        manifest_records.append(
+            {
+                **signature,
+                "sourcePath": str(sample_path),
+                "outputPath": str(target),
+                "outputRelative": target.relative_to(output_dir).as_posix(),
+                "metadata": metadata,
+            }
+        )
         staged.append(StagedSample(path=target, source_path=sample_path, metadata=metadata))
 
+    _write_canonical_manifest(output_dir, manifest_records)
     return staged
 
 

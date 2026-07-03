@@ -44,30 +44,6 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   FOREIGN KEY (config_id) REFERENCES experiment_configs(id)
 );
 
-CREATE TABLE IF NOT EXISTS experiment_cells (
-  id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  cell_key TEXT NOT NULL,
-  status TEXT NOT NULL,
-  dataset_id TEXT NOT NULL,
-  algorithm_id TEXT NOT NULL,
-  watermark_method TEXT NOT NULL,
-  attack_preset_id TEXT NOT NULL,
-  attack_method TEXT NOT NULL,
-  attack_strength REAL NOT NULL,
-  seed INTEGER NOT NULL,
-  sample_count INTEGER NOT NULL,
-  bit_accuracy REAL,
-  bit_error_rate REAL,
-  elapsed_ms REAL,
-  manifest_path TEXT,
-  output_dir TEXT,
-  error TEXT,
-  summary_json TEXT NOT NULL DEFAULT '{}',
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (run_id) REFERENCES experiment_runs(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS worker_heartbeats (
   worker_id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
@@ -87,10 +63,6 @@ MIGRATION_COLUMNS = {
         "worker_id": "TEXT",
         "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
         "stop_intent": "TEXT",
-    },
-    "experiment_cells": {
-        "bit_error_rate": "REAL",
-        "elapsed_ms": "REAL",
     },
     "experiment_configs": {
         "deleted_at": "TEXT",
@@ -162,7 +134,7 @@ def row_to_run(row: sqlite3.Row) -> JsonDict:
         "cells": row["cells"],
         "progress": row["progress"],
         "completedProgress": row["progress"],
-        "progressKind": "completedCells",
+        "progressKind": "phaseOperations",
         "artifactRoot": row["artifact_root"],
         "logPath": row["log_path"],
         "workerId": row["worker_id"],
@@ -173,29 +145,4 @@ def row_to_run(row: sqlite3.Row) -> JsonDict:
         "updatedAt": row["updated_at"],
         "startedAt": row["started_at"],
         "finishedAt": row["finished_at"],
-    }
-
-
-def row_to_cell(row: sqlite3.Row) -> JsonDict:
-    return {
-        "id": row["id"],
-        "runId": row["run_id"],
-        "cellKey": row["cell_key"],
-        "status": row["status"],
-        "datasetId": row["dataset_id"],
-        "algorithmId": row["algorithm_id"],
-        "watermarkMethod": row["watermark_method"],
-        "attackPresetId": row["attack_preset_id"],
-        "attackMethod": row["attack_method"],
-        "attackStrength": row["attack_strength"],
-        "seed": row["seed"],
-        "sampleCount": row["sample_count"],
-        "bitAccuracy": row["bit_accuracy"],
-        "bitErrorRate": row["bit_error_rate"],
-        "elapsedMs": row["elapsed_ms"],
-        "manifestPath": row["manifest_path"],
-        "outputDir": row["output_dir"],
-        "error": row["error"],
-        "summary": loads_json(row["summary_json"]),
-        "updatedAt": row["updated_at"],
     }

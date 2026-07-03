@@ -14,8 +14,14 @@ bash "${AUTODL_SCRIPT_DIR}/start_all_screen.sh"
 
 CHECK_API_HOST="$(autodl_local_host "${API_HOST}")"
 API_HEALTH_URL="http://${CHECK_API_HOST}:${API_PORT}/health"
+API_RUNTIME_URL="http://${CHECK_API_HOST}:${API_PORT}/system/runtime"
 
 if ! autodl_wait_for_url "API" "${API_HEALTH_URL}" 90 "${WM_BENCH_LOG_DIR}/api.screen.log"; then
+  echo "Recent API screen log:" >&2
+  tail -n 80 "${WM_BENCH_LOG_DIR}/api.screen.log" >&2 || true
+  exit 1
+fi
+if ! autodl_validate_runtime "${API_RUNTIME_URL}" "autodl" "${WM_BENCH_DB_PATH}" "${WM_BENCH_DEVICE}"; then
   echo "Recent API screen log:" >&2
   tail -n 80 "${WM_BENCH_LOG_DIR}/api.screen.log" >&2 || true
   exit 1

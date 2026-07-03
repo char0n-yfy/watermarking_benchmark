@@ -142,6 +142,9 @@ def _read_proc_stat() -> tuple[int, int] | None:
 
 
 def _cpu_usage_percent() -> float | None:
+    if _is_windows():
+        return _windows_cpu_usage_percent()
+
     proc_start = _read_proc_stat()
     if proc_start is not None:
         time.sleep(0.1)
@@ -162,9 +165,6 @@ def _cpu_usage_percent() -> float | None:
     if loads:
         return round(max(0.0, min(100.0, (loads[0] / cores) * 100)), 2)
 
-    windows_cpu = _windows_cpu_usage_percent()
-    if windows_cpu is not None:
-        return windows_cpu
     return None
 
 
@@ -219,9 +219,6 @@ def _psutil_cpu_temperature_c() -> float | None:
 
 
 def _windows_cpu_temperature_c() -> float | None:
-    if not _is_windows():
-        return None
-
     lhm_temperature = _windows_lhm_http_cpu_temperature_c()
     if lhm_temperature is not None:
         return lhm_temperature
@@ -656,15 +653,17 @@ def _linux_cpu_power_draw_w() -> float | None:
 
 
 def _memory_metrics() -> dict[str, int | float | None]:
+    if _is_windows():
+        windows_memory = _windows_memory_metrics()
+        if windows_memory is not None:
+            return windows_memory
+
     linux_memory = _linux_memory_metrics()
     if linux_memory is not None:
         return linux_memory
     darwin_memory = _darwin_memory_metrics()
     if darwin_memory is not None:
         return darwin_memory
-    windows_memory = _windows_memory_metrics()
-    if windows_memory is not None:
-        return windows_memory
     return {
         "totalBytes": None,
         "usedBytes": None,
@@ -785,15 +784,17 @@ def _gpu_metrics() -> dict[str, Any]:
 
 
 def _disk_io_rates() -> dict[str, float | None]:
+    if _is_windows():
+        windows_rates = _windows_disk_io_rates()
+        if windows_rates is not None:
+            return windows_rates
+
     linux_rates = _linux_disk_io_rates()
     if linux_rates is not None:
         return linux_rates
     darwin_rates = _darwin_disk_io_rates()
     if darwin_rates is not None:
         return darwin_rates
-    windows_rates = _windows_disk_io_rates()
-    if windows_rates is not None:
-        return windows_rates
     return {
         "ioReadBytesPerSecond": None,
         "ioWriteBytesPerSecond": None,
@@ -904,6 +905,9 @@ def _windows_disk_io_rates() -> dict[str, float | None] | None:
 
 
 def _uptime_seconds() -> float | None:
+    if _is_windows() and psutil is not None:
+        return round(time.time() - psutil.boot_time(), 1)
+
     uptime_path = Path("/proc/uptime")
     if uptime_path.exists():
         return round(float(uptime_path.read_text(encoding="utf-8").split()[0]), 1)
@@ -913,8 +917,6 @@ def _uptime_seconds() -> float | None:
     if match:
         return round(time.time() - int(match.group(1)), 1)
 
-    if _is_windows() and psutil is not None:
-        return round(time.time() - psutil.boot_time(), 1)
     return None
 
 

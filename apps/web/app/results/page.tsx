@@ -27,7 +27,7 @@ import type {
   BenchmarkLeaderboardRow,
   BenchmarkScore,
   RunAggregate,
-  RunResultCell,
+  RunResultUnit,
   RunResults,
   RunStatus
 } from "@/lib/types";
@@ -139,32 +139,33 @@ export default function ResultsPage() {
     [results, score, selectedSet]
   );
   const debugAttackOptions = useMemo(
-    () => Array.from(new Set((results?.cells ?? []).map((cell) => cell.attackPresetId))).sort(),
+    () => Array.from(new Set((results?.resultUnits ?? []).map((unit) => unit.attackPresetId))).sort(),
     [results]
   );
-  const debugCells = useMemo(
+  const debugResultUnits = useMemo(
     () =>
-      (results?.cells ?? []).filter((cell) => {
-        const scoring = cellScoring(cell);
+      (results?.resultUnits ?? []).filter((unit) => {
+        const scoring = resultUnitScoring(unit);
         const haystack = [
-          cell.id,
-          cell.cellKey,
-          cell.datasetId,
-          cell.algorithmId,
-          cell.watermarkMethod,
-          cell.attackPresetId,
-          cell.attackMethod,
-          cell.error,
+          unit.id,
+          unit.resultUnitKey,
+          unit.cellKey,
+          unit.datasetId,
+          unit.algorithmId,
+          unit.watermarkMethod,
+          unit.attackPresetId,
+          unit.attackMethod,
+          unit.error,
           scoring?.failureStage
         ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
         const queryMatch = !debugSearch.trim() || haystack.includes(debugSearch.trim().toLowerCase());
-        const statusMatch = debugStatus === "all" || cell.status === debugStatus;
-        const attackMatch = debugAttack === "all" || cell.attackPresetId === debugAttack;
-        const algorithmMatch = selectedSet.size === 0 || selectedSet.has(cell.algorithmId);
-        const failedMatch = !failedOnly || cell.status === "failed" || cell.status === "partially_failed" || Boolean(cell.error);
+        const statusMatch = debugStatus === "all" || unit.status === debugStatus;
+        const attackMatch = debugAttack === "all" || unit.attackPresetId === debugAttack;
+        const algorithmMatch = selectedSet.size === 0 || selectedSet.has(unit.algorithmId);
+        const failedMatch = !failedOnly || unit.status === "failed" || unit.status === "partially_failed" || Boolean(unit.error);
         return queryMatch && statusMatch && attackMatch && algorithmMatch && failedMatch;
       }),
     [debugAttack, debugSearch, debugStatus, failedOnly, results, selectedSet]
@@ -237,7 +238,7 @@ export default function ResultsPage() {
         <SummaryCard label={t.runs.status} value={summary.statusLabel} meta={`${summary.progress}% ${t.common.progress}`} />
         <SummaryCard label={t.common.wrs} value={summary.wrs} meta={summary.protocolStatus} />
         <SummaryCard label={t.common.coverage} value={summary.coverage} meta={summary.coverageMeta} />
-        <SummaryCard label={t.results.completedCells} value={summary.completedCells} meta={`${summary.totalCells} ${t.runs.cells}`} />
+        <SummaryCard label={language === "zh" ? "完成结果单元" : "Completed result units"} value={summary.completedResultUnits} meta={`${summary.totalResultUnits} ${language === "zh" ? "结果单元" : "result units"}`} />
         <SummaryCard label={t.common.samples} value={summary.sampleCount} meta={`${summary.algorithmCount} ${t.console.algorithms} · ${summary.attackCount} ${t.console.attacks}`} />
       </section>
 
@@ -301,7 +302,7 @@ export default function ResultsPage() {
         <DebugTab
           attackOptions={debugAttackOptions}
           debugAttack={debugAttack}
-          debugCells={debugCells}
+          debugResultUnits={debugResultUnits}
           debugSearch={debugSearch}
           debugStatus={debugStatus}
           failedOnly={failedOnly}
@@ -533,7 +534,7 @@ export default function ResultsPage() {
   function DebugTab({
     attackOptions,
     debugAttack,
-    debugCells,
+    debugResultUnits,
     debugSearch,
     debugStatus,
     failedOnly,
@@ -547,7 +548,7 @@ export default function ResultsPage() {
   }: {
     attackOptions: string[];
     debugAttack: string;
-    debugCells: RunResultCell[];
+    debugResultUnits: RunResultUnit[];
     debugSearch: string;
     debugStatus: StatusFilter;
     failedOnly: boolean;
@@ -569,7 +570,7 @@ export default function ResultsPage() {
         />
         <section className="panel results-detail-panel">
           <div className="panel-header">
-            <h2>{t.results.debugCells}</h2>
+            <h2>{language === "zh" ? "结果单元调试" : "Result unit debug"}</h2>
             <Bug size={16} />
           </div>
           <div className="panel-body">
@@ -577,9 +578,9 @@ export default function ResultsPage() {
               <div className="field-icon-input">
                 <Search size={15} />
                 <input
-                  aria-label={t.results.searchCells}
+                  aria-label={language === "zh" ? "搜索结果单元" : "Search result units"}
                   onChange={(event) => setDebugSearch(event.target.value)}
-                  placeholder={t.results.searchCells}
+                  placeholder={language === "zh" ? "搜索结果单元" : "Search result units"}
                   value={debugSearch}
                 />
               </div>
@@ -608,7 +609,7 @@ export default function ResultsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>{t.results.cell}</th>
+                    <th>{language === "zh" ? "结果单元" : "Result unit"}</th>
                     <th>{t.common.algorithm}</th>
                     <th>{t.common.attackPreset}</th>
                     <th>Bit Acc.</th>
@@ -620,34 +621,34 @@ export default function ResultsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {debugCells.map((cell) => {
-                    const scoring = cellScoring(cell);
+                  {debugResultUnits.map((unit) => {
+                    const scoring = resultUnitScoring(unit);
                     return (
-                      <tr key={cell.id}>
+                      <tr key={unit.id ?? unit.resultUnitKey ?? unit.cellKey}>
                         <td>
-                          <strong>{cell.datasetId}</strong>
+                          <strong>{unit.datasetId}</strong>
                           <span className="subtle-cell">
-                            {cell.watermarkMethod} · {cell.attackMethod}: {cell.attackStrength} · seed {cell.seed}
+                            {unit.watermarkMethod} · {unit.attackMethod}: {unit.attackStrength} · seed {unit.seed}
                           </span>
                         </td>
-                        <td>{cell.algorithmId}</td>
-                        <td>{cell.attackPresetId}</td>
-                        <td>{formatMetric(cell.bitAccuracy)}</td>
-                        <td>{formatMetric(cell.bitErrorRate)}</td>
+                        <td>{unit.algorithmId}</td>
+                        <td>{unit.attackPresetId}</td>
+                        <td>{formatMetric(unit.bitAccuracy)}</td>
+                        <td>{formatMetric(unit.bitErrorRate)}</td>
                         <td>{formatMetric(scoring?.tprAtFpr)}</td>
                         <td>
-                          <span className={statusBadgeClass(cell.status)}>{t.common.status[cell.status]}</span>
+                          <span className={statusBadgeClass(unit.status)}>{t.common.status[unit.status]}</span>
                         </td>
-                        <td>{scoring?.failureStage ?? (cell.error ? "unknown" : "n/a")}</td>
-                        <td className="path-cell" title={cell.manifestPath ?? undefined}>
-                          {cell.manifestPath ?? "n/a"}
+                        <td>{scoring?.failureStage ?? (unit.error ? "unknown" : "n/a")}</td>
+                        <td className="path-cell" title={unit.manifestPath ?? undefined}>
+                          {unit.manifestPath ?? "n/a"}
                         </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-              {debugCells.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+              {debugResultUnits.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
             </div>
 
             {results?.run.logPath ? (
@@ -827,27 +828,25 @@ export default function ResultsPage() {
 }
 
 function buildRunSummary(results: RunResults | null, score: BenchmarkScore | null) {
-  const cells = results?.cells ?? [];
-  const algorithmCount = new Set(cells.map((cell) => cell.algorithmId)).size;
-  const attackCount = new Set(cells.map((cell) => cell.attackPresetId)).size;
-  const sampleCount = cells.reduce((total, cell) => total + cell.sampleCount, 0);
-  const succeededCells = cells.filter((cell) => cell.status === "succeeded").length;
-  const failedCells = cells.filter((cell) => cell.status === "failed" || cell.status === "partially_failed").length;
-  const totalCells = cells.length || results?.run.cells || 0;
+  const units = results?.resultUnits ?? [];
+  const algorithmCount = new Set(units.map((unit) => unit.algorithmId)).size;
+  const attackCount = new Set(units.map((unit) => unit.attackPresetId)).size;
+  const sampleCount = units.reduce((total, unit) => total + unit.sampleCount, 0);
+  const succeededUnits = units.filter((unit) => unit.status === "succeeded").length;
+  const totalUnits = units.length || results?.run.cells || 0;
   return {
     algorithmCount,
     attackCount,
-    completedCells: `${succeededCells}/${totalCells}`,
+    completedResultUnits: `${succeededUnits}/${totalUnits}`,
     configName: results?.run.configName ?? "n/a",
     coverage: score ? `${score.coverage.coveredCategoryCount}/${score.coverage.requiredCategoryCount}` : "n/a",
     coverageMeta: score ? `${Math.round(score.coverage.coverageRatio * 100)}%` : "n/a",
-    failedCells,
     progress: Math.round(results?.run.progress ?? 0).toString(),
     protocolStatus: score?.status ?? "n/a",
     runId: results?.run.id ?? "n/a",
     sampleCount: sampleCount.toLocaleString(),
     statusLabel: results?.run.status ?? "n/a",
-    totalCells: totalCells.toString(),
+    totalResultUnits: totalUnits.toString(),
     wrs: score?.wrs == null ? "n/a" : score.wrs.toFixed(1)
   };
 }
@@ -861,7 +860,7 @@ function collectAlgorithmIds(
   scoreRows.forEach((row) => ids.add(row.algorithmId));
   legacyRows.forEach((row) => ids.add(row.algorithmId));
   results?.aggregates.forEach((item) => ids.add(item.algorithmId));
-  results?.cells.forEach((cell) => ids.add(cell.algorithmId));
+  results?.resultUnits.forEach((unit) => ids.add(unit.algorithmId));
   return Array.from(ids).sort();
 }
 
@@ -869,8 +868,8 @@ function sameStringArray(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function cellScoring(cell: RunResultCell): ScoringSummary | undefined {
-  return cell.summary?.scoring as ScoringSummary | undefined;
+function resultUnitScoring(unit: RunResultUnit): ScoringSummary | undefined {
+  return unit.summary?.scoring as ScoringSummary | undefined;
 }
 
 function findScorePoint(score: BenchmarkScore | null, item: RunAggregate) {
@@ -909,7 +908,7 @@ function tabLabel(tab: ResultsTab, t: ReturnType<typeof useLanguage>["t"]) {
   if (tab === "quality") {
     return t.results.qualityRobustness;
   }
-  return t.results.debugCells;
+  return t.results.debugResultUnits;
 }
 
 function exportResultsCsv(results: RunResults | null, score: BenchmarkScore | null) {
@@ -917,21 +916,21 @@ function exportResultsCsv(results: RunResults | null, score: BenchmarkScore | nu
     return;
   }
   const rows = [
-    ["run_id", "cell_id", "algorithm_id", "attack_preset_id", "attack_strength", "status", "bit_accuracy", "ber", "tpr_at_fpr", "nqd", "manifest_path"],
-    ...results.cells.map((cell) => {
-      const scoring = cellScoring(cell);
+    ["run_id", "result_unit_key", "algorithm_id", "attack_preset_id", "attack_strength", "status", "bit_accuracy", "ber", "tpr_at_fpr", "nqd", "manifest_path"],
+    ...results.resultUnits.map((unit) => {
+      const scoring = resultUnitScoring(unit);
       return [
         results.run.id,
-        cell.id,
-        cell.algorithmId,
-        cell.attackPresetId,
-        String(cell.attackStrength),
-        cell.status,
-        String(cell.bitAccuracy ?? ""),
-        String(cell.bitErrorRate ?? ""),
+        unit.resultUnitKey ?? unit.cellKey ?? unit.id,
+        unit.algorithmId,
+        unit.attackPresetId,
+        String(unit.attackStrength),
+        unit.status,
+        String(unit.bitAccuracy ?? ""),
+        String(unit.bitErrorRate ?? ""),
         String(scoring?.tprAtFpr ?? ""),
         String(scoring?.normalizedQualityDegradation ?? ""),
-        cell.manifestPath ?? ""
+        unit.manifestPath ?? ""
       ];
     })
   ];

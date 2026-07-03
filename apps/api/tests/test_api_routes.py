@@ -122,6 +122,17 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(run_response.status_code, 200)
             self.assertIn("charset=utf-8", run_response.headers.get("content-type", "").lower())
             self.assertEqual(run_response.json()["status"], "queued")
+            run_id = run_response.json()["id"]
+
+            state_response = client.get(f"/runs/{run_id}/state")
+            self.assertEqual(state_response.status_code, 200)
+            self.assertEqual(
+                [phase["key"] for phase in state_response.json()["phases"]],
+                ["canonical", "watermark_embed", "attack", "watermark_extract", "quality", "summary"],
+            )
+            tree_response = client.get(f"/runs/{run_id}/tree")
+            self.assertEqual(tree_response.status_code, 200)
+            self.assertEqual(tree_response.json()["datasets"], {})
 
             if (Path(__file__).resolve().parents[3] / "apps" / "web" / "out").exists():
                 runs_page_response = client.get("/runs", headers={"accept": "text/html"})
@@ -186,13 +197,13 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(active_runtime["jobId"], tuning_id)
             self.assertEqual(active_runtime["envUpdates"]["WM_BENCH_PNG_COMPRESS_LEVEL"], "1")
 
-            pause_response = client.post(f"/runs/{run_response.json()['id']}/pause")
+            pause_response = client.post(f"/runs/{run_id}/pause")
             self.assertEqual(pause_response.status_code, 200)
             self.assertEqual(pause_response.json()["status"], "paused")
 
             unfinished_response = client.get("/runs?scope=unfinished")
             self.assertEqual(unfinished_response.status_code, 200)
-            self.assertIn(run_response.json()["id"], [item["id"] for item in unfinished_response.json()])
+            self.assertIn(run_id, [item["id"] for item in unfinished_response.json()])
 
             cancel_run_response = client.post(
                 "/runs",

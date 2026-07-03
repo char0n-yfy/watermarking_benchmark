@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings
+from app.core.env_loader import PROJECT_ROOT
 from app.services.experiment_service import ExperimentService
 from app.services.resources import list_attack_resources, list_watermark_resources, scan_dataset_resources
 
@@ -38,6 +39,7 @@ def collect_readiness(settings: Settings, service: ExperimentService) -> dict[st
 
     add_path_check(checks, "project_root", "Project root", settings.project_root, required=True)
     add_path_check(checks, "resources_root", "Resources root", settings.resources_root, required=True)
+    add_autodl_runtime_check(checks, settings)
 
     datasets_root = settings.resources_root / "datasets"
     weights_root = settings.resources_root / "weights"
@@ -137,6 +139,44 @@ def collect_readiness(settings: Settings, service: ExperimentService) -> dict[st
         "device": settings.device,
         "checks": checks,
     }
+
+
+def add_autodl_runtime_check(checks: list[dict[str, Any]], settings: Settings) -> None:
+    autodl_env = PROJECT_ROOT / ".env.autodl"
+    looks_like_autodl = Path("/root/autodl-fs").exists() or Path("/root/autodl-tmp").exists()
+    if not looks_like_autodl or not autodl_env.is_file():
+        return
+    expected_db_prefix = Path("/root/autodl-fs/wm-bench").resolve()
+    issues: list[str] = []
+    if settings.environment != "autodl":
+        issues.append(f"environment={settings.environment!r}")
+    if not str(settings.device).startswith("cuda"):
+        issues.append(f"device={settings.device!r}")
+    try:
+        settings.database_path.relative_to(expected_db_prefix)
+    except ValueError:
+        issues.append(f"database_path={settings.database_path}")
+    if issues:
+        status = "error"
+        detail = "AutoDL host detected but runtime is not using the AutoDL profile: " + ", ".join(issues)
+    else:
+        status = "ok"
+        detail = "AutoDL runtime profile is active."
+    checks.append(
+        {
+            "id": "autodl_runtime_profile",
+            "label": "AutoDL runtime profile",
+            "status": status,
+            "detail": detail,
+            "required": True,
+            "meta": {
+                "environment": settings.environment,
+                "device": settings.device,
+                "databasePath": str(settings.database_path),
+                "dotenvPath": str(autodl_env),
+            },
+        }
+    )
 
 
 def add_path_check(

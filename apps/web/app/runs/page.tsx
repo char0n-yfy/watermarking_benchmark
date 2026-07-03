@@ -16,7 +16,6 @@ import {
   Search,
   SlidersHorizontal,
   Square,
-  TerminalSquare,
   X,
   XCircle,
   Zap
@@ -33,9 +32,8 @@ import {
   fetchLatestParallelTuning,
   fetchParallelTuning,
   fetchRun,
-  fetchRunEvents,
-  fetchRunLogs,
   fetchManageableRuns,
+  fetchRunState,
   fetchSavedConfigs,
   pauseRun,
   resumeRun,
@@ -43,6 +41,7 @@ import {
   startParallelTuning
 } from "@/lib/api";
 import { localizedDate } from "@/lib/i18n";
+import type { Language, Translation } from "@/lib/i18n";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
   AlgorithmVersion,
@@ -50,9 +49,8 @@ import type {
   DemoRunRecord,
   ParallelTuningEvent,
   ParallelTuningJob,
-  RunEvents,
-  RunLogs,
-  RunStageEvent,
+  RunPhaseState,
+  RunState,
   SavedExperimentConfig
 } from "@/lib/types";
 
@@ -68,16 +66,34 @@ type ProgressStep = {
   meta: string;
 };
 
+type ExperimentStageKey = "canonical" | "watermark" | "attack" | "extract" | "quality" | "summary";
+
+type ExperimentStageTab = {
+  key: ExperimentStageKey;
+  label: string;
+  progressKey: string;
+  step: ProgressStep;
+  phase?: RunPhaseState;
+  reached: boolean;
+  completed: boolean;
+  active: boolean;
+};
+
+type MaterializedStats = {
+  root: string;
+  cacheHits: number;
+  latestDir: string;
+};
+
 type ExecutionSummary = {
   taskName: string;
   runId: string;
   status: DemoRunRecord["status"];
   progress: number;
-  cells: number;
-  completedCells: number;
-  succeededCells: number;
-  failedCells: number;
-  remainingCells: number;
+  resultUnits: number;
+  succeededResultUnits: number;
+  failedResultUnits: number;
+  remainingResultUnits: number;
   configName: string;
   workerId?: string | null;
   artifactRoot?: string;
@@ -95,41 +111,8 @@ type ExecutionSummary = {
     sampleCount: number;
     imageOperationCount: number;
   };
-  latestEvent?: {
-    title: string;
-    meta: string;
-    timestamp?: string;
-  } | null;
-  log?: {
-    path: string;
-    lineCount: number;
-    lastLine: string;
-    tailLines: string[];
-  } | null;
+  materialized?: MaterializedStats | null;
   note: string;
-};
-
-type AttackOutcome = {
-  attackId: string;
-  succeeded: number;
-  failed: number;
-  latestParam: string;
-};
-
-type CurrentExecution = {
-  datasetId: string;
-  algorithmId: string;
-  attackId: string;
-  attackParam: string;
-  cellKey: string;
-};
-
-type MonitorStats = {
-  completedCells: number;
-  succeededCells: number;
-  failedCells: number;
-  attackOutcomes: AttackOutcome[];
-  current: CurrentExecution;
 };
 
 type TuningForm = {
@@ -211,17 +194,18 @@ const emptyTuningCatalogStats: TuningCatalogStats = {
 
 const terminalStatuses = new Set<DemoRunRecord["status"]>(["succeeded", "failed", "paused", "cancelled", "partially_failed"]);
 const resumableStatuses = new Set<DemoRunRecord["status"]>(["paused", "failed", "partially_failed"]);
-const finalCellStatuses = new Set(["succeeded", "failed", "skipped", "paused", "cancelled"]);
-const finalWatermarkStatuses = new Set(["succeeded", "failed", "skipped", "paused", "cancelled"]);
 const rawArtifactFiles = [
   "run_plan.json",
-  "cell_manifest.jsonl",
+  "run_state.json",
+  "phase_state.json",
+  "artifact_tree.json",
+  "result_units.jsonl",
   "image_quality.jsonl",
   "image_detection.jsonl",
   "runtime_profile.jsonl",
-  "stage_events.jsonl",
   "run_status.json"
 ];
+const experimentStageOrder: ExperimentStageKey[] = ["canonical", "watermark", "attack", "extract", "quality", "summary"];
 
 const quickTuningDefaults: TuningForm = {
   mode: "quick",
@@ -702,42 +686,23 @@ function percent(current: number, total: number) {
   return Math.round((Math.max(0, current) / total) * 100);
 }
 
-function latestEvent(events: RunEvents | null) {
-  if (!events?.events.length) {
+function materializedStatsFromRunState(runState: RunState | null, phase?: RunPhaseState): MaterializedStats | null {
+  if (!runState) {
     return null;
   }
-  return events.events[events.events.length - 1];
-}
-
-function eventTitle(event: RunStageEvent | null) {
-  if (!event) {
-    return "n/a";
+  const item = phase?.currentItem ?? {};
+  const counters = phase?.counters ?? {};
+  const root = runState.materializedRoot ?? "";
+  const latestDir = typeof item.materializedDir === "string" ? item.materializedDir : root;
+  const cacheHits = typeof counters.cacheHits === "number" ? counters.cacheHits : 0;
+  if (!root && !latestDir && cacheHits === 0) {
+    return null;
   }
-  return [event.stage, event.status].filter(Boolean).join(" · ") || "event";
-}
-
-function eventMeta(event: RunStageEvent | null) {
-  if (!event) {
-    return "n/a";
-  }
-  const items = [
-    event.datasetId ? `dataset=${event.datasetId}` : null,
-    event.algorithmId ? `wm=${event.algorithmId}` : null,
-    event.attackPresetId ? `attack=${event.attackPresetId}` : null,
-    typeof event.attackStrength === "number" ? `strength=${event.attackStrength}` : null,
-    event.cellKey ? `cell=${event.cellKey}` : null
-  ];
-  return items.filter(Boolean).join("  ") || event.error || "n/a";
-}
-
-function latestMapped<T>(events: RunStageEvent[], mapValue: (event: RunStageEvent) => T | null | undefined) {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const value = mapValue(events[index]);
-    if (value !== null && value !== undefined && value !== "") {
-      return value;
-    }
-  }
-  return null;
+  return {
+    root: root || "n/a",
+    latestDir: latestDir || "n/a",
+    cacheHits
+  };
 }
 
 function formatNumber(value: number) {
@@ -809,23 +774,6 @@ function paramsLabel(params: unknown) {
   return entries.map(([key, value]) => `${key}=${formatParamValue(value)}`).join(", ");
 }
 
-function strengthFromEvent(event: RunStageEvent) {
-  if (typeof event.attackStrength === "number") {
-    return formatNumber(event.attackStrength);
-  }
-  const parts = typeof event.cellKey === "string" ? event.cellKey.split("__") : [];
-  return parts.length >= 4 && parts[3] ? parts[3] : null;
-}
-
-function attackParamLabel(event: RunStageEvent) {
-  const params = paramsLabel(event.attackParams);
-  if (params) {
-    return params;
-  }
-  const strength = strengthFromEvent(event);
-  return strength ? `strength=${strength}` : null;
-}
-
 function humanizeId(id: string) {
   return id.replace(/^(atk|alg|ds)-/, "").replace(/[_-]+/g, " ");
 }
@@ -837,7 +785,7 @@ function displayName(id: string, names: Record<string, string>) {
   return names[id] ?? humanizeId(id);
 }
 
-function eventNumber(event: ParallelTuningEvent, key: string) {
+function eventNumber(event: { [key: string]: unknown }, key: string) {
   const value = event[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -951,20 +899,6 @@ function buildTuningProcessGroups(points: TuningPoint[]): TuningProcessGroup[] {
     .sort((left, right) => right.bestThroughput - left.bestThroughput || right.pointCount - left.pointCount);
 }
 
-function uniqueEventCount(events: RunStageEvent[], predicate: (event: RunStageEvent) => boolean, keyOf: (event: RunStageEvent) => string | null) {
-  const keys = new Set<string>();
-  events.forEach((event) => {
-    if (!predicate(event)) {
-      return;
-    }
-    const key = keyOf(event);
-    if (key) {
-      keys.add(key);
-    }
-  });
-  return keys.size;
-}
-
 function variantCountForAttack(config: SavedExperimentConfig | undefined, attackId: string) {
   const params = config?.selection.attackParamOverrides?.[attackId];
   if (params?.length) {
@@ -992,216 +926,49 @@ function selectionSummary(config: SavedExperimentConfig | undefined): ExecutionS
   };
 }
 
-function lastLogLine(logs: RunLogs | null) {
-  if (!logs?.exists) {
-    return "";
+function phaseKeyForStage(stageKey: ExperimentStageKey): RunPhaseState["key"] {
+  if (stageKey === "watermark") {
+    return "watermark_embed";
   }
-  for (let index = logs.lines.length - 1; index >= 0; index -= 1) {
-    const line = logs.lines[index]?.trim();
-    if (line) {
-      return line;
-    }
+  if (stageKey === "extract") {
+    return "watermark_extract";
   }
-  return "";
+  return stageKey;
 }
 
-function logTailLines(logs: RunLogs | null, maxLines = 6) {
-  if (!logs?.exists) {
-    return [];
-  }
-  return logs.lines
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim())
-    .slice(-maxLines);
-}
-
-function completedCellsFromRun(run: DemoRunRecord) {
-  if (run.cells <= 0) {
-    return 0;
-  }
-  return Math.max(0, Math.min(run.cells, Math.round((run.progress / 100) * run.cells)));
-}
-
-function attackIdFromEvent(event: RunStageEvent, attackIds: string[]) {
-  if (typeof event.attackPresetId === "string" && event.attackPresetId) {
-    return event.attackPresetId;
-  }
-  const cellKey = typeof event.cellKey === "string" ? event.cellKey : "";
-  return attackIds.find((attackId) => cellKey.includes(`__${attackId}__`)) ?? null;
-}
-
-function buildMonitorStats(
-  run: DemoRunRecord | null,
-  config: SavedExperimentConfig | undefined,
-  events: RunEvents | null
-): MonitorStats {
-  const eventList = events?.events ?? [];
-  const attackIds = config?.selection.attackPresetIds ?? [];
-  const finalEvents = new Map<string, RunStageEvent>();
-
-  eventList.forEach((event) => {
-    if (event.stage !== "cell" || !finalCellStatuses.has(String(event.status)) || typeof event.cellKey !== "string") {
-      return;
-    }
-    finalEvents.set(event.cellKey, event);
-  });
-
-  let succeededCells = 0;
-  let failedCells = 0;
-  const outcomes = new Map<string, AttackOutcome>();
-
-  finalEvents.forEach((event) => {
-    const attackId = attackIdFromEvent(event, attackIds) ?? "n/a";
-    const current =
-      outcomes.get(attackId) ??
-      ({
-        attackId,
-        succeeded: 0,
-        failed: 0,
-        latestParam: attackParamLabel(event) ?? "n/a"
-      } satisfies AttackOutcome);
-
-    if (event.status === "succeeded" || event.status === "skipped") {
-      succeededCells += 1;
-      current.succeeded += 1;
-    } else {
-      failedCells += 1;
-      current.failed += 1;
-    }
-    current.latestParam = attackParamLabel(event) ?? current.latestParam;
-    outcomes.set(attackId, current);
-  });
-
-  const currentAttackId = latestMapped(eventList, (event) => attackIdFromEvent(event, attackIds)) ?? attackIds[0] ?? "n/a";
-
+function progressStepFromPhase(phase: RunPhaseState, label: string): ProgressStep {
   return {
-    completedCells: finalEvents.size,
-    succeededCells,
-    failedCells,
-    attackOutcomes: [...outcomes.values()].sort((left, right) => left.attackId.localeCompare(right.attackId)),
-    current: {
-      datasetId:
-        latestMapped(eventList, (event) => (typeof event.datasetId === "string" ? event.datasetId : null)) ??
-        config?.selection.datasetIds[0] ??
-        "n/a",
-      algorithmId:
-        latestMapped(eventList, (event) => (typeof event.algorithmId === "string" ? event.algorithmId : null)) ??
-        config?.selection.algorithmIds[0] ??
-        "n/a",
-      attackId: currentAttackId,
-      attackParam:
-        latestMapped(eventList, (event) => (attackIdFromEvent(event, attackIds) ? attackParamLabel(event) : null)) ?? "n/a",
-      cellKey:
-        latestMapped(eventList, (event) => (typeof event.cellKey === "string" ? event.cellKey : null)) ??
-        (run?.id ? `${run.id}:pending` : "n/a")
-    }
+    key: phase.key,
+    label,
+    current: Number(phase.current ?? 0),
+    total: Number(phase.total ?? 0),
+    percent: Number(phase.percent ?? 0),
+    meta: phase.total ? `${phase.current}/${phase.total}` : phase.status
   };
 }
 
-function buildProgressSteps(
-  run: DemoRunRecord | null,
-  config: SavedExperimentConfig | undefined,
-  events: RunEvents | null,
-  labels: {
-    taskProgress: string;
-    datasetProgress: string;
-    watermarkProgress: string;
-    attackProgress: string;
-    hyperProgress: string;
-    currentAttack: string;
-    waitingForStage: string;
-  }
-): ProgressStep[] {
-  const selection = config?.selection;
-  const datasetCount = Math.max(0, selection?.datasetIds.length ?? 0);
-  const algorithmCount = Math.max(0, selection?.algorithmIds.length ?? 0);
-  const attackIds = selection?.attackPresetIds ?? [];
-  const seedCount = Math.max(0, selection?.seeds.length ?? 0);
-  const eventList = events?.events ?? [];
-  const taskProgress = run?.progress ?? 0;
-
-  const datasetDone = uniqueEventCount(
-    eventList,
-    (event) => event.stage === "dataset" && event.status === "finished",
-    (event) => (typeof event.datasetId === "string" ? event.datasetId : null)
-  );
-  const watermarkTotal = datasetCount * algorithmCount * seedCount;
-  const watermarkDone = uniqueEventCount(
-    eventList,
-    (event) => event.stage === "watermark_embed" && finalWatermarkStatuses.has(String(event.status)),
-    (event) => (typeof event.cellKey === "string" ? event.cellKey : null)
-  );
-  const attackDone = uniqueEventCount(
-    eventList,
-    (event) => event.stage === "cell" && finalCellStatuses.has(String(event.status)),
-    (event) => (typeof event.cellKey === "string" ? event.cellKey : null)
-  );
-
-  const currentAttack =
-    [...eventList]
-      .reverse()
-      .map((event) => attackIdFromEvent(event, attackIds))
-      .find(Boolean) ??
-    attackIds[0] ??
-    "";
-  const currentAttackTotal = currentAttack
-    ? datasetCount * algorithmCount * seedCount * variantCountForAttack(config, currentAttack)
-    : 0;
-  const currentAttackDone = currentAttack
-    ? uniqueEventCount(
-        eventList,
-        (event) =>
-          event.stage === "cell" &&
-          finalCellStatuses.has(String(event.status)) &&
-          attackIdFromEvent(event, attackIds) === currentAttack,
-        (event) => (typeof event.cellKey === "string" ? event.cellKey : null)
-      )
-    : 0;
-
-  return [
-    {
-      key: "task",
-      label: labels.taskProgress,
-      current: taskProgress,
-      total: 100,
-      percent: taskProgress,
-      meta: `${taskProgress}%`
-    },
-    {
-      key: "dataset",
-      label: labels.datasetProgress,
-      current: datasetDone,
-      total: datasetCount,
-      percent: percent(datasetDone, datasetCount),
-      meta: datasetCount ? `${datasetDone}/${datasetCount}` : labels.waitingForStage
-    },
-    {
-      key: "watermark",
-      label: labels.watermarkProgress,
-      current: watermarkDone,
-      total: watermarkTotal,
-      percent: percent(watermarkDone, watermarkTotal),
-      meta: watermarkTotal ? `${watermarkDone}/${watermarkTotal}` : labels.waitingForStage
-    },
-    {
-      key: "attack",
-      label: labels.attackProgress,
-      current: attackDone,
-      total: run?.cells ?? 0,
-      percent: percent(attackDone, run?.cells ?? 0),
-      meta: run?.cells ? `${attackDone}/${run.cells}` : labels.waitingForStage
-    },
-    {
-      key: "hyper",
-      label: labels.hyperProgress,
-      current: currentAttackDone,
-      total: currentAttackTotal,
-      percent: percent(currentAttackDone, currentAttackTotal),
-      meta: currentAttack
-        ? `${labels.currentAttack}: ${currentAttack} · ${currentAttackDone}/${currentAttackTotal}`
-        : labels.waitingForStage
-    }
-  ];
+function buildExperimentStagesFromRunState(
+  runState: RunState,
+  labels: Record<ExperimentStageKey, string>
+): ExperimentStageTab[] {
+  const phaseByKey = new Map(runState.phases.map((phase) => [phase.key, phase]));
+  return experimentStageOrder.map((key) => {
+    const phase = phaseByKey.get(phaseKeyForStage(key));
+    const status = phase?.status ?? "pending";
+    const reached = key === "canonical" || status !== "pending";
+    const completed = status === "succeeded";
+    const active = runState.currentPhase === phaseKeyForStage(key) || status === "running";
+    return {
+      key,
+      label: labels[key],
+      progressKey: phase?.key ?? key,
+      step: phase ? progressStepFromPhase(phase, labels[key]) : { key, label: labels[key], current: 0, total: 0, percent: 0, meta: "pending" },
+      phase,
+      reached,
+      completed,
+      active
+    };
+  });
 }
 
 function makeSummary(
@@ -1210,25 +977,23 @@ function makeSummary(
   options: {
     statusOverride?: DemoRunRecord["status"];
     config?: SavedExperimentConfig;
-    events?: RunEvents | null;
-    logs?: RunLogs | null;
+    runState?: RunState | null;
   } = {}
 ): ExecutionSummary {
-  const stats = buildMonitorStats(run, options.config, options.events ?? null);
-  const completedCells = Math.max(stats.completedCells, completedCellsFromRun(run));
-  const latest = latestEvent(options.events ?? null);
-  const logLine = lastLogLine(options.logs ?? null);
-  const tailLines = logTailLines(options.logs ?? null);
+  const summaryPhase = options.runState?.phases.find((phase) => phase.key === "summary");
+  const counters = summaryPhase?.counters ?? {};
+  const resultUnits = Number(counters.resultUnitsDone ?? options.runState?.expectedResultUnits ?? run.cells ?? 0);
+  const failedResultUnits = Number(counters.failedUnits ?? 0);
+  const totalResultUnits = Number(options.runState?.expectedResultUnits ?? run.cells ?? resultUnits);
   return {
     taskName: taskName(run),
     runId: run.id,
     status: options.statusOverride ?? run.status,
     progress: run.progress,
-    cells: run.cells,
-    completedCells,
-    succeededCells: stats.succeededCells,
-    failedCells: stats.failedCells,
-    remainingCells: Math.max(0, run.cells - completedCells),
+    resultUnits,
+    succeededResultUnits: Math.max(0, resultUnits - failedResultUnits),
+    failedResultUnits,
+    remainingResultUnits: Math.max(0, totalResultUnits - resultUnits),
     configName: run.configName,
     workerId: run.workerId,
     artifactRoot: run.artifactRoot,
@@ -1238,21 +1003,7 @@ function makeSummary(
     updatedAt: run.updatedAt,
     durationMs: durationMsBetween(run.startedAt, run.finishedAt ?? run.updatedAt),
     selection: selectionSummary(options.config),
-    latestEvent: latest
-      ? {
-          title: eventTitle(latest),
-          meta: eventMeta(latest),
-          timestamp: latest.timestamp
-        }
-      : null,
-    log: options.logs
-      ? {
-          path: options.logs.logPath,
-          lineCount: options.logs.exists ? options.logs.lines.length : 0,
-          lastLine: logLine,
-          tailLines
-        }
-      : null,
+    materialized: materializedStatsFromRunState(options.runState ?? null, summaryPhase),
     note
   };
 }
@@ -1296,8 +1047,9 @@ export default function RunsPage() {
   const [startDialogOpen, setStartDialogOpen] = useState(false);
   const [monitorRunId, setMonitorRunId] = useState("");
   const [monitorRun, setMonitorRun] = useState<DemoRunRecord | null>(null);
-  const [logs, setLogs] = useState<RunLogs | null>(null);
-  const [events, setEvents] = useState<RunEvents | null>(null);
+  const [runState, setRunState] = useState<RunState | null>(null);
+  const [selectedStageKey, setSelectedStageKey] = useState<ExperimentStageKey>("canonical");
+  const [stageSelectionPinned, setStageSelectionPinned] = useState(false);
   const [lastSummary, setLastSummary] = useState<ExecutionSummary | null>(null);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -1329,39 +1081,48 @@ export default function RunsPage() {
     () => configs.find((config) => config.id === monitorRun?.configId),
     [configs, monitorRun?.configId]
   );
-  const currentEvent = latestEvent(events);
-  const progressSteps = useMemo(
-    () =>
-      buildProgressSteps(monitorRun, monitoredConfig, events, {
-        taskProgress: t.runs.taskProgress,
-        datasetProgress: t.runs.datasetProgress,
-        watermarkProgress: t.runs.watermarkProgress,
-        attackProgress: t.runs.attackProgress,
-        hyperProgress: t.runs.hyperProgress,
-        currentAttack: t.runs.currentAttack,
-        waitingForStage: t.runs.waitingForStage
-      }),
+  const experimentStages = useMemo(
+    () => {
+      const labels = {
+        canonical: t.runs.canonicalStage,
+        watermark: t.runs.watermarkStage,
+        attack: t.runs.attackStage,
+        extract: t.runs.extractStage,
+        quality: t.runs.qualityStage,
+        summary: t.runs.summaryStage
+      };
+      return buildExperimentStagesFromRunState(
+        runState ?? {
+          runId: monitorRun?.id ?? "",
+          status: monitorRun?.status ?? "queued",
+          currentPhase: "canonical",
+          overallProgress: monitorRun?.progress ?? 0,
+          progress: monitorRun?.progress ?? 0,
+          progressKind: "phaseOperations",
+          expectedResultUnits: monitorRun?.cells ?? 0,
+          phases: []
+        },
+        labels
+      );
+    },
     [
-      events,
       monitorRun,
-      monitoredConfig,
-      t.runs.attackProgress,
-      t.runs.currentAttack,
-      t.runs.datasetProgress,
-      t.runs.hyperProgress,
-      t.runs.taskProgress,
-      t.runs.waitingForStage,
-      t.runs.watermarkProgress
+      runState,
+      t.runs.attackStage,
+      t.runs.canonicalStage,
+      t.runs.extractStage,
+      t.runs.qualityStage,
+      t.runs.summaryStage,
+      t.runs.watermarkStage
     ]
   );
-  const monitorStats = useMemo(() => buildMonitorStats(monitorRun, monitoredConfig, events), [events, monitorRun, monitoredConfig]);
-  const successfulAttackOutcomes = useMemo(
-    () => monitorStats.attackOutcomes.filter((outcome) => outcome.succeeded > 0),
-    [monitorStats.attackOutcomes]
-  );
-  const failedAttackOutcomes = useMemo(
-    () => monitorStats.attackOutcomes.filter((outcome) => outcome.failed > 0),
-    [monitorStats.attackOutcomes]
+  const selectedStage =
+    experimentStages.find((stage) => stage.key === selectedStageKey && stage.reached) ??
+    experimentStages.find((stage) => stage.active) ??
+    experimentStages[0];
+  const monitorMaterialized = useMemo(
+    () => materializedStatsFromRunState(runState, selectedStage?.phase),
+    [runState, selectedStage?.phase]
   );
   const tuningRunning = tuningJob?.status === "running";
   const tuningStopping = tuningJob?.status === "cancelling";
@@ -1416,6 +1177,17 @@ export default function RunsPage() {
   const showTuningSection = tuningWorkspaceVisible;
   const showExperimentSection = experimentActive;
   const tuningStartDisabled = tuningBusy || tuningActive || effectiveTuningStages === 0;
+
+  useEffect(() => {
+    const activeStage = experimentStages.find((stage) => stage.active) ?? experimentStages.find((stage) => stage.reached);
+    const selected = experimentStages.find((stage) => stage.key === selectedStageKey);
+    if (!activeStage) {
+      return;
+    }
+    if (!selected?.reached || !stageSelectionPinned) {
+      setSelectedStageKey(activeStage.key);
+    }
+  }, [experimentStages, selectedStageKey, stageSelectionPinned]);
 
   useEffect(() => {
     try {
@@ -1583,31 +1355,29 @@ export default function RunsPage() {
   useEffect(() => {
     if (!monitorRunId) {
       setMonitorRun(null);
-      setLogs(null);
-      setEvents(null);
+      setRunState(null);
       return;
     }
 
     let cancelled = false;
     const loadMonitor = async () => {
       try {
-        const [runValue, eventValue, logValue] = await Promise.all([
+        const [runValue, stateValue] = await Promise.all([
           fetchRun(monitorRunId),
-          fetchRunEvents(monitorRunId).catch(() => null),
-          fetchRunLogs(monitorRunId).catch(() => null)
+          fetchRunState(monitorRunId).catch(() => null)
         ]);
         if (cancelled) {
           return;
         }
         setMonitorRun(runValue);
-        setEvents(eventValue);
-        setLogs(logValue);
+        setRunState(stateValue);
         if (isTerminalRun(runValue.status)) {
           const summaryConfig = configs.find((config) => config.id === runValue.configId);
           const note = terminalRunNote(runValue.status, t.runs);
-          setLastSummary(makeSummary(runValue, note, { config: summaryConfig, events: eventValue, logs: logValue }));
+          setLastSummary(makeSummary(runValue, note, { config: summaryConfig, runState: stateValue }));
           setNotice("");
-          setMonitorRunId("");
+          setSelectedStageKey("summary");
+          setStageSelectionPinned(false);
           setCancelConfirmOpen(false);
           refreshBase().catch(() => undefined);
         }
@@ -1688,9 +1458,12 @@ export default function RunsPage() {
           return;
         }
         const nextRun = await createRun(selectedConfig.id, trimmedName);
-        setMonitorRunId(nextRun.id);
-        setMonitorRun(nextRun);
-        setLastSummary(null);
+	        setMonitorRunId(nextRun.id);
+	        setMonitorRun(nextRun);
+	        setRunState(null);
+	        setLastSummary(null);
+        setSelectedStageKey("canonical");
+        setStageSelectionPinned(false);
         setStartDialogOpen(false);
         setNotice(t.runs.createdTaskNotice);
       } else {
@@ -1701,9 +1474,12 @@ export default function RunsPage() {
         const updated = isActiveRun(selectedResumeRun.status)
           ? selectedResumeRun
           : await resumeRun(selectedResumeRun.id);
-        setMonitorRunId(updated.id);
-        setMonitorRun(updated);
-        setLastSummary(null);
+	        setMonitorRunId(updated.id);
+	        setMonitorRun(updated);
+	        setRunState(null);
+	        setLastSummary(null);
+        setSelectedStageKey("canonical");
+        setStageSelectionPinned(false);
         setStartDialogOpen(false);
         setNotice(t.runs.resumedTaskNotice);
       }
@@ -1726,15 +1502,12 @@ export default function RunsPage() {
       if (isTerminalRun(updated.status)) {
         const summary = makeSummary(updated, terminalRunNote(updated.status, t.runs), {
           config: monitoredConfig,
-          events,
-          logs
+          runState
         });
         setLastSummary(summary);
         setNotice("");
-        setMonitorRunId("");
-        setMonitorRun(null);
-        setLogs(null);
-        setEvents(null);
+        setSelectedStageKey("summary");
+        setStageSelectionPinned(false);
       } else {
         setNotice(t.runs.pauseRequestedNotice);
       }
@@ -1765,15 +1538,12 @@ export default function RunsPage() {
       if (isTerminalRun(updated.status)) {
         const summary = makeSummary(updated, terminalRunNote(updated.status, t.runs), {
           config: monitoredConfig,
-          events,
-          logs
+          runState
         });
         setLastSummary(summary);
         setNotice("");
-        setMonitorRunId("");
-        setMonitorRun(null);
-        setLogs(null);
-        setEvents(null);
+        setSelectedStageKey("summary");
+        setStageSelectionPinned(false);
       } else {
         setNotice(t.runs.cancelRequestedNotice);
       }
@@ -1796,6 +1566,8 @@ export default function RunsPage() {
       setMonitorRunId(updated.id);
       setMonitorRun(updated);
       setLastSummary(null);
+      setSelectedStageKey("canonical");
+      setStageSelectionPinned(false);
       setStartDialogOpen(false);
       setNotice(t.runs.resumedTaskNotice);
       refreshBase().catch(() => undefined);
@@ -1952,8 +1724,6 @@ export default function RunsPage() {
     setNotice("");
     setMonitorRunId("");
     setMonitorRun(null);
-    setLogs(null);
-    setEvents(null);
     setStartDialogOpen(false);
     if (summaryRunId) {
       setActiveRuns((current) => current.filter((run) => run.id !== summaryRunId || (run.status === "running" && !run.cancelRequested)));
@@ -1964,6 +1734,7 @@ export default function RunsPage() {
   const formatOptionalDate = (value?: string | null) => (value ? localizedDate(language, value) : "n/a");
   const statusLabels = t.common.status as Record<string, string>;
   const currentStopNotice = monitorRun ? stopIntentNotice(monitorRun, t.runs) : null;
+  const inlineSummary = lastSummary && monitorRun && lastSummary.runId === monitorRun.id ? lastSummary : null;
   const startActionDisabled =
     busy ||
     (startMode === "new"
@@ -2185,13 +1956,6 @@ export default function RunsPage() {
 
       {showExperimentSection && monitorRun ? (
         <section className="panel run-execution-panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t.runs.monitorTitle}</h2>
-              <p>{t.runs.monitorSubtitle}</p>
-            </div>
-            <span className={badgeClass(monitorRun.status)}>{runStatusLabel(monitorRun.status, statusLabels)}</span>
-          </div>
           <div className="panel-body run-execution-body">
             <div className="run-monitor-toolbar">
               <div>
@@ -2201,6 +1965,7 @@ export default function RunsPage() {
                 {currentStopNotice ? <small className="run-pause-state">{currentStopNotice}</small> : null}
               </div>
               <div className="run-monitor-actions">
+                <span className={badgeClass(monitorRun.status)}>{runStatusLabel(monitorRun.status, statusLabels)}</span>
                 {isPausableRun(monitorRun) ? (
                   <button className="button" disabled={busy} onClick={pauseCurrentRun} type="button">
                     <PauseCircle size={15} />
@@ -2216,126 +1981,82 @@ export default function RunsPage() {
               </div>
             </div>
 
-            <div className="run-monitor-overview">
-              <section className="run-overview-card primary">
-                <div className="run-overview-title">
-                  <span>{t.runs.experimentProgress}</span>
-                  <strong>{monitorRun.progress}%</strong>
-                </div>
-                <div className="progress-track run-progress-large">
-                  <div className="progress-bar" style={{ width: progressWidth(monitorRun.progress) }} />
-                </div>
-                <div className="run-count-grid">
-                  <Metric label={t.runs.completedCells} value={`${monitorStats.completedCells}/${monitorRun.cells}`} />
-                  <Metric label={t.runs.successfulCells} value={monitorStats.succeededCells.toString()} />
-                  <Metric label={t.runs.failedCells} value={monitorStats.failedCells.toString()} />
-                </div>
-                <p>{t.runs.cellExplanation}</p>
-              </section>
-
-              <section className="run-overview-card">
-                <div className="run-overview-title">
-                  <span>{t.runs.currentExecution}</span>
-                  <strong>{eventTitle(currentEvent)}</strong>
-                </div>
-                <div className="run-current-grid">
-                  <CurrentField
-                    label={t.runs.currentDataset}
-                    raw={monitorStats.current.datasetId}
-                    value={displayName(monitorStats.current.datasetId, resourceNames)}
-                  />
-                  <CurrentField
-                    label={t.runs.currentWatermark}
-                    raw={monitorStats.current.algorithmId}
-                    value={displayName(monitorStats.current.algorithmId, resourceNames)}
-                  />
-                  <CurrentField
-                    label={t.runs.currentAttack}
-                    raw={monitorStats.current.attackId}
-                    value={displayName(monitorStats.current.attackId, resourceNames)}
-                  />
-                  <CurrentField label={t.runs.currentAttackParam} raw={monitorStats.current.cellKey} value={monitorStats.current.attackParam} />
-                </div>
-                <div className="run-stage-line">
-                  <Clock3 size={15} />
-                  <span>{currentEvent?.timestamp ? localizedDate(language, currentEvent.timestamp) : t.runs.waitingForStage}</span>
-                  <code>{eventMeta(currentEvent)}</code>
-                </div>
-              </section>
-            </div>
-
-            <div className="run-attack-status-grid">
-              <AttackOutcomeList
-                emptyText={t.runs.noSuccessfulAttacks}
-                kind="success"
-                names={resourceNames}
-                outcomes={successfulAttackOutcomes}
-                title={t.runs.successfulAttacks}
-              />
-              <AttackOutcomeList
-                emptyText={t.runs.noFailedAttacks}
-                kind="failed"
-                names={resourceNames}
-                outcomes={failedAttackOutcomes}
-                title={t.runs.failedAttacks}
-              />
-            </div>
-
-            <div className="run-progress-stack">
-              <div className="run-progress-section-head">
-                <strong>{t.runs.stageProgress}</strong>
-                <span>{t.runs.attackStatusHint}</span>
-              </div>
-              {progressSteps.map((step) => (
-                <ProgressMeter key={step.key} step={step} />
-              ))}
-            </div>
-
-            <div className="run-meta-grid run-monitor-meta-grid">
-              <Metric label={t.common.config} value={monitorRun.configName} />
-              <Metric label={t.runs.matrixCells} value={monitorRun.cells.toString()} />
-              <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
-              <Metric label={t.runs.updated} value={formatOptionalDate(monitorRun.updatedAt)} />
-              <Metric label={t.runs.started} value={formatOptionalDate(monitorRun.startedAt)} />
-              <Metric label={t.runs.finished} value={formatOptionalDate(monitorRun.finishedAt)} />
-            </div>
+            <StageTimeline
+              onSelect={(key) => {
+                setSelectedStageKey(key);
+                setStageSelectionPinned(true);
+              }}
+	              overallProgress={runState?.overallProgress ?? monitorRun.progress}
+              selectedKey={selectedStage?.key ?? "canonical"}
+              stages={experimentStages}
+            />
 
             {notice ? <div className="risk ok">{notice}</div> : null}
             {monitorRun.error ? <div className="risk error">{monitorRun.error}</div> : null}
 
-            <div className="run-log-shell">
-              <div className="run-log-head">
-                <div>
-                  <TerminalSquare size={16} />
-                  <strong>{t.runs.liveLog}</strong>
-                </div>
-                <span>{logs?.logPath ?? monitorRun.logPath ?? "worker.log"}</span>
-              </div>
-              <pre className="log-preview run-live-log">
-                {logs?.exists ? logs.lines.join("\n") || "empty log" : t.runs.noLogYet}
-              </pre>
-            </div>
-
-            <div className="run-events-list run-execution-events">
-              <div className="run-artifacts-head">
-                <CheckCircle2 size={15} />
-                <span>{t.runs.latestEvents}</span>
-              </div>
-              {events?.events.length ? (
-                events.events.slice(-10).reverse().map((event, index) => (
-                  <div className="run-event-row" key={`${event.timestamp ?? index}-${index}`}>
-                    <strong>{eventTitle(event)}</strong>
-                    <span>{event.timestamp ? localizedDate(language, event.timestamp) : "n/a"}</span>
-                    <code>{eventMeta(event)}</code>
+            <div className="run-stage-content-grid">
+              <section className="run-stage-detail-panel">
+                <div className="run-stage-detail-head">
+                  <div>
+                    <span>{t.runs.stageProgress}</span>
+                    <strong>{selectedStage?.label ?? t.runs.waitingForStage}</strong>
                   </div>
-                ))
-              ) : (
-                <RunEmptyState
-                  description="worker 写入 stage_events.jsonl 后会显示最近 10 条事件。"
-                  title={t.runs.noEvents}
-                  variant="events"
-                />
-              )}
+                  <small>{selectedStage?.active ? t.runs.stageActive : selectedStage?.completed ? t.runs.stageCompleted : t.runs.stageAvailable}</small>
+                </div>
+
+                {selectedStage ? <ProgressMeter step={selectedStage.step} /> : null}
+
+                {selectedStage?.key === "summary" && inlineSummary ? (
+                  <InlineRunSummary
+                    busy={busy}
+                    formatOptionalDate={formatOptionalDate}
+                    language={language}
+                    onExit={closeSummaryDialog}
+                    onResume={resumeSummaryRun}
+                    statusLabels={statusLabels}
+                    summary={inlineSummary}
+                    t={t}
+                  />
+	                ) : (
+	                  <PhaseDetailPanel
+	                    monitorRun={monitorRun}
+	                    resourceNames={resourceNames}
+	                    stage={selectedStage}
+	                    t={t}
+	                  />
+	                )}
+              </section>
+
+	              <aside className="run-stage-side-panel">
+	                <div className="run-overview-title">
+	                  <span>{t.runs.currentExecution}</span>
+	                  <strong>{selectedStage?.phase?.status ?? selectedStage?.step.meta ?? t.runs.waitingForStage}</strong>
+	                </div>
+	                <div className="run-current-grid">
+	                  {phaseFieldRows(selectedStage?.key ?? "canonical", selectedStage?.phase).slice(0, 6).map(([label, raw]) => {
+	                    const rawValue = phaseValue(raw);
+	                    const value = typeof raw === "string" && resourceNames[raw] ? resourceNames[raw] : rawValue;
+	                    return <CurrentField key={label} label={label} raw={rawValue} value={value} />;
+	                  })}
+	                </div>
+	                <div className="run-stage-line">
+	                  <Clock3 size={15} />
+	                  <span>{selectedStage?.phase?.updatedAt ? localizedDate(language, selectedStage.phase.updatedAt) : t.runs.waitingForStage}</span>
+	                  <code>{selectedStage?.phase?.key ?? selectedStage?.key ?? "n/a"}</code>
+	                </div>
+
+                <div className="run-meta-grid run-monitor-meta-grid">
+                  <Metric label={t.common.config} value={monitorRun.configName} />
+                  <Metric label={t.runs.matrixCells} value={monitorRun.cells.toString()} />
+                  <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
+                  <Metric label={t.runs.updated} value={formatOptionalDate(monitorRun.updatedAt)} />
+                  <Metric label={t.runs.started} value={formatOptionalDate(monitorRun.startedAt)} />
+                  <Metric label={t.runs.finished} value={formatOptionalDate(monitorRun.finishedAt)} />
+                  <Metric label={t.runs.materializedRoot} value={monitorMaterialized?.root ?? "n/a"} />
+                  <Metric label={t.runs.latestMaterializedDir} value={monitorMaterialized?.latestDir ?? "n/a"} />
+                  <Metric label={t.runs.cacheHits} value={(monitorMaterialized?.cacheHits ?? 0).toString()} />
+                </div>
+              </aside>
             </div>
           </div>
         </section>
@@ -2813,7 +2534,7 @@ export default function RunsPage() {
         </div>
       ) : null}
 
-      {lastSummary ? (
+      {lastSummary && !inlineSummary ? (
         <div className="modal-backdrop" role="presentation">
           <div aria-modal="true" className="config-modal run-summary-modal" role="dialog">
             <div className="modal-header">
@@ -2836,17 +2557,17 @@ export default function RunsPage() {
               <div className="run-meta-grid">
                 <Metric label={t.common.progress} value={`${lastSummary.progress}%`} />
                 <Metric label={t.runs.duration} value={formatDurationMs(lastSummary.durationMs, language)} />
-                <Metric label={t.runs.completedCells} value={`${lastSummary.completedCells}/${lastSummary.cells}`} />
-                <Metric label={t.runs.successfulCells} value={lastSummary.succeededCells.toString()} />
-                <Metric label={t.runs.failedCells} value={lastSummary.failedCells.toString()} />
-                <Metric label={t.runs.remainingCells} value={lastSummary.remainingCells.toString()} />
+                <Metric label={language === "zh" ? "完成结果单元" : "Completed result units"} value={lastSummary.resultUnits.toString()} />
+                <Metric label={language === "zh" ? "成功结果单元" : "Succeeded result units"} value={lastSummary.succeededResultUnits.toString()} />
+                <Metric label={language === "zh" ? "失败结果单元" : "Failed result units"} value={lastSummary.failedResultUnits.toString()} />
+                <Metric label={language === "zh" ? "剩余结果单元" : "Remaining result units"} value={lastSummary.remainingResultUnits.toString()} />
                 <Metric label={t.common.config} value={lastSummary.configName} />
                 <Metric label={t.runs.worker} value={lastSummary.workerId ?? "n/a"} />
                 <Metric label={t.runs.created} value={formatOptionalDate(lastSummary.createdAt)} />
                 <Metric label={t.runs.started} value={formatOptionalDate(lastSummary.startedAt)} />
                 <Metric label={t.runs.finished} value={formatOptionalDate(lastSummary.finishedAt)} />
                 <Metric label={t.runs.updated} value={formatOptionalDate(lastSummary.updatedAt)} />
-                <Metric label={t.runs.matrixCells} value={lastSummary.cells.toString()} />
+                <Metric label={language === "zh" ? "结果单元" : "Result units"} value={lastSummary.resultUnits.toString()} />
               </div>
               {lastSummary.selection ? (
                 <div className="run-summary-section">
@@ -2864,35 +2585,19 @@ export default function RunsPage() {
                   </div>
                 </div>
               ) : null}
-              <div className="run-summary-section">
-                <div className="run-artifacts-head">
-                  <TerminalSquare size={15} />
-                  <span>{t.runs.latestEvent}</span>
-                </div>
-                {lastSummary.latestEvent ? (
-                  <div className="run-event-row summary-event-row">
-                    <strong>{lastSummary.latestEvent.title}</strong>
-                    <span>{lastSummary.latestEvent.timestamp ? localizedDate(language, lastSummary.latestEvent.timestamp) : "n/a"}</span>
-                    <code>{lastSummary.latestEvent.meta}</code>
+              {lastSummary.materialized ? (
+                <div className="run-summary-section">
+                  <div className="run-artifacts-head">
+                    <FolderOpen size={15} />
+                    <span>{t.runs.materializedCache}</span>
                   </div>
-                ) : (
-                  <div className="empty compact-empty">{t.runs.noEvents}</div>
-                )}
-              </div>
-              <div className="run-summary-section">
-                <div className="run-artifacts-head">
-                  <TerminalSquare size={15} />
-                  <span>{t.runs.logSummary}</span>
+                  <div className="run-meta-grid run-summary-compact-grid">
+                    <Metric label={t.runs.materializedRoot} value={lastSummary.materialized.root} />
+                    <Metric label={t.runs.latestMaterializedDir} value={lastSummary.materialized.latestDir} />
+                    <Metric label={t.runs.cacheHits} value={lastSummary.materialized.cacheHits.toString()} />
+                  </div>
                 </div>
-                <div className="run-meta-grid run-summary-compact-grid">
-                  <Metric label={t.runs.logPath} value={lastSummary.log?.path ?? lastSummary.artifactRoot ?? "n/a"} />
-                  <Metric label={t.runs.logLines} value={(lastSummary.log?.lineCount ?? 0).toString()} />
-                </div>
-                <div className="run-summary-log-tail">
-                  <span>{t.runs.logTail}</span>
-                  <pre>{lastSummary.log?.tailLines.length ? lastSummary.log.tailLines.join("\n") : t.runs.noLastLogLine}</pre>
-                </div>
-              </div>
+              ) : null}
               <div className="run-artifacts">
                 <div className="run-artifacts-head">
                   <FolderOpen size={15} />
@@ -2921,6 +2626,216 @@ export default function RunsPage() {
         </div>
       ) : null}
     </AppShell>
+  );
+}
+
+function phaseValue(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return "n/a";
+  }
+  if (typeof value === "number") {
+    return formatNumber(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function phaseFieldRows(stageKey: ExperimentStageKey, phase?: RunPhaseState) {
+  const item = phase?.currentItem ?? {};
+  const counters = phase?.counters ?? {};
+  const refs = phase?.artifactRefs ?? {};
+  const rows: Array<[string, unknown]> = [];
+  if (stageKey === "canonical") {
+    rows.push(["当前数据集", item.datasetId], ["采样图片", item.sampleCount], ["已完成数据集", counters.datasetsDone], ["已采样图片", counters.imagesDone], ["输出 manifest", refs.latestManifest]);
+  } else if (stageKey === "watermark") {
+    rows.push(["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["水印方法", item.algorithmMethod], ["seed", item.seed], ["本组图片", item.processedImages], ["剩余图片", item.remainingImages], ["cache 复用", counters.cacheHits], ["输出 manifest", refs.latestManifest]);
+  } else if (stageKey === "attack") {
+    rows.push(["范围", item.scope], ["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["当前攻击", item.attackPresetId], ["攻击方法", item.attackMethod], ["强度", item.attackStrength], ["变体", item.variantKey], ["本次图片", item.processedImages], ["剩余图片", item.remainingImages], ["cache 复用", counters.cacheHits], ["输出 manifest", refs.latestManifest]);
+  } else if (stageKey === "extract") {
+    rows.push(["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["当前攻击", item.attackPresetId], ["变体", item.variantKey], ["正样本提取", item.positiveImages], ["负样本提取", item.negativeImages], ["剩余图片", item.remainingImages], ["输出 manifest", refs.latestManifest]);
+  } else if (stageKey === "quality") {
+    rows.push(["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["当前攻击", item.attackPresetId], ["变体", item.variantKey], ["本次 pair", item.pairCount], ["剩余 pair", item.remainingPairs], ["worker 数", counters.workerCount], ["失败单元", counters.failedUnits], ["输出 manifest", refs.latestManifest]);
+  } else {
+    rows.push(["result units", counters.resultUnitsDone], ["失败单元", counters.failedUnits], ["跳过单元", counters.skippedUnits], ["summary", refs.summary], ["最新 result unit", refs.latestResultUnit]);
+  }
+  return rows.filter(([, value]) => value !== undefined && value !== null && value !== "");
+}
+
+function PhaseDetailPanel({
+  stage,
+  monitorRun,
+  resourceNames,
+  t
+}: {
+  stage: ExperimentStageTab | undefined;
+  monitorRun: DemoRunRecord;
+  resourceNames: Record<string, string>;
+  t: Translation;
+}) {
+  const phase = stage?.phase;
+  const rows = phaseFieldRows(stage?.key ?? "canonical", phase);
+  return (
+    <>
+      <div className="run-count-grid run-stage-kpi-grid">
+        <Metric label="阶段状态" value={phase?.status ?? "pending"} />
+        <Metric label="阶段进度" value={`${phase?.percent ?? stage?.step.percent ?? 0}%`} />
+        <Metric label="当前/总量" value={`${phase?.current ?? stage?.step.current ?? 0}/${phase?.total ?? stage?.step.total ?? 0}`} />
+        <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
+      </div>
+      <div className="run-current-grid">
+        {rows.map(([label, raw]) => {
+          const rawValue = phaseValue(raw);
+          const display = typeof raw === "string" && resourceNames[raw] ? resourceNames[raw] : rawValue;
+          return <CurrentField key={label} label={label} raw={rawValue} value={display} />;
+        })}
+      </div>
+      {phase?.error ? <div className="risk error">{phase.error}</div> : null}
+    </>
+  );
+}
+
+function StageTimeline({
+  stages,
+  selectedKey,
+  overallProgress,
+  onSelect
+}: {
+  stages: ExperimentStageTab[];
+  selectedKey: ExperimentStageKey;
+  overallProgress: number;
+  onSelect: (key: ExperimentStageKey) => void;
+}) {
+  return (
+    <div className="run-stage-timeline">
+      <div className="run-stage-track" aria-hidden="true">
+        <div className="run-stage-track-fill" style={{ width: progressWidth(overallProgress) }} />
+      </div>
+      <div className="run-stage-option-grid">
+        {stages.map((stage, index) => (
+          <button
+            className={[
+              "run-stage-option",
+              stage.reached ? "reached" : "locked",
+              stage.active ? "active" : "",
+              stage.completed ? "completed" : "",
+              selectedKey === stage.key ? "selected" : ""
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            disabled={!stage.reached}
+            key={stage.key}
+            onClick={() => onSelect(stage.key)}
+            type="button"
+          >
+            <span>{index + 1}</span>
+            <strong>{stage.label}</strong>
+            <small>{stage.step.meta}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InlineRunSummary({
+  summary,
+  t,
+  language,
+  statusLabels,
+  formatOptionalDate,
+  busy,
+  onResume,
+  onExit
+}: {
+  summary: ExecutionSummary;
+  t: Translation;
+  language: Language;
+  statusLabels: Record<string, string>;
+  formatOptionalDate: (value?: string | null) => string;
+  busy: boolean;
+  onResume: () => void;
+  onExit: () => void;
+}) {
+  return (
+    <div className="run-inline-summary">
+      <div className="run-summary-head">
+        <div>
+          <strong>{summary.taskName}</strong>
+          <code>{summary.runId}</code>
+        </div>
+        <span className={badgeClass(summary.status)}>{runStatusLabel(summary.status, statusLabels)}</span>
+      </div>
+      <p>{summary.note}</p>
+      <div className="run-meta-grid">
+        <Metric label={t.common.progress} value={`${summary.progress}%`} />
+        <Metric label={t.runs.duration} value={formatDurationMs(summary.durationMs, language)} />
+        <Metric label={language === "zh" ? "完成结果单元" : "Completed result units"} value={summary.resultUnits.toString()} />
+        <Metric label={language === "zh" ? "成功结果单元" : "Succeeded result units"} value={summary.succeededResultUnits.toString()} />
+        <Metric label={language === "zh" ? "失败结果单元" : "Failed result units"} value={summary.failedResultUnits.toString()} />
+        <Metric label={language === "zh" ? "剩余结果单元" : "Remaining result units"} value={summary.remainingResultUnits.toString()} />
+        <Metric label={t.common.config} value={summary.configName} />
+        <Metric label={t.runs.worker} value={summary.workerId ?? "n/a"} />
+        <Metric label={t.runs.created} value={formatOptionalDate(summary.createdAt)} />
+        <Metric label={t.runs.started} value={formatOptionalDate(summary.startedAt)} />
+        <Metric label={t.runs.finished} value={formatOptionalDate(summary.finishedAt)} />
+        <Metric label={t.runs.updated} value={formatOptionalDate(summary.updatedAt)} />
+      </div>
+      {summary.selection ? (
+        <div className="run-summary-section">
+          <div className="run-artifacts-head">
+            <CheckCircle2 size={15} />
+            <span>{t.runs.selectionScope}</span>
+          </div>
+          <div className="run-meta-grid run-summary-compact-grid">
+            <Metric label={t.runs.datasets} value={summary.selection.datasets.toString()} />
+            <Metric label={t.runs.watermarks} value={summary.selection.watermarks.toString()} />
+            <Metric label={t.runs.attacks} value={summary.selection.attacks.toString()} />
+            <Metric label={t.runs.seeds} value={summary.selection.seeds.toString()} />
+            <Metric label={t.common.samples} value={summary.selection.sampleCount.toString()} />
+            <Metric label={t.console.ops} value={summary.selection.imageOperationCount.toString()} />
+          </div>
+        </div>
+      ) : null}
+      {summary.materialized ? (
+        <div className="run-summary-section">
+          <div className="run-artifacts-head">
+            <FolderOpen size={15} />
+            <span>{t.runs.materializedCache}</span>
+          </div>
+          <div className="run-meta-grid run-summary-compact-grid">
+            <Metric label={t.runs.materializedRoot} value={summary.materialized.root} />
+            <Metric label={t.runs.latestMaterializedDir} value={summary.materialized.latestDir} />
+            <Metric label={t.runs.cacheHits} value={summary.materialized.cacheHits.toString()} />
+          </div>
+        </div>
+      ) : null}
+      <div className="run-artifacts">
+        <div className="run-artifacts-head">
+          <FolderOpen size={15} />
+          <span>{t.runs.rawArtifacts}</span>
+        </div>
+        <code>{summary.artifactRoot ?? "n/a"}</code>
+        <div className="artifact-chip-grid">
+          {rawArtifactFiles.map((file) => (
+            <span key={file}>{file}</span>
+          ))}
+        </div>
+      </div>
+      <div className="run-inline-summary-actions">
+        {isRestartableTerminalRun(summary.status) ? (
+          <button className="button" disabled={busy} onClick={onResume} type="button">
+            <RotateCcw size={16} />
+            {t.runs.resumeFromCheckpoint}
+          </button>
+        ) : null}
+        <button className="button primary" onClick={onExit} type="button">
+          <Save size={16} />
+          {t.runs.saveResultsAndExit}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -3154,7 +3069,7 @@ function TuningMethodSelector({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div title={value}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
@@ -3168,47 +3083,6 @@ function CurrentField({ label, raw, value }: { label: string; raw: string; value
       <strong>{value}</strong>
       {raw && raw !== "n/a" && raw !== value ? <code>{raw}</code> : null}
     </div>
-  );
-}
-
-function AttackOutcomeList({
-  emptyText,
-  kind,
-  names,
-  outcomes,
-  title
-}: {
-  emptyText: string;
-  kind: "success" | "failed";
-  names: Record<string, string>;
-  outcomes: AttackOutcome[];
-  title: string;
-}) {
-  return (
-    <section className={`run-attack-status-card ${kind}`}>
-      <div className="run-attack-status-head">
-        <strong>{title}</strong>
-        <span>{outcomes.length}</span>
-      </div>
-      {outcomes.length ? (
-        <div className="run-attack-list">
-          {outcomes.map((outcome) => (
-            <div className="run-attack-row" key={`${kind}-${outcome.attackId}`}>
-              <div>
-                <strong>{displayName(outcome.attackId, names)}</strong>
-                <code>{outcome.attackId}</code>
-              </div>
-              <div>
-                <span>{kind === "success" ? outcome.succeeded : outcome.failed}</span>
-                <small>{outcome.latestParam}</small>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="run-attack-empty">{emptyText}</div>
-      )}
-    </section>
   );
 }
 

@@ -192,7 +192,7 @@ export interface DemoRunRecord {
   cells: number;
   progress: number;
   completedProgress?: number;
-  progressKind?: "completedCells";
+  progressKind?: "phaseOperations" | string;
   updatedAt: string;
   artifactRoot?: string;
   logPath?: string | null;
@@ -203,12 +203,62 @@ export interface DemoRunRecord {
   createdAt?: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  currentPhase?: string | null;
+  phases?: RunPhaseState[];
+  runStatePath?: string;
+  phaseStatePath?: string;
+  artifactTreePath?: string;
 }
 
-export interface RunResultCell {
+export type RunPhaseKey =
+  | "canonical"
+  | "watermark_embed"
+  | "attack"
+  | "watermark_extract"
+  | "quality"
+  | "summary";
+
+export type RunPhaseStatus = "pending" | "running" | "succeeded" | "failed" | "paused" | "cancelled" | string;
+
+export interface RunPhaseState {
+  key: RunPhaseKey;
+  label: string;
+  status: RunPhaseStatus;
+  current: number;
+  total: number;
+  percent: number;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+  finishedAt?: string | null;
+  currentItem?: Record<string, unknown>;
+  counters?: Record<string, number | string | null>;
+  artifactRefs?: Record<string, string | null>;
+  error?: string | null;
+}
+
+export interface RunState {
+  runId: string;
+  status: RunStatus;
+  currentPhase: RunPhaseKey;
+  overallProgress: number;
+  progress: number;
+  progressKind: "phaseOperations" | string;
+  expectedResultUnits: number;
+  artifactRoot?: string;
+  materializedRoot?: string;
+  phaseStatePath?: string;
+  artifactTreePath?: string;
+  summaryPath?: string;
+  phases: RunPhaseState[];
+  updatedAt?: string;
+  run?: DemoRunRecord;
+}
+
+export interface RunResultUnit {
   id: string;
   runId: string;
   cellKey: string;
+  resultUnitKey?: string;
   status: RunStatus;
   datasetId: string;
   algorithmId: string;
@@ -306,7 +356,7 @@ export interface RunAggregate {
 
 export interface RunResults {
   run: DemoRunRecord;
-  cells: RunResultCell[];
+  resultUnits: RunResultUnit[];
   summaryPath: string;
   summaryExists: boolean;
   summary?: Record<string, unknown> | null;
@@ -346,30 +396,6 @@ export interface RunLogs {
   logPath: string;
   exists: boolean;
   lines: string[];
-}
-
-export interface RunStageEvent {
-  runId?: string;
-  stage?: string;
-  status?: string;
-  timestamp?: string;
-  cellKey?: string;
-  datasetId?: string;
-  algorithmId?: string;
-  attackPresetId?: string;
-  attackStrength?: number;
-  attackParams?: Record<string, unknown>;
-  seed?: number;
-  elapsedMs?: number;
-  error?: string | null;
-  [key: string]: unknown;
-}
-
-export interface RunEvents {
-  runId: string;
-  eventPath: string;
-  exists: boolean;
-  events: RunStageEvent[];
 }
 
 export interface ParallelTuningEvent {
@@ -447,6 +473,7 @@ export interface RuntimeInfo {
   databasePath: string;
   apiHost: string;
   apiPort: number;
+  configuredApiPort?: number;
   workerPollSeconds: number;
   workers: WorkerHeartbeat[];
 }

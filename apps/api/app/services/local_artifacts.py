@@ -2,15 +2,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
-from app.services.experiment_schema import STAGE_EVENT_SCHEMA
+from typing import Any, Callable
 
 
 JsonDict = dict[str, Any]
-INTERMEDIATE_ARTIFACT_DIR = "_intermediates"
-
-
+RunStateHook = Callable[[JsonDict], None]
+PHASE_ORDER = [
+    "canonical",
+    "watermark_embed",
+    "attack",
+    "watermark_extract",
+    "quality",
+    "summary",
+]
+PHASE_LABELS = {
+    "canonical": "采样 canonical 数据集",
+    "watermark_embed": "嵌入水印",
+    "attack": "攻击",
+    "watermark_extract": "提取",
+    "quality": "评估质量",
+    "summary": "汇总",
+}
 def write_json(path: Path, payload: JsonDict | list[JsonDict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -58,40 +70,291 @@ def artifact_paths(run_root: Path) -> dict[str, Path]:
     return {
         "runPlan": run_root / "run_plan.json",
         "runStatus": run_root / "run_status.json",
+        "runState": run_root / "run_state.json",
+        "phaseState": run_root / "phase_state.json",
+        "artifactTree": run_root / "artifact_tree.json",
         "sampleManifest": run_root / "sample_manifest.jsonl",
-        "cellManifest": run_root / "cell_manifest.jsonl",
-        "cellManifestLatest": run_root / "cell_manifest_latest.jsonl",
-        "cellSummaryLatest": run_root / "cell_summary_latest.json",
+        "resultUnits": run_root / "result_units.jsonl",
         "imageQuality": run_root / "image_quality.jsonl",
         "imageWatermarkEmbed": run_root / "image_watermark_embed.jsonl",
         "imageAttack": run_root / "image_attack.jsonl",
         "imageDetection": run_root / "image_detection.jsonl",
-        "imageDetectionLatest": run_root / "image_detection_latest.jsonl",
         "runtimeProfile": run_root / "runtime_profile.jsonl",
-        "stageEvents": run_root / "stage_events.jsonl",
         "runSummary": run_root / "run_summary.json",
     }
 
 
 def stage_event(paths: dict[str, Path], run_id: str, stage: str, status: str, **payload: Any) -> None:
-    append_jsonl(
-        paths["stageEvents"],
-        STAGE_EVENT_SCHEMA.apply(
-            {
-                "runId": run_id,
-                "stage": stage,
-                "status": status,
-                "timestamp": utc_timestamp(),
-                **payload,
-            }
-        ),
-    )
+    return None
 
 
-def progress(completed_cells: int, total_cells: int) -> int:
-    if total_cells <= 0:
+def progress(current: int, total: int) -> int:
+    if total <= 0:
         return 0
-    return int(round((completed_cells / total_cells) * 100))
+    return int(round((current / total) * 100))
+
+
+def _phase_percent(current: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    return int(round((max(0, min(current, total)) / total) * 100))
+
+
+def default_phase_states() -> list[JsonDict]:
+    return [
+        {
+            "key": key,
+            "label": PHASE_LABELS[key],
+            "status": "pending",
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "currentItem": {},
+            "counters": {},
+            "artifactRefs": {},
+        }
+        for key in PHASE_ORDER
+    ]
+
+
+def read_json_object(path: Path) -> JsonDict:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+class RunStateWriter:
+    """Writes the run's authoritative phase state.
+
+    JSONL files remain useful for debugging and scoring, but the frontend should
+    use this state instead of inferring progress from logs or events.
+    """
+
+    def __init__(
+        self,
+        *,
+        paths: dict[str, Path],
+        run_id: str,
+        run_root: Path,
+        selection: JsonDict,
+        expected_result_units: int,
+        materialized_root: Path,
+        on_state: RunStateHook | None = None,
+    ) -> None:
+        self.paths = paths
+        self.run_id = run_id
+        self.run_root = run_root
+        self.selection = selection
+        self.expected_result_units = expected_result_units
+        self.materialized_root = materialized_root
+        self.on_state = on_state
+        existing = read_json_object(paths["phaseState"])
+        phase_values = existing.get("phases") if isinstance(existing.get("phases"), list) else None
+        self.phases: dict[str, JsonDict] = {
+            str(phase["key"]): dict(phase)
+            for phase in (phase_values or default_phase_states())
+            if isinstance(phase, dict) and isinstance(phase.get("key"), str)
+        }
+        for phase in default_phase_states():
+            self.phases.setdefault(str(phase["key"]), phase)
+        tree = read_json_object(paths["artifactTree"])
+        self.artifact_tree: JsonDict = tree if tree else {"runId": run_id, "datasets": {}, "updatedAt": utc_timestamp()}
+        self.status = "running"
+
+    def write_initial(self, *, status: str = "running") -> None:
+        self.status = status
+        self._write()
+
+    def phase_start(
+        self,
+        key: str,
+        *,
+        total: int | None = None,
+        current_item: JsonDict | None = None,
+        counters: JsonDict | None = None,
+        artifact_refs: JsonDict | None = None,
+    ) -> None:
+        phase = self._phase(key)
+        now = utc_timestamp()
+        phase["status"] = "running"
+        phase.setdefault("startedAt", now)
+        phase["updatedAt"] = now
+        if total is not None:
+            phase["total"] = max(0, int(total))
+        if current_item is not None:
+            phase["currentItem"] = current_item
+        if counters:
+            phase["counters"] = {**dict(phase.get("counters") or {}), **counters}
+        if artifact_refs:
+            phase["artifactRefs"] = {**dict(phase.get("artifactRefs") or {}), **artifact_refs}
+        phase["percent"] = _phase_percent(int(phase.get("current") or 0), int(phase.get("total") or 0))
+        self._write()
+
+    def phase_advance(
+        self,
+        key: str,
+        *,
+        delta: int = 1,
+        current: int | None = None,
+        total: int | None = None,
+        current_item: JsonDict | None = None,
+        counters: JsonDict | None = None,
+        artifact_refs: JsonDict | None = None,
+    ) -> None:
+        phase = self._phase(key)
+        now = utc_timestamp()
+        phase["status"] = "running"
+        phase.setdefault("startedAt", now)
+        phase["updatedAt"] = now
+        if total is not None:
+            phase["total"] = max(0, int(total))
+        if current is None:
+            phase["current"] = max(0, int(phase.get("current") or 0) + int(delta))
+        else:
+            phase["current"] = max(0, int(current))
+        if current_item is not None:
+            phase["currentItem"] = current_item
+        if counters:
+            phase["counters"] = {**dict(phase.get("counters") or {}), **counters}
+        if artifact_refs:
+            phase["artifactRefs"] = {**dict(phase.get("artifactRefs") or {}), **artifact_refs}
+        phase["percent"] = _phase_percent(int(phase.get("current") or 0), int(phase.get("total") or 0))
+        self._write()
+
+    def phase_finish(
+        self,
+        key: str,
+        *,
+        status: str = "succeeded",
+        current_item: JsonDict | None = None,
+        counters: JsonDict | None = None,
+        artifact_refs: JsonDict | None = None,
+        error: str | None = None,
+    ) -> None:
+        phase = self._phase(key)
+        now = utc_timestamp()
+        phase["status"] = status
+        phase["updatedAt"] = now
+        phase["finishedAt"] = now
+        if int(phase.get("total") or 0) > 0 and status == "succeeded":
+            phase["current"] = int(phase["total"])
+        if current_item is not None:
+            phase["currentItem"] = current_item
+        if counters:
+            phase["counters"] = {**dict(phase.get("counters") or {}), **counters}
+        if artifact_refs:
+            phase["artifactRefs"] = {**dict(phase.get("artifactRefs") or {}), **artifact_refs}
+        if error:
+            phase["error"] = error
+        phase["percent"] = _phase_percent(int(phase.get("current") or 0), int(phase.get("total") or 0))
+        self._write()
+
+    def set_status(self, status: str) -> None:
+        self.status = status
+        self._write()
+
+    def upsert_tree_path(
+        self,
+        *,
+        dataset_id: str,
+        algorithm_id: str | None = None,
+        seed: int | None = None,
+        attack_id: str | None = None,
+        variant_key: str | None = None,
+        refs: JsonDict,
+    ) -> None:
+        datasets = self.artifact_tree.setdefault("datasets", {})
+        dataset_node = datasets.setdefault(dataset_id, {"id": dataset_id})
+        if algorithm_id is None:
+            dataset_node.update(refs)
+        elif attack_id is None:
+            algorithms = dataset_node.setdefault("watermarks", {})
+            algorithm_node = algorithms.setdefault(algorithm_id, {"id": algorithm_id, "seeds": {}})
+            if seed is None:
+                algorithm_node.update(refs)
+            else:
+                seed_node = algorithm_node.setdefault("seeds", {}).setdefault(str(seed), {"seed": seed})
+                seed_node.update(refs)
+        else:
+            algorithms = dataset_node.setdefault("watermarks", {})
+            algorithm_node = algorithms.setdefault(algorithm_id, {"id": algorithm_id, "seeds": {}})
+            seed_node = algorithm_node.setdefault("seeds", {}).setdefault(str(seed or 0), {"seed": seed})
+            attacks = seed_node.setdefault("attacks", {})
+            attack_node = attacks.setdefault(attack_id, {"id": attack_id, "variants": {}})
+            variant_node = attack_node.setdefault("variants", {}).setdefault(variant_key or "default", {"variantKey": variant_key or "default"})
+            variant_node.update(refs)
+        self.artifact_tree["updatedAt"] = utc_timestamp()
+        self._write_tree()
+
+    def phases_list(self) -> list[JsonDict]:
+        return [self._phase(key) for key in PHASE_ORDER]
+
+    def run_state(self) -> JsonDict:
+        phases = self.phases_list()
+        active = next((phase for phase in phases if phase.get("status") == "running"), None)
+        current_phase = str(active.get("key")) if active else self._latest_reached_phase(phases)
+        overall = self._overall_progress(phases)
+        return {
+            "runId": self.run_id,
+            "status": self.status,
+            "currentPhase": current_phase,
+            "overallProgress": overall,
+            "progress": overall,
+            "progressKind": "phaseOperations",
+            "expectedResultUnits": self.expected_result_units,
+            "selection": self.selection,
+            "artifactRoot": str(self.run_root),
+            "materializedRoot": str(self.materialized_root),
+            "phaseStatePath": str(self.paths["phaseState"]),
+            "artifactTreePath": str(self.paths["artifactTree"]),
+            "summaryPath": str(self.paths["runSummary"]),
+            "phases": phases,
+            "updatedAt": utc_timestamp(),
+        }
+
+    def _phase(self, key: str) -> JsonDict:
+        if key not in self.phases:
+            raise KeyError(f"Unknown phase key: {key}")
+        return self.phases[key]
+
+    def _latest_reached_phase(self, phases: list[JsonDict]) -> str:
+        latest = "canonical"
+        for phase in phases:
+            if phase.get("status") != "pending":
+                latest = str(phase.get("key") or latest)
+        return latest
+
+    def _overall_progress(self, phases: list[JsonDict]) -> int:
+        if not phases:
+            return 0
+        score = 0.0
+        for phase in phases:
+            status = str(phase.get("status") or "pending")
+            if status == "succeeded":
+                score += 1.0
+            elif status in {"running", "failed", "paused", "cancelled"}:
+                score += max(0.0, min(1.0, float(phase.get("percent") or 0) / 100.0))
+        return int(round((score / len(phases)) * 100))
+
+    def _write_tree(self) -> None:
+        write_json(self.paths["artifactTree"], self.artifact_tree)
+
+    def _write(self) -> None:
+        phase_payload = {
+            "runId": self.run_id,
+            "phases": self.phases_list(),
+            "updatedAt": utc_timestamp(),
+        }
+        write_json(self.paths["phaseState"], phase_payload)
+        self._write_tree()
+        state = self.run_state()
+        write_json(self.paths["runState"], state)
+        if self.on_state is not None:
+            self.on_state(state)
 
 
 def write_run_status(
@@ -99,8 +362,8 @@ def write_run_status(
     *,
     run_id: str,
     status: str,
-    completed_cells: int,
-    expected_cells: int,
+    result_units: int,
+    expected_result_units: int,
     error: str | None = None,
 ) -> None:
     write_json(
@@ -108,108 +371,20 @@ def write_run_status(
         {
             "runId": run_id,
             "status": status,
-            "completedCells": completed_cells,
-            "expectedCells": expected_cells,
-            "progress": progress(completed_cells, expected_cells),
-            "completedProgress": progress(completed_cells, expected_cells),
-            "progressKind": "completedCells",
+            "resultUnitCount": result_units,
+            "expectedResultUnits": expected_result_units,
+            "progress": progress(result_units, expected_result_units),
+            "completedProgress": progress(result_units, expected_result_units),
+            "progressKind": "phaseOperations",
             "error": error,
             "updatedAt": utc_timestamp(),
         },
     )
 
 
-def cell_attempt_counts(cell_manifest_path: Path) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for record in read_jsonl(cell_manifest_path):
-        cell_key = record.get("cellKey")
-        if isinstance(cell_key, str):
-            counts[cell_key] = counts.get(cell_key, 0) + 1
-    return counts
-
-
-def latest_cell_rows(cell_manifest_path: Path) -> list[JsonDict]:
-    latest: dict[str, JsonDict] = {}
-    attempt_counts: dict[str, int] = {}
-    for record in read_jsonl(cell_manifest_path):
-        cell_key = record.get("cellKey")
-        if isinstance(cell_key, str):
-            attempt_counts[cell_key] = attempt_counts.get(cell_key, 0) + 1
-            enriched = dict(record)
-            enriched.setdefault("attemptIndex", attempt_counts[cell_key])
-            enriched.setdefault("supersedesPreviousAttempt", attempt_counts[cell_key] > 1)
-            latest[cell_key] = enriched
-    return list(latest.values())
-
-
-def latest_cell_row_map(cell_manifest_path: Path) -> dict[str, JsonDict]:
+def latest_result_unit_map(result_units_path: Path) -> dict[str, JsonDict]:
     return {
-        str(record["cellKey"]): record
-        for record in latest_cell_rows(cell_manifest_path)
+        str(record["cellKey"]): dict(record)
+        for record in read_jsonl(result_units_path)
         if isinstance(record.get("cellKey"), str)
     }
-
-
-def _json_record_has_intermediate_artifact(record: JsonDict) -> bool:
-    for key in ("inputPath", "sampleId", "referencePath", "targetPath"):
-        value = record.get(key)
-        if isinstance(value, str) and INTERMEDIATE_ARTIFACT_DIR in Path(value).parts:
-            return True
-    return False
-
-
-def _read_json_array(path: Path) -> list[JsonDict]:
-    if not path.exists():
-        return []
-    try:
-        value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _latest_image_detection_rows(latest_cells: list[JsonDict]) -> list[JsonDict]:
-    rows: list[JsonDict] = []
-    for cell in latest_cells:
-        manifest_path = cell.get("manifestPath")
-        if not isinstance(manifest_path, str):
-            continue
-        for record in _read_json_array(Path(manifest_path)):
-            if not _json_record_has_intermediate_artifact(record):
-                rows.append(record)
-    return rows
-
-
-def write_latest_cell_artifacts(paths: dict[str, Path], *, run_id: str, expected_cells: int) -> None:
-    latest_cells = latest_cell_rows(paths["cellManifest"])
-    status_counts: dict[str, int] = {}
-    for cell in latest_cells:
-        status = str(cell.get("status") or "unknown")
-        status_counts[status] = status_counts.get(status, 0) + 1
-
-    attempted_cells = len(latest_cells)
-    succeeded_cells = status_counts.get("succeeded", 0)
-    failed_cells = status_counts.get("failed", 0)
-
-    write_jsonl(paths["cellManifestLatest"], latest_cells)
-    write_jsonl(paths["imageDetectionLatest"], _latest_image_detection_rows(latest_cells))
-    write_json(
-        paths["cellSummaryLatest"],
-        {
-            "runId": run_id,
-            "cellCount": attempted_cells,
-            "attemptedCells": attempted_cells,
-            "succeededCells": succeeded_cells,
-            "failedCells": failed_cells,
-            "expectedCells": expected_cells,
-            "progress": progress(attempted_cells, expected_cells),
-            "completedProgress": progress(attempted_cells, expected_cells),
-            "progressKind": "completedCells",
-            "attemptedProgress": progress(attempted_cells, expected_cells),
-            "succeededProgress": progress(succeeded_cells, expected_cells),
-            "statusCounts": status_counts,
-            "updatedAt": utc_timestamp(),
-        },
-    )

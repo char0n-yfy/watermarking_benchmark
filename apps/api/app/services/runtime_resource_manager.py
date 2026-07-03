@@ -11,6 +11,73 @@ from app.services.experiment_schema import RUNTIME_PROFILE_SCHEMA
 JsonDict = dict[str, Any]
 
 
+def release_runtime_resources(
+    *,
+    release_watermarks: bool = True,
+    release_attacks: bool = True,
+    release_perceptual: bool = True,
+    release_auxiliary: bool = True,
+) -> list[str]:
+    errors: list[str] = []
+
+    def run_action(name: str, fn: Callable[[], None]) -> None:
+        try:
+            fn()
+        except Exception as exc:
+            errors.append(f"{name}: {type(exc).__name__}: {exc}")
+
+    if release_watermarks:
+        run_action("clear_watermark_cache", _clear_watermark_cache)
+    if release_attacks:
+        run_action("clear_attack_cache", _clear_attack_cache)
+    if release_perceptual:
+        run_action("clear_perceptual_backend", _clear_perceptual_backend)
+    if release_auxiliary:
+        run_action("clear_auxiliary_model_caches", _clear_auxiliary_model_caches)
+    run_action("gc_collect", gc.collect)
+    run_action("torch_cleanup", _torch_cleanup)
+    return errors
+
+
+def _clear_watermark_cache() -> None:
+    from evaluator.watermarking.runner import clear_watermark_cache
+
+    clear_watermark_cache()
+
+
+def _clear_attack_cache() -> None:
+    from evaluator.attacks.runner import clear_attack_cache
+
+    clear_attack_cache()
+
+
+def _clear_perceptual_backend() -> None:
+    from app.services.scoring import clear_perceptual_backend
+
+    clear_perceptual_backend()
+
+
+def _clear_auxiliary_model_caches() -> None:
+    try:
+        from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import deep_enhance
+
+        deep_enhance.clear_model_cache()
+    except Exception:
+        pass
+    try:
+        from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import restoration_sr
+
+        restoration_sr.clear_model_cache()
+    except Exception:
+        pass
+
+
+def _torch_cleanup() -> None:
+    from evaluator.runtime_cleanup import torch_cleanup
+
+    torch_cleanup(reset_peak=True)
+
+
 class RuntimeResourceManager:
     def __init__(
         self,
@@ -19,13 +86,11 @@ class RuntimeResourceManager:
         run_id: str,
         device: str,
         append_jsonl: Callable[[Path, JsonDict], None],
-        stage_event: Callable[..., None],
     ) -> None:
         self.paths = paths
         self.run_id = run_id
         self.device = device
         self.append_jsonl = append_jsonl
-        self.stage_event = stage_event
 
     def cleanup(
         self,
@@ -52,16 +117,16 @@ class RuntimeResourceManager:
                 errors.append(f"{name}: {type(exc).__name__}: {exc}")
 
         if release_watermarks:
-            run_action("clear_watermark_cache", self._clear_watermark_cache)
+            run_action("clear_watermark_cache", _clear_watermark_cache)
         if release_attacks:
-            run_action("clear_attack_cache", self._clear_attack_cache)
+            run_action("clear_attack_cache", _clear_attack_cache)
         if release_perceptual:
-            run_action("clear_perceptual_backend", self._clear_perceptual_backend)
+            run_action("clear_perceptual_backend", _clear_perceptual_backend)
         if release_auxiliary:
-            run_action("clear_auxiliary_model_caches", self._clear_auxiliary_model_caches)
+            run_action("clear_auxiliary_model_caches", _clear_auxiliary_model_caches)
 
         run_action("gc_collect", gc.collect)
-        run_action("torch_cleanup", self._torch_cleanup)
+        run_action("torch_cleanup", _torch_cleanup)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         after = self._snapshot()
         status = "succeeded" if not errors else "partial"
@@ -92,56 +157,7 @@ class RuntimeResourceManager:
             }
         )
         self.append_jsonl(self.paths["runtimeProfile"], record)
-        self.stage_event(
-            self.paths,
-            self.run_id,
-            "resource_cleanup",
-            status,
-            scope=scope,
-            reason=reason,
-            cellKey=cell_key,
-            actions=actions,
-            errors=errors,
-            elapsedMs=elapsed_ms,
-            before=before,
-            after=after,
-            **(metadata or {}),
-        )
         return record
-
-    def _clear_watermark_cache(self) -> None:
-        from evaluator.watermarking.runner import clear_watermark_cache
-
-        clear_watermark_cache()
-
-    def _clear_attack_cache(self) -> None:
-        from evaluator.attacks.runner import clear_attack_cache
-
-        clear_attack_cache()
-
-    def _clear_perceptual_backend(self) -> None:
-        from app.services.scoring import clear_perceptual_backend
-
-        clear_perceptual_backend()
-
-    def _clear_auxiliary_model_caches(self) -> None:
-        try:
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import deep_enhance
-
-            deep_enhance.clear_model_cache()
-        except Exception:
-            pass
-        try:
-            from evaluator.attacks.consumer_enhancement_workflow_attacks.backends import restoration_sr
-
-            restoration_sr.clear_model_cache()
-        except Exception:
-            pass
-
-    def _torch_cleanup(self) -> None:
-        from evaluator.runtime_cleanup import torch_cleanup
-
-        torch_cleanup(reset_peak=True)
 
     def _snapshot(self) -> JsonDict:
         snapshot: JsonDict = {

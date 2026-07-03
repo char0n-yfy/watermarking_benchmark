@@ -9,6 +9,10 @@ autodl_ensure_screen
 
 screen -S wmbench-api -X quit >/dev/null 2>&1 || true
 screen -S wmbench-worker -X quit >/dev/null 2>&1 || true
+sleep 1
+
+autodl_assert_port_free "${API_PORT}"
+autodl_assert_no_orphan_workers
 
 screen -L -Logfile "${WM_BENCH_LOG_DIR}/api.screen.log" -dmS wmbench-api bash infra/autodl/start_api.sh
 screen -L -Logfile "${WM_BENCH_LOG_DIR}/worker.screen.log" -dmS wmbench-worker bash infra/autodl/start_worker.sh

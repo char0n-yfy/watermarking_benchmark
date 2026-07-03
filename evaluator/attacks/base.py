@@ -91,6 +91,15 @@ class BaseAttack:
     def __init__(self, **params: Any) -> None:
         self.params: JsonDict = dict(params)
 
+    @classmethod
+    def model_cache_params(cls, params: Mapping[str, Any]) -> JsonDict:
+        """Return the subset of params that determines heavyweight model state."""
+        return dict(params)
+
+    def configure_runtime(self, params: Mapping[str, Any]) -> None:
+        """Apply lightweight runtime parameters before an attack run."""
+        self.params = dict(params)
+
     def release(self) -> None:
         """Release heavyweight runtime state held by this attack instance."""
         return None
