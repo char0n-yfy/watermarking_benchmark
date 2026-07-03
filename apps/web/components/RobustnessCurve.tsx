@@ -308,11 +308,11 @@ function ScoreCurve({
   showLegend: boolean;
 }) {
   const width = 540;
-  const height = 260;
+  const height = 310;
   const leftPad = 48;
   const rightPad = 30;
-  const topPad = 28;
-  const bottomPad = 52;
+  const topPad = 34;
+  const bottomPad = 60;
   const plotWidth = width - leftPad - rightPad;
   const plotHeight = height - topPad - bottomPad;
   const axisY = height - bottomPad;
@@ -324,8 +324,8 @@ function ScoreCurve({
   const pointSizeStats = collectPointSizeStats(series);
   const referenceThresholds = normalizePerformanceThresholds(performanceThresholds);
   const domain = buildScoreCurveDomain(series, referenceThresholds);
-  const xTicks = buildAxisTicks(domain.xMin, domain.xMax, 4);
-  const yTicks = buildAxisTicks(domain.yMin, domain.yMax, 4);
+  const xTicks = buildAxisTicks(domain.xMin, domain.xMax, 9);
+  const yTicks = buildAxisTicks(domain.yMin, domain.yMax, 6);
   const xFor = (nqd: number) =>
     leftPad + ((Math.max(domain.xMin, Math.min(domain.xMax, nqd)) - domain.xMin) / Math.max(0.0001, domain.xMax - domain.xMin)) * plotWidth;
   const yFor = (tpr: number) =>
@@ -686,6 +686,9 @@ function niceTickStep(rawStep: number): number {
   }
   if (fraction <= 2) {
     return base * 2;
+  }
+  if (fraction <= 2.5) {
+    return base * 2.5;
   }
   if (fraction <= 5) {
     return base * 5;
