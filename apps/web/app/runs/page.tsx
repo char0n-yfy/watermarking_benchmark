@@ -119,6 +119,8 @@ type TuningForm = {
   mode: TuningMode;
   sampleCount: number;
   warmupCount: number;
+  probeSampleCount: number;
+  finalistCount: number;
   minBatchSize: number;
   maxBatchSize: number;
   minWorkerCount: number;
@@ -211,6 +213,8 @@ const quickTuningDefaults: TuningForm = {
   mode: "quick",
   sampleCount: 16,
   warmupCount: 2,
+  probeSampleCount: 8,
+  finalistCount: 2,
   minBatchSize: 1,
   maxBatchSize: 16,
   minWorkerCount: 1,
@@ -229,6 +233,8 @@ const fullTuningDefaults: TuningForm = {
   mode: "full",
   sampleCount: 64,
   warmupCount: 4,
+  probeSampleCount: 16,
+  finalistCount: 3,
   minBatchSize: 1,
   maxBatchSize: 64,
   minWorkerCount: 1,
@@ -355,6 +361,7 @@ function isViewpointTuningMethod(method: string) {
 const VIEWPOINT_RERENDERING_PRIMARY_METHOD = "3d_viewpoint_rerendering_rotate_point";
 const DIFFUSION_REGENERATION_PRIMARY_METHOD = "regen_diffusion";
 const DIFFUSION_REGENERATION_METHODS = new Set(["regen_diffusion", "2x_regen", "4x_regen"]);
+const NON_TUNABLE_ATTACK_METHODS = new Set(["identity"]);
 
 const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
   brightness: { en: "Brightness", zh: "亮度调整" },
@@ -466,7 +473,13 @@ function attackTuningRepresentativeMethod(method: string) {
 }
 
 function normalizeTuningAttackMethods(methods: string[]) {
-  return [...new Set(methods.map(attackTuningRepresentativeMethod).filter(Boolean))].sort();
+  return [
+    ...new Set(
+      methods
+        .map(attackTuningRepresentativeMethod)
+        .filter((method) => method && !NON_TUNABLE_ATTACK_METHODS.has(method))
+    )
+  ].sort();
 }
 
 function buildWatermarkTuningOptions(algorithms: AlgorithmVersion[]): TuningMethodOption[] {
@@ -562,6 +575,9 @@ function buildTuningPayload(form: TuningForm) {
     mode: form.mode,
     sampleCount,
     warmupCount: positiveInteger(form.warmupCount, 2),
+    searchStrategy: "adaptive",
+    probeSampleCount: Math.min(sampleCount, positiveInteger(form.probeSampleCount, form.mode === "full" ? 16 : 8)),
+    finalistCount: positiveInteger(form.finalistCount, form.mode === "full" ? 3 : 2),
     batchCandidates,
     workerCandidates,
     repeatCount: positiveInteger(form.repeatCount, form.mode === "full" ? 3 : 1),
@@ -627,17 +643,21 @@ function tuningParameterSegmentCount(payload: ReturnType<typeof buildTuningPaylo
 }
 
 function tuningCombinationCount(payload: ReturnType<typeof buildTuningPayload>) {
+  const searchCount = (candidateCount: number) =>
+    candidateCount + Math.min(Math.max(1, payload.finalistCount), candidateCount) * payload.repeatCount;
+  const batchSearchCount = searchCount(payload.batchCandidates.length);
+  const workerSearchCount = searchCount(payload.workerCandidates.length);
   let total = 0;
   if (payload.tuneWatermarks) {
-    total += payload.watermarkMethods.length * (payload.batchCandidates.length + payload.workerCandidates.length);
+    total += payload.watermarkMethods.length * (batchSearchCount + workerSearchCount);
   }
   if (payload.tuneAttacks) {
-    total += payload.attackMethods.length * payload.batchCandidates.length;
+    total += payload.attackMethods.length * batchSearchCount;
   }
   if (payload.tuneQuality) {
-    total += payload.batchCandidates.length + payload.workerCandidates.length;
+    total += batchSearchCount + workerSearchCount;
   }
-  return Math.max(0, total * payload.repeatCount);
+  return Math.max(0, total);
 }
 
 function tuningEstimateText(payload: ReturnType<typeof buildTuningPayload>) {
@@ -683,7 +703,7 @@ function percent(current: number, total: number) {
   if (total <= 0) {
     return 0;
   }
-  return Math.round((Math.max(0, current) / total) * 100);
+  return Math.min(100, Math.round((Math.max(0, current) / total) * 100));
 }
 
 function materializedStatsFromRunState(runState: RunState | null, phase?: RunPhaseState): MaterializedStats | null {
@@ -937,13 +957,18 @@ function phaseKeyForStage(stageKey: ExperimentStageKey): RunPhaseState["key"] {
 }
 
 function progressStepFromPhase(phase: RunPhaseState, label: string): ProgressStep {
+  const rawCurrent = Number(phase.current ?? 0);
+  const total = Math.max(0, Number(phase.total ?? 0));
+  const current = total > 0 ? Math.min(Math.max(0, rawCurrent), total) : Math.max(0, rawCurrent);
+  const rawPercent = Number(phase.percent ?? percent(current, total));
+  const displayPercent = Number.isFinite(rawPercent) ? Math.min(100, Math.max(0, rawPercent)) : percent(current, total);
   return {
     key: phase.key,
     label,
-    current: Number(phase.current ?? 0),
-    total: Number(phase.total ?? 0),
-    percent: Number(phase.percent ?? 0),
-    meta: phase.total ? `${phase.current}/${phase.total}` : phase.status
+    current,
+    total,
+    percent: displayPercent,
+    meta: total ? `${current}/${total}` : phase.status
   };
 }
 
@@ -1284,7 +1309,7 @@ export default function RunsPage() {
       const availableWatermarkMethods = watermarkOptions.filter((option) => option.available).map((option) => option.method);
       const availableAttackMethods = attackOptions.filter((option) => option.available).map((option) => option.method);
       const defaultAttackMethods = attackOptions
-        .filter((option) => option.available && !option.viewpoint)
+        .filter((option) => option.available && !option.viewpoint && !NON_TUNABLE_ATTACK_METHODS.has(option.method))
         .map((option) => option.method);
       setResourceNames(nextResourceNames);
       setTuningCatalogStats(buildTuningCatalogStats(algorithms, attacks));
@@ -1662,7 +1687,9 @@ export default function RunsPage() {
       setTuningJob(job);
       setTuningWorkspaceOpen(true);
       setTuningDialogOpen(false);
-      setTuningNotice(`调参任务已启动，sampleCount=${payload.sampleCount}，最大 batch=${payload.maxBatchSize}。`);
+      setTuningNotice(
+        `调参任务已启动，adaptive probe=${payload.probeSampleCount}，final sampleCount=${payload.sampleCount}，最大 batch=${payload.maxBatchSize}。`
+      );
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
       setTuningNotice(error instanceof Error ? error.message : "调参任务启动失败。");
@@ -2085,7 +2112,7 @@ export default function RunsPage() {
                     <SlidersHorizontal size={18} />
                   </span>
                   <strong>快速模式</strong>
-                  <span>固定候选集合，单次测量，适合快速得到一版可用参数。</span>
+                  <span>小样本筛选所有候选，只复测 Top 候选，适合快速得到一版可用参数。</span>
                 </button>
                 <button
                   className={tuningForm.mode === "full" ? "run-mode-card tuning-mode-card selected" : "run-mode-card tuning-mode-card"}
@@ -2096,7 +2123,7 @@ export default function RunsPage() {
                     <BarChart3 size={18} />
                   </span>
                   <strong>完整模式</strong>
-                  <span>自动扩展候选、检测吞吐边界、重复测量并用中位数选最优。</span>
+                  <span>小样本筛选、自动扩展边界，并对 Top 候选重复测量取中位数。</span>
                 </button>
               </div>
 
@@ -2141,6 +2168,32 @@ export default function RunsPage() {
                           value={tuningForm.repeatCount}
                         />
                         <span>count</span>
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="tuning-probe-samples">probeSampleCount</label>
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-probe-samples"
+                          min={2}
+                          onChange={(event) => updateTuningForm({ probeSampleCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.probeSampleCount}
+                        />
+                        <span>count</span>
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="tuning-finalists">finalistCount</label>
+                      <div className="tuning-input-wrap">
+                        <input
+                          id="tuning-finalists"
+                          min={1}
+                          onChange={(event) => updateTuningForm({ finalistCount: Number(event.target.value) })}
+                          type="number"
+                          value={tuningForm.finalistCount}
+                        />
+                        <span>top</span>
                       </div>
                     </div>
                     <div className="field">
@@ -2336,8 +2389,16 @@ export default function RunsPage() {
                       <span>sampleCount 已校正</span>
                       <strong>{effectiveTuningPayload.sampleCount}</strong>
                     </div>
+                    <div>
+                      <span>probe 样本</span>
+                      <strong>{effectiveTuningPayload.probeSampleCount}</strong>
+                    </div>
+                    <div>
+                      <span>复测候选</span>
+                      <strong>Top {effectiveTuningPayload.finalistCount}</strong>
+                    </div>
                   </div>
-                  <p className="tuning-estimate-note">实际执行会以后端检测到的算法能力为准，串行项与继承项不会按前端估算重复测量。</p>
+                  <p className="tuning-estimate-note">实际执行会以后端检测到的算法能力为准；候选先用 probe 样本筛选，只有 Top 候选会完整复测。</p>
                 </section>
 
                 <section className="run-dialog-section tuning-effective-section">
@@ -2366,6 +2427,18 @@ export default function RunsPage() {
                     <div className="tuning-preview-stat">
                       <span>重复次数</span>
                       <strong>{effectiveTuningPayload.repeatCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>搜索策略</span>
+                      <strong>adaptive</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>probe 样本</span>
+                      <strong>{effectiveTuningPayload.probeSampleCount}</strong>
+                    </div>
+                    <div className="tuning-preview-stat">
+                      <span>复测候选</span>
+                      <strong>Top {effectiveTuningPayload.finalistCount}</strong>
                     </div>
                     <div className="tuning-preview-stat">
                       <span>3D 攻击</span>
@@ -2675,13 +2748,14 @@ function PhaseDetailPanel({
   t: Translation;
 }) {
   const phase = stage?.phase;
+  const step = stage?.step;
   const rows = phaseFieldRows(stage?.key ?? "canonical", phase);
   return (
     <>
       <div className="run-count-grid run-stage-kpi-grid">
         <Metric label="阶段状态" value={phase?.status ?? "pending"} />
-        <Metric label="阶段进度" value={`${phase?.percent ?? stage?.step.percent ?? 0}%`} />
-        <Metric label="当前/总量" value={`${phase?.current ?? stage?.step.current ?? 0}/${phase?.total ?? stage?.step.total ?? 0}`} />
+        <Metric label="阶段进度" value={`${step?.percent ?? phase?.percent ?? 0}%`} />
+        <Metric label="当前/总量" value={`${step?.current ?? phase?.current ?? 0}/${step?.total ?? phase?.total ?? 0}`} />
         <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
       </div>
       <div className="run-current-grid">

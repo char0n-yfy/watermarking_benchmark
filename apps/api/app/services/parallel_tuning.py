@@ -51,6 +51,7 @@ DIFFUSION_REGENERATION_EQUIVALENT_METHODS = (
     "2x_regen",
     "4x_regen",
 )
+NON_TUNABLE_ATTACK_METHODS = {"identity"}
 FIXED_ATTACK_BATCH_OVERRIDES: dict[str, int] = {}
 ACTIVE_TUNING_STATUSES = {"running", "cancelling"}
 TERMINAL_TUNING_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -133,6 +134,19 @@ def _best_by_throughput(entries: list[JsonDict]) -> JsonDict | None:
     valid = [entry for entry in entries if entry.get("ok") and entry.get("imagesPerSecond") is not None]
     if not valid:
         return None
+    has_final_measurement = any(
+        str(entry.get("measurementPhase") or "") in {"final", "exhaustive"}
+        for entry in entries
+    )
+    final_valid = [
+        entry
+        for entry in valid
+        if str(entry.get("measurementPhase") or "") in {"final", "exhaustive"}
+    ]
+    if has_final_measurement:
+        if not final_valid:
+            return None
+        valid = final_valid
     return max(valid, key=lambda entry: float(entry["imagesPerSecond"]))
 
 
@@ -202,6 +216,9 @@ class TuningRequest:
     mode: str = "quick"
     sample_count: int = 16
     warmup_count: int = 2
+    search_strategy: str = "adaptive"
+    probe_sample_count: int = 8
+    finalist_count: int = 2
     batch_candidates: list[int] = field(default_factory=lambda: [1, 2, 4, 8, 16])
     worker_candidates: list[int] = field(default_factory=lambda: [1, 2, 4, 8, 16, 24, 32])
     repeat_count: int = 1
@@ -223,6 +240,8 @@ class TuningRequest:
         mode = str(payload.get("mode") or "quick")
         full_mode = mode == "full"
         default_samples = 64 if full_mode else 16
+        default_probe_samples = 16 if full_mode else 8
+        default_finalists = 3 if full_mode else 2
         default_batches = [1, 2, 4, 8, 16, 32, 64] if full_mode else [1, 2, 4, 8, 16]
         default_workers = [1, 2, 4, 8, 16, 24, 32, 48, 64] if full_mode else [1, 2, 4, 8, 16, 24, 32]
         batch_candidates = _positive_candidates(payload.get("batchCandidates") or default_batches)
@@ -233,10 +252,14 @@ class TuningRequest:
         sample_count = max(2, int(payload.get("sampleCount") or default_samples), max(batch_candidates or [1]))
         if auto_expand:
             sample_count = max(sample_count, max_batch_size)
+        search_strategy = str(payload.get("searchStrategy") or "adaptive").strip().lower() or "adaptive"
         return cls(
             mode=mode,
             sample_count=sample_count,
             warmup_count=max(1, int(payload.get("warmupCount") or 2)),
+            search_strategy=search_strategy,
+            probe_sample_count=max(2, int(payload.get("probeSampleCount") or default_probe_samples)),
+            finalist_count=max(1, int(payload.get("finalistCount") or default_finalists)),
             batch_candidates=batch_candidates,
             worker_candidates=worker_candidates,
             repeat_count=max(1, int(payload.get("repeatCount") or (3 if full_mode else 1))),
@@ -258,6 +281,9 @@ class TuningRequest:
             "mode": self.mode,
             "sampleCount": self.sample_count,
             "warmupCount": self.warmup_count,
+            "searchStrategy": self.search_strategy,
+            "probeSampleCount": self.probe_sample_count,
+            "finalistCount": self.finalist_count,
             "batchCandidates": self.batch_candidates,
             "workerCandidates": self.worker_candidates,
             "repeatCount": self.repeat_count,
@@ -476,7 +502,7 @@ class ParallelTuningService:
         methods = _unique_preserving_order(
             method
             for method in (request.attack_methods or sorted(ATTACK_REGISTRY))
-            if method not in FIXED_ATTACK_BATCH_OVERRIDES
+            if method not in FIXED_ATTACK_BATCH_OVERRIDES and method not in NON_TUNABLE_ATTACK_METHODS
         )
 
         diffusion_methods = set(self._diffusion_regeneration_methods())
@@ -527,6 +553,18 @@ class ParallelTuningService:
             if not output_dir or str(output_dir) in keep:
                 continue
             _mark_output_cleaned(entry, str(output_dir))
+
+    def _limited_input_dir(
+        self,
+        source_dir: Path,
+        target_dir: Path,
+        sample_count: int | None,
+    ) -> tuple[Path, int, Path | None]:
+        image_count = len(iter_image_paths(source_dir))
+        if sample_count is None or sample_count >= image_count:
+            return source_dir, image_count, None
+        subset_dir = self._subset_dir(source_dir, target_dir, max(1, sample_count))
+        return subset_dir, len(iter_image_paths(subset_dir)), subset_dir
 
     def _run_job(self, job_id: str, request: TuningRequest) -> None:
         job_dir = self.root / job_id
@@ -661,16 +699,24 @@ class ParallelTuningService:
         total = 1
         batch_candidates = _candidates_up_to(request.batch_candidates, request.max_batch_size)
         worker_candidates = _candidates_up_to(request.worker_candidates, request.max_worker_count)
-        multiplier = max(1, request.repeat_count)
+        batch_steps = self._estimate_search_steps(request, batch_candidates)
+        worker_steps = self._estimate_search_steps(request, worker_candidates)
         if request.tune_watermarks:
             methods = request.watermark_methods or sorted(WATERMARK_REGISTRY)
-            total += len(methods) * max(1, len(batch_candidates)) * multiplier
+            total += len(methods) * max(1, batch_steps)
         if request.tune_attacks:
             methods = self._attack_methods_for_tuning(request)
-            total += len(methods) * max(1, len(batch_candidates)) * multiplier
+            total += len(methods) * max(1, batch_steps)
         if request.tune_quality:
-            total += (len(worker_candidates) + len(batch_candidates)) * multiplier
+            total += worker_steps + batch_steps
         return max(1, total)
+
+    def _estimate_search_steps(self, request: TuningRequest, candidates: list[int]) -> int:
+        candidate_count = max(1, len(candidates))
+        if request.search_strategy == "exhaustive":
+            return candidate_count * max(1, request.repeat_count)
+        finalist_count = min(max(1, request.finalist_count), candidate_count)
+        return candidate_count + finalist_count * max(1, request.repeat_count)
 
     def _measure_repeated(self, repeat_count: int, value_key: str, run_once: Any, should_cancel: Any | None = None) -> JsonDict:
         repetitions: list[JsonDict] = []
@@ -719,16 +765,78 @@ class ParallelTuningService:
     ) -> list[JsonDict]:
         schedule = _candidates_up_to(initial_candidates, max_value)
         entries: list[JsonDict] = []
+
+        def measurement_sample_count(candidate: int, *, final: bool) -> int:
+            if final or request.search_strategy == "exhaustive":
+                return request.sample_count
+            return min(request.sample_count, max(2, request.probe_sample_count, int(candidate)))
+
+        def run_measurement(candidate: int, *, repeat_count: int, sample_count: int, phase: str) -> JsonDict:
+            return self._measure_repeated(
+                repeat_count,
+                value_key,
+                lambda candidate=candidate, sample_count=sample_count, phase=phase: run_once(
+                    candidate,
+                    sample_count,
+                    phase,
+                ),
+                should_cancel=lambda: self._is_cancel_requested(job_id),
+            )
+
+        if request.search_strategy == "exhaustive":
+            index = 0
+            while index < len(schedule):
+                self._ensure_not_cancelled(job_id)
+                candidate = schedule[index]
+                previous_best = _best_by_throughput(entries)
+                entry = run_measurement(
+                    candidate,
+                    repeat_count=request.repeat_count,
+                    sample_count=measurement_sample_count(candidate, final=True),
+                    phase="exhaustive",
+                )
+                self._ensure_not_cancelled(job_id)
+                entries.append(entry)
+                on_entry(entry)
+                if _oom_like(entry.get("error")) or not entry.get("ok"):
+                    break
+
+                current_ips = float(entry.get("imagesPerSecond") or 0)
+                previous_best_ips = float(previous_best.get("imagesPerSecond") or 0) if previous_best else 0.0
+                meaningful_gain = previous_best is None or current_ips >= previous_best_ips * (1 + request.min_improvement_ratio)
+                best_now = _best_by_throughput(entries)
+                best_value = int(best_now.get(value_key) or 0) if best_now else 0
+
+                if request.auto_expand_candidates and index == len(schedule) - 1 and best_value == candidate and meaningful_gain:
+                    next_candidate = _next_power_candidate(candidate, max_value)
+                    if next_candidate is not None and next_candidate not in schedule:
+                        schedule.append(next_candidate)
+
+                if request.auto_expand_candidates and best_now and best_value != candidate:
+                    best_ips = float(best_now.get("imagesPerSecond") or 0)
+                    tail = 0
+                    for tail_entry in reversed(entries):
+                        tail_ips = float(tail_entry.get("imagesPerSecond") or 0)
+                        if tail_entry.get("ok") and tail_ips < best_ips * (1 + request.min_improvement_ratio):
+                            tail += 1
+                        else:
+                            break
+                    if tail >= request.boundary_patience:
+                        break
+
+                index += 1
+            return entries
+
         index = 0
         while index < len(schedule):
             self._ensure_not_cancelled(job_id)
             candidate = schedule[index]
             previous_best = _best_by_throughput(entries)
-            entry = self._measure_repeated(
-                request.repeat_count,
-                value_key,
-                lambda candidate=candidate: run_once(candidate),
-                should_cancel=lambda: self._is_cancel_requested(job_id),
+            entry = run_measurement(
+                candidate,
+                repeat_count=1,
+                sample_count=measurement_sample_count(candidate, final=False),
+                phase="probe",
             )
             self._ensure_not_cancelled(job_id)
             entries.append(entry)
@@ -760,6 +868,39 @@ class ParallelTuningService:
                     break
 
             index += 1
+
+        valid_probe_entries = [
+            entry
+            for entry in entries
+            if entry.get("ok")
+            and entry.get("imagesPerSecond") is not None
+            and str(entry.get("measurementPhase") or "") == "probe"
+        ]
+        finalist_entries = sorted(
+            valid_probe_entries,
+            key=lambda entry: float(entry["imagesPerSecond"]),
+            reverse=True,
+        )[: max(1, request.finalist_count)]
+        finalist_values = sorted(
+            {
+                int(entry[value_key])
+                for entry in finalist_entries
+                if value_key in entry and entry.get(value_key) is not None
+            }
+        )
+        for candidate in finalist_values:
+            self._ensure_not_cancelled(job_id)
+            entry = run_measurement(
+                candidate,
+                repeat_count=request.repeat_count,
+                sample_count=measurement_sample_count(candidate, final=True),
+                phase="final",
+            )
+            self._ensure_not_cancelled(job_id)
+            entries.append(entry)
+            on_entry(entry)
+            if _oom_like(entry.get("error")):
+                break
         return entries
 
     def _benchmark_watermarks(
@@ -817,7 +958,15 @@ class ParallelTuningService:
                         initial_candidates=candidates,
                         max_value=request.max_batch_size,
                         value_key="batchSize",
-                        run_once=lambda batch_size: self._run_watermark_embed(method_obj, method, input_dir, batch_size, job_id),
+                        run_once=lambda batch_size, sample_count, phase: self._run_watermark_embed(
+                            method_obj,
+                            method,
+                            input_dir,
+                            batch_size,
+                            job_id,
+                            sample_count=sample_count,
+                            measurement_phase=phase,
+                        ),
                         on_entry=remember_embed,
                     )
                 if supports_extract:
@@ -839,7 +988,15 @@ class ParallelTuningService:
                         initial_candidates=candidates,
                         max_value=request.max_batch_size,
                         value_key="batchSize",
-                        run_once=lambda batch_size: self._run_watermark_extract(method_obj, method, extract_input, batch_size, job_id),
+                        run_once=lambda batch_size, sample_count, phase: self._run_watermark_extract(
+                            method_obj,
+                            method,
+                            extract_input,
+                            batch_size,
+                            job_id,
+                            sample_count=sample_count,
+                            measurement_phase=phase,
+                        ),
                         on_entry=remember_extract,
                     )
                 if thread_safe and not supports_embed and not supports_extract:
@@ -857,7 +1014,15 @@ class ParallelTuningService:
                         initial_candidates=worker_candidates,
                         max_value=request.max_worker_count,
                         value_key="workers",
-                        run_once=lambda workers: self._run_watermark_cpu(method_obj, method, input_dir, workers, job_id),
+                        run_once=lambda workers, sample_count, phase: self._run_watermark_cpu(
+                            method_obj,
+                            method,
+                            input_dir,
+                            workers,
+                            job_id,
+                            sample_count=sample_count,
+                            measurement_phase=phase,
+                        ),
                         on_entry=remember_cpu,
                     )
                 record["bestEmbed"] = _best_by_throughput(record["embed"])
@@ -882,11 +1047,32 @@ class ParallelTuningService:
         job_id: str,
         *,
         keep_output: bool = True,
+        sample_count: int | None = None,
+        measurement_phase: str = "exhaustive",
     ) -> JsonDict:
-        output_dir = self.root / job_id / "work" / "watermark" / method / "embed" / f"batch_{batch_size}"
+        output_dir = (
+            self.root
+            / job_id
+            / "work"
+            / "watermark"
+            / method
+            / "embed"
+            / f"{measurement_phase}_batch_{batch_size}_n{sample_count or 'all'}"
+        )
         if output_dir.exists():
             shutil.rmtree(output_dir)
         _set_stage_watermark_batch(method, "embed", batch_size)
+        limited_input_dir, effective_count, limited_dir_to_clean = self._limited_input_dir(
+            input_dir,
+            self.root
+            / job_id
+            / "work"
+            / "subsets"
+            / "watermark_embed"
+            / method
+            / f"{measurement_phase}_batch_{batch_size}_n{sample_count or 'all'}",
+            sample_count,
+        )
         started = time.perf_counter()
         try:
             results = run_watermark_embed_dir_with_method(
@@ -894,7 +1080,7 @@ class ParallelTuningService:
                     run_id=job_id,
                     method_name=method,
                     params=method_obj.params,
-                    input_dir=input_dir,
+                    input_dir=limited_input_dir,
                     output_dir=output_dir,
                     message="test_watermark_001",
                     device=self.device,
@@ -903,16 +1089,21 @@ class ParallelTuningService:
                 method_obj,
             )
             elapsed = time.perf_counter() - started
-            ok = len(results) == len(iter_image_paths(input_dir)) and all(result.ok for result in results)
+            ok = len(results) == effective_count and all(result.ok for result in results)
             error = "; ".join(str(result.error) for result in results if getattr(result, "error", None)) or None
         except Exception as exc:
             elapsed = time.perf_counter() - started
             ok = False
             error = _error_text(exc)
+        finally:
+            if limited_dir_to_clean is not None:
+                _remove_tree(limited_dir_to_clean)
         entry = {
             "batchSize": batch_size,
+            "measurementPhase": measurement_phase,
+            "sampleCount": effective_count,
             "elapsedSeconds": elapsed,
-            "imagesPerSecond": _images_per_second(len(iter_image_paths(input_dir)), elapsed, ok),
+            "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
             "ok": ok,
             "error": error,
             "outputDir": str(output_dir),
@@ -921,11 +1112,40 @@ class ParallelTuningService:
             _mark_output_cleaned(entry, output_dir)
         return entry
 
-    def _run_watermark_extract(self, method_obj: BaseWatermark, method: str, input_dir: Path, batch_size: int, job_id: str) -> JsonDict:
-        output_dir = self.root / job_id / "work" / "watermark" / method / "extract" / f"batch_{batch_size}"
+    def _run_watermark_extract(
+        self,
+        method_obj: BaseWatermark,
+        method: str,
+        input_dir: Path,
+        batch_size: int,
+        job_id: str,
+        *,
+        sample_count: int | None = None,
+        measurement_phase: str = "exhaustive",
+    ) -> JsonDict:
+        output_dir = (
+            self.root
+            / job_id
+            / "work"
+            / "watermark"
+            / method
+            / "extract"
+            / f"{measurement_phase}_batch_{batch_size}_n{sample_count or 'all'}"
+        )
         if output_dir.exists():
             shutil.rmtree(output_dir)
         _set_stage_watermark_batch(method, "extract", batch_size)
+        limited_input_dir, effective_count, limited_dir_to_clean = self._limited_input_dir(
+            input_dir,
+            self.root
+            / job_id
+            / "work"
+            / "subsets"
+            / "watermark_extract"
+            / method
+            / f"{measurement_phase}_batch_{batch_size}_n{sample_count or 'all'}",
+            sample_count,
+        )
         started = time.perf_counter()
         try:
             results = run_watermark_extract_dir_with_method(
@@ -933,7 +1153,7 @@ class ParallelTuningService:
                     run_id=job_id,
                     method_name=method,
                     params=method_obj.params,
-                    input_dir=input_dir,
+                    input_dir=limited_input_dir,
                     output_dir=output_dir,
                     message="test_watermark_001",
                     device=self.device,
@@ -942,26 +1162,60 @@ class ParallelTuningService:
                 method_obj,
             )
             elapsed = time.perf_counter() - started
-            ok = len(results) == len(iter_image_paths(input_dir)) and all(result.ok for result in results)
+            ok = len(results) == effective_count and all(result.ok for result in results)
             error = "; ".join(str(result.error) for result in results if getattr(result, "error", None)) or None
         except Exception as exc:
             elapsed = time.perf_counter() - started
             ok = False
             error = _error_text(exc)
+        finally:
+            if limited_dir_to_clean is not None:
+                _remove_tree(limited_dir_to_clean)
         return {
             "batchSize": batch_size,
+            "measurementPhase": measurement_phase,
+            "sampleCount": effective_count,
             "elapsedSeconds": elapsed,
-            "imagesPerSecond": _images_per_second(len(iter_image_paths(input_dir)), elapsed, ok),
+            "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
             "ok": ok,
             "error": error,
             "outputDir": str(output_dir),
         }
 
-    def _run_watermark_cpu(self, method_obj: BaseWatermark, method: str, input_dir: Path, workers: int, job_id: str) -> JsonDict:
+    def _run_watermark_cpu(
+        self,
+        method_obj: BaseWatermark,
+        method: str,
+        input_dir: Path,
+        workers: int,
+        job_id: str,
+        *,
+        sample_count: int | None = None,
+        measurement_phase: str = "exhaustive",
+    ) -> JsonDict:
         os.environ["WM_BENCH_WATERMARK_CPU_WORKERS_BY_METHOD"] = f"{method}={workers}"
-        output_dir = self.root / job_id / "work" / "watermark" / method / "cpu" / f"workers_{workers}"
+        output_dir = (
+            self.root
+            / job_id
+            / "work"
+            / "watermark"
+            / method
+            / "cpu"
+            / f"{measurement_phase}_workers_{workers}_n{sample_count or 'all'}"
+        )
         if output_dir.exists():
             shutil.rmtree(output_dir)
+        limited_input_dir, effective_count, limited_dir_to_clean = self._limited_input_dir(
+            input_dir,
+            self.root
+            / job_id
+            / "work"
+            / "subsets"
+            / "watermark_cpu"
+            / method
+            / f"{measurement_phase}_workers_{workers}_n{sample_count or 'all'}",
+            sample_count,
+        )
         started = time.perf_counter()
         try:
             results = run_watermark_embed_dir_with_method(
@@ -969,7 +1223,7 @@ class ParallelTuningService:
                     run_id=job_id,
                     method_name=method,
                     params=method_obj.params,
-                    input_dir=input_dir,
+                    input_dir=limited_input_dir,
                     output_dir=output_dir,
                     message="test_watermark_001",
                     device=self.device,
@@ -978,16 +1232,21 @@ class ParallelTuningService:
                 method_obj,
             )
             elapsed = time.perf_counter() - started
-            ok = len(results) == len(iter_image_paths(input_dir)) and all(result.ok for result in results)
+            ok = len(results) == effective_count and all(result.ok for result in results)
             error = "; ".join(str(result.error) for result in results if getattr(result, "error", None)) or None
         except Exception as exc:
             elapsed = time.perf_counter() - started
             ok = False
             error = _error_text(exc)
+        finally:
+            if limited_dir_to_clean is not None:
+                _remove_tree(limited_dir_to_clean)
         entry = {
             "workers": workers,
+            "measurementPhase": measurement_phase,
+            "sampleCount": effective_count,
             "elapsedSeconds": elapsed,
-            "imagesPerSecond": _images_per_second(len(iter_image_paths(input_dir)), elapsed, ok),
+            "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
             "ok": ok,
             "error": error,
             "outputDir": str(output_dir),
@@ -1060,7 +1319,15 @@ class ParallelTuningService:
                         initial_candidates=candidates,
                         max_value=request.max_batch_size,
                         value_key="batchSize",
-                        run_once=lambda batch_size: self._run_attack_batch(attack, method, input_dir, batch_size, job_id),
+                        run_once=lambda batch_size, sample_count, phase: self._run_attack_batch(
+                            attack,
+                            method,
+                            input_dir,
+                            batch_size,
+                            job_id,
+                            sample_count=sample_count,
+                            measurement_phase=phase,
+                        ),
                         on_entry=remember_batch,
                     )
                 elif record["threadSafeParallel"]:
@@ -1078,7 +1345,15 @@ class ParallelTuningService:
                         initial_candidates=worker_candidates,
                         max_value=request.max_worker_count,
                         value_key="workers",
-                        run_once=lambda workers: self._run_attack_cpu(attack, method, input_dir, workers, job_id),
+                        run_once=lambda workers, sample_count, phase: self._run_attack_cpu(
+                            attack,
+                            method,
+                            input_dir,
+                            workers,
+                            job_id,
+                            sample_count=sample_count,
+                            measurement_phase=phase,
+                        ),
                         on_entry=remember_cpu,
                     )
                 else:
@@ -1095,28 +1370,61 @@ class ParallelTuningService:
                 _clear_torch_cache()
             yield record
 
-    def _run_attack_batch(self, attack: Any, method: str, input_dir: Path, batch_size: int, job_id: str) -> JsonDict:
+    def _run_attack_batch(
+        self,
+        attack: Any,
+        method: str,
+        input_dir: Path,
+        batch_size: int,
+        job_id: str,
+        *,
+        sample_count: int | None = None,
+        measurement_phase: str = "exhaustive",
+    ) -> JsonDict:
         _set_named_override("WM_BENCH_ATTACK_BATCH_SIZES", method, batch_size)
-        output_dir = self.root / job_id / "work" / "attack" / method / f"batch_{batch_size}"
+        output_dir = (
+            self.root
+            / job_id
+            / "work"
+            / "attack"
+            / method
+            / f"{measurement_phase}_batch_{batch_size}_n{sample_count or 'all'}"
+        )
         if output_dir.exists():
             shutil.rmtree(output_dir)
+        limited_input_dir, effective_count, limited_dir_to_clean = self._limited_input_dir(
+            input_dir,
+            self.root
+            / job_id
+            / "work"
+            / "subsets"
+            / "attack_batch"
+            / method
+            / f"{measurement_phase}_batch_{batch_size}_n{sample_count or 'all'}",
+            sample_count,
+        )
         started = time.perf_counter()
         try:
             results = run_attack_dir_with_attack(
-                AttackJob(job_id, method, dict(attack.params), input_dir, output_dir, device=self.device, seed=2026),
+                AttackJob(job_id, method, dict(attack.params), limited_input_dir, output_dir, device=self.device, seed=2026),
                 attack,
             )
             elapsed = time.perf_counter() - started
-            ok = len(results) == len(iter_image_paths(input_dir)) and all(result.ok for result in results)
+            ok = len(results) == effective_count and all(result.ok for result in results)
             error = "; ".join(str(result.error) for result in results if getattr(result, "error", None)) or None
         except Exception as exc:
             elapsed = time.perf_counter() - started
             ok = False
             error = _error_text(exc)
+        finally:
+            if limited_dir_to_clean is not None:
+                _remove_tree(limited_dir_to_clean)
         entry = {
             "batchSize": batch_size,
+            "measurementPhase": measurement_phase,
+            "sampleCount": effective_count,
             "elapsedSeconds": elapsed,
-            "imagesPerSecond": _images_per_second(len(iter_image_paths(input_dir)), elapsed, ok),
+            "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
             "ok": ok,
             "error": error,
             "outputDir": str(output_dir),
@@ -1124,28 +1432,61 @@ class ParallelTuningService:
         _mark_output_cleaned(entry, output_dir)
         return entry
 
-    def _run_attack_cpu(self, attack: Any, method: str, input_dir: Path, workers: int, job_id: str) -> JsonDict:
+    def _run_attack_cpu(
+        self,
+        attack: Any,
+        method: str,
+        input_dir: Path,
+        workers: int,
+        job_id: str,
+        *,
+        sample_count: int | None = None,
+        measurement_phase: str = "exhaustive",
+    ) -> JsonDict:
         _set_named_override("WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD", method, workers)
-        output_dir = self.root / job_id / "work" / "attack" / method / f"workers_{workers}"
+        output_dir = (
+            self.root
+            / job_id
+            / "work"
+            / "attack"
+            / method
+            / f"{measurement_phase}_workers_{workers}_n{sample_count or 'all'}"
+        )
         if output_dir.exists():
             shutil.rmtree(output_dir)
+        limited_input_dir, effective_count, limited_dir_to_clean = self._limited_input_dir(
+            input_dir,
+            self.root
+            / job_id
+            / "work"
+            / "subsets"
+            / "attack_cpu"
+            / method
+            / f"{measurement_phase}_workers_{workers}_n{sample_count or 'all'}",
+            sample_count,
+        )
         started = time.perf_counter()
         try:
             results = run_attack_dir_with_attack(
-                AttackJob(job_id, method, dict(attack.params), input_dir, output_dir, device=self.device, seed=2026),
+                AttackJob(job_id, method, dict(attack.params), limited_input_dir, output_dir, device=self.device, seed=2026),
                 attack,
             )
             elapsed = time.perf_counter() - started
-            ok = len(results) == len(iter_image_paths(input_dir)) and all(result.ok for result in results)
+            ok = len(results) == effective_count and all(result.ok for result in results)
             error = "; ".join(str(result.error) for result in results if getattr(result, "error", None)) or None
         except Exception as exc:
             elapsed = time.perf_counter() - started
             ok = False
             error = _error_text(exc)
+        finally:
+            if limited_dir_to_clean is not None:
+                _remove_tree(limited_dir_to_clean)
         entry = {
             "workers": workers,
+            "measurementPhase": measurement_phase,
+            "sampleCount": effective_count,
             "elapsedSeconds": elapsed,
-            "imagesPerSecond": _images_per_second(len(iter_image_paths(input_dir)), elapsed, ok),
+            "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
             "ok": ok,
             "error": error,
             "outputDir": str(output_dir),
@@ -1154,12 +1495,35 @@ class ParallelTuningService:
         return entry
 
     def _benchmark_quality(self, job_id: str, request: TuningRequest, input_dir: Path) -> JsonDict:
-        images = iter_image_paths(input_dir)
-        pairs = [(path, path) for path in images]
         record: JsonDict = {"cpuWorkers": [], "perceptualBatch": [], "_stepCount": 0}
 
-        def run_quality_cpu(workers: int) -> JsonDict:
+        def quality_pairs(
+            stage: str,
+            value: int,
+            sample_count: int | None,
+            measurement_phase: str,
+        ) -> tuple[list[tuple[Path, Path]], int, Path | None]:
+            limited_input_dir, effective_count, limited_dir_to_clean = self._limited_input_dir(
+                input_dir,
+                self.root
+                / job_id
+                / "work"
+                / "subsets"
+                / stage
+                / f"{measurement_phase}_{value}_n{sample_count or 'all'}",
+                sample_count,
+            )
+            paths = iter_image_paths(limited_input_dir)
+            return [(path, path) for path in paths], effective_count, limited_dir_to_clean
+
+        def run_quality_cpu(workers: int, sample_count: int, measurement_phase: str) -> JsonDict:
             os.environ["WM_BENCH_QUALITY_CPU_WORKERS"] = str(workers)
+            pairs, effective_count, limited_dir_to_clean = quality_pairs(
+                "quality_cpu",
+                workers,
+                sample_count,
+                measurement_phase,
+            )
             started = time.perf_counter()
             try:
                 metrics, profile = _compute_cpu_quality_metrics_batch_with_profile(pairs)
@@ -1171,10 +1535,15 @@ class ParallelTuningService:
                 ok = False
                 profile = {}
                 error = _error_text(exc)
+            finally:
+                if limited_dir_to_clean is not None:
+                    _remove_tree(limited_dir_to_clean)
             return {
                 "workers": workers,
+                "measurementPhase": measurement_phase,
+                "sampleCount": effective_count,
                 "elapsedSeconds": elapsed,
-                "imagesPerSecond": _images_per_second(len(pairs), elapsed, ok),
+                "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
                 "ok": ok,
                 "error": error,
                 "profile": profile,
@@ -1197,8 +1566,14 @@ class ParallelTuningService:
             on_entry=remember_quality_cpu,
         )
 
-        def run_perceptual(batch_size: int) -> JsonDict:
+        def run_perceptual(batch_size: int, sample_count: int, measurement_phase: str) -> JsonDict:
             os.environ["WM_BENCH_PERCEPTUAL_BATCH_SIZE"] = str(batch_size)
+            pairs, effective_count, limited_dir_to_clean = quality_pairs(
+                "quality_perceptual",
+                batch_size,
+                sample_count,
+                measurement_phase,
+            )
             started = time.perf_counter()
             try:
                 metrics, profile = _compute_perceptual_metrics_batch_with_profile(pairs)
@@ -1210,10 +1585,15 @@ class ParallelTuningService:
                 ok = False
                 profile = {}
                 error = _error_text(exc)
+            finally:
+                if limited_dir_to_clean is not None:
+                    _remove_tree(limited_dir_to_clean)
             return {
                 "batchSize": batch_size,
+                "measurementPhase": measurement_phase,
+                "sampleCount": effective_count,
                 "elapsedSeconds": elapsed,
-                "imagesPerSecond": _images_per_second(len(pairs), elapsed, ok),
+                "imagesPerSecond": _images_per_second(effective_count, elapsed, ok),
                 "ok": ok,
                 "error": error,
                 "profile": profile,

@@ -154,6 +154,59 @@ class ParallelTuningPolicyTest(unittest.TestCase):
             self.assertNotIn("4x_regen", methods)
             self.assertEqual(methods.count(DIFFUSION_REGENERATION_PRIMARY_METHOD), 1)
 
+    def test_identity_attack_is_not_tuned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            request = TuningRequest(
+                tune_watermarks=False,
+                tune_quality=False,
+                attack_methods=["identity", "brightness"],
+            )
+
+            methods = service._attack_methods_for_tuning(request)
+
+            self.assertEqual(methods, ["brightness"])
+
+    def test_adaptive_search_probes_all_candidates_then_remeasures_finalists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            request = TuningRequest(
+                sample_count=10,
+                probe_sample_count=4,
+                finalist_count=2,
+                repeat_count=3,
+                batch_candidates=[1, 2, 4],
+            )
+            calls: list[tuple[int, int, str]] = []
+            entries: list[dict[str, object]] = []
+
+            def run_once(candidate: int, sample_count: int, phase: str) -> dict[str, object]:
+                calls.append((candidate, sample_count, phase))
+                return {
+                    "batchSize": candidate,
+                    "measurementPhase": phase,
+                    "sampleCount": sample_count,
+                    "elapsedSeconds": sample_count / float(candidate),
+                    "imagesPerSecond": float(candidate),
+                    "ok": True,
+                }
+
+            service._search_numeric_candidates(
+                job_id="tune_adaptive",
+                request=request,
+                initial_candidates=[1, 2, 4],
+                max_value=4,
+                value_key="batchSize",
+                run_once=run_once,
+                on_entry=entries.append,
+            )
+
+            self.assertEqual(calls[:3], [(1, 4, "probe"), (2, 4, "probe"), (4, 4, "probe")])
+            self.assertEqual(calls[3:], [(2, 10, "final")] * 3 + [(4, 10, "final")] * 3)
+            self.assertEqual([entry["measurementPhase"] for entry in entries], ["probe", "probe", "probe", "final", "final"])
+
     def test_diffusion_regeneration_summary_expands_primary_batch_to_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

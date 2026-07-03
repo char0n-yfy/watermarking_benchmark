@@ -2766,6 +2766,7 @@ def run_local_experiment(
             negative_attack_images_done = 0
             attack_cache_hits = 0
             attack_backend_done = 0
+            counted_negative_attack_keys: set[str] = set()
             attack_model_groups: dict[str, list[MaterializedCellState]] = {}
             for state in all_states:
                 model_key = _attack_model_cache_key(state.attack["method"], state.attack_params, request.device)
@@ -3129,8 +3130,12 @@ def run_local_experiment(
                                     }
                                 },
                             )
-                            attack_images_done += len(state.copied_samples)
-                            negative_attack_images_done += len(state.copied_samples)
+                            negative_progress_images = 0
+                            if state.negative_attack_key not in counted_negative_attack_keys:
+                                counted_negative_attack_keys.add(state.negative_attack_key)
+                                negative_progress_images = len(state.copied_samples)
+                                attack_images_done += negative_progress_images
+                                negative_attack_images_done += negative_progress_images
                             state_writer.phase_advance(
                                 "attack",
                                 current=attack_images_done,
@@ -3145,6 +3150,8 @@ def run_local_experiment(
                                     "attackParams": state.attack_params,
                                     "variantKey": state.variant_key,
                                     "processedImages": len(state.copied_samples),
+                                    "countedImages": negative_progress_images,
+                                    "reusedNegativeKey": negative_progress_images == 0,
                                     "remainingImages": max(0, attack_total_images - attack_images_done),
                                     "materializedDir": str(state.negative_attacked_dir),
                                 },
