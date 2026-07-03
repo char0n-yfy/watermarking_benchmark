@@ -107,9 +107,9 @@ def collect_readiness(settings: Settings, service: ExperimentService) -> dict[st
             "worker_heartbeat",
             "Worker heartbeat",
             "ok",
-            f"{len(fresh_workers)} active worker(s), {len(workers)} known worker(s).",
+            f"{len(fresh_workers)} active worker(s), {max(0, len(workers) - len(fresh_workers))} stale worker(s).",
             required=False,
-            meta={"active": len(fresh_workers), "known": len(workers)},
+            meta={"active": len(fresh_workers), "known": len(fresh_workers), "stale": max(0, len(workers) - len(fresh_workers))},
         )
     elif workers:
         add_check(
@@ -254,6 +254,9 @@ def add_weight_files_check(checks: list[dict[str, Any]], weights_root: Path) -> 
 
 
 def is_fresh_worker(worker: dict[str, Any], poll_seconds: float) -> bool:
+    pid = worker.get("pid")
+    if isinstance(pid, int) and pid > 0 and not Path(f"/proc/{pid}").exists():
+        return False
     raw_last_seen = worker.get("lastSeenAt")
     if not isinstance(raw_last_seen, str):
         return False

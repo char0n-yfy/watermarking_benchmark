@@ -16,9 +16,57 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
+from app.services.local_artifacts import (
+    RunStateWriter,
+    artifact_paths,
+    compact_result_units_file,
+    write_jsonl,
+)
 
 
 class ExperimentServiceTest(unittest.TestCase):
+    def test_result_unit_jsonl_compaction_keeps_latest_record_per_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result_units.jsonl"
+            write_jsonl(
+                path,
+                [
+                    {"resultUnitKey": "unit-a", "status": "failed", "error": "timeout"},
+                    {"resultUnitKey": "unit-b", "status": "succeeded"},
+                    {"resultUnitKey": "unit-a", "status": "succeeded", "error": None},
+                ],
+            )
+
+            compacted = compact_result_units_file(path)
+            records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+            self.assertEqual(len(compacted), 2)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(records[0]["resultUnitKey"], "unit-a")
+            self.assertEqual(records[0]["status"], "succeeded")
+            self.assertEqual(records[1]["resultUnitKey"], "unit-b")
+
+    def test_phase_progress_is_clamped_to_declared_total(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp) / "run_clamp"
+            paths = artifact_paths(run_root)
+            writer = RunStateWriter(
+                paths=paths,
+                run_id="run_clamp",
+                run_root=run_root,
+                selection={},
+                expected_result_units=1,
+                materialized_root=run_root / "materialized",
+            )
+
+            writer.phase_start("attack", total=10)
+            writer.phase_advance("attack", current=12, counters={"imagesDone": 12})
+            state = json.loads(paths["runState"].read_text(encoding="utf-8"))
+            attack_phase = next(phase for phase in state["phases"] if phase["key"] == "attack")
+
+            self.assertEqual(attack_phase["current"], 10)
+            self.assertEqual(attack_phase["percent"], 100)
+
     def test_create_config_rejects_unknown_resource_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

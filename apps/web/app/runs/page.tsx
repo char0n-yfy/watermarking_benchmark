@@ -119,6 +119,7 @@ type TuningForm = {
   mode: TuningMode;
   sampleCount: number;
   warmupCount: number;
+  candidateBatchCount: number;
   probeSampleCount: number;
   finalistCount: number;
   minBatchSize: number;
@@ -213,6 +214,7 @@ const quickTuningDefaults: TuningForm = {
   mode: "quick",
   sampleCount: 16,
   warmupCount: 2,
+  candidateBatchCount: 3,
   probeSampleCount: 8,
   finalistCount: 2,
   minBatchSize: 1,
@@ -233,6 +235,7 @@ const fullTuningDefaults: TuningForm = {
   mode: "full",
   sampleCount: 64,
   warmupCount: 4,
+  candidateBatchCount: 3,
   probeSampleCount: 16,
   finalistCount: 3,
   minBatchSize: 1,
@@ -566,7 +569,12 @@ function buildTuningPayload(form: TuningForm) {
   const maxWorkerCount = positiveInteger(form.maxWorkerCount, form.mode === "full" ? 64 : 32);
   const batchCandidates = candidateRange(form.minBatchSize, maxBatchSize);
   const workerCandidates = candidateRange(form.minWorkerCount, maxWorkerCount, [24, 32, 48, 64, 96, 128]);
-  const sampleCount = Math.max(positiveInteger(form.sampleCount, maxBatchSize), maxBatchSize, Math.max(...batchCandidates));
+  const candidateBatchCount = positiveInteger(form.candidateBatchCount, 3);
+  const sampleCount = Math.max(
+    positiveInteger(form.sampleCount, maxBatchSize * candidateBatchCount),
+    maxBatchSize * candidateBatchCount,
+    Math.max(...batchCandidates) * candidateBatchCount
+  );
   const watermarkMethods = [...new Set(form.selectedWatermarkMethods)].sort();
   const attackMethods = normalizeTuningAttackMethods(form.selectedAttackMethods);
   const tuneWatermarks = form.tuneWatermarks && watermarkMethods.length > 0;
@@ -575,12 +583,13 @@ function buildTuningPayload(form: TuningForm) {
     mode: form.mode,
     sampleCount,
     warmupCount: positiveInteger(form.warmupCount, 2),
-    searchStrategy: "adaptive",
+    candidateBatchCount,
+    searchStrategy: "single_pass",
     probeSampleCount: Math.min(sampleCount, positiveInteger(form.probeSampleCount, form.mode === "full" ? 16 : 8)),
-    finalistCount: positiveInteger(form.finalistCount, form.mode === "full" ? 3 : 2),
+    finalistCount: 1,
     batchCandidates,
     workerCandidates,
-    repeatCount: positiveInteger(form.repeatCount, form.mode === "full" ? 3 : 1),
+    repeatCount: 1,
     maxBatchSize,
     maxWorkerCount,
     autoExpandCandidates: form.mode === "full",
@@ -643,10 +652,8 @@ function tuningParameterSegmentCount(payload: ReturnType<typeof buildTuningPaylo
 }
 
 function tuningCombinationCount(payload: ReturnType<typeof buildTuningPayload>) {
-  const searchCount = (candidateCount: number) =>
-    candidateCount + Math.min(Math.max(1, payload.finalistCount), candidateCount) * payload.repeatCount;
-  const batchSearchCount = searchCount(payload.batchCandidates.length);
-  const workerSearchCount = searchCount(payload.workerCandidates.length);
+  const batchSearchCount = payload.batchCandidates.length;
+  const workerSearchCount = payload.workerCandidates.length;
   let total = 0;
   if (payload.tuneWatermarks) {
     total += payload.watermarkMethods.length * (batchSearchCount + workerSearchCount);
@@ -1079,6 +1086,7 @@ export default function RunsPage() {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(10);
   const [resourceNames, setResourceNames] = useState<Record<string, string>>({});
   const [tuningJob, setTuningJob] = useState<ParallelTuningJob | null>(null);
   const [tuningDialogOpen, setTuningDialogOpen] = useState(false);
@@ -1370,12 +1378,12 @@ export default function RunsPage() {
         });
     };
     load();
-    const timer = window.setInterval(load, 2500);
+    const timer = window.setInterval(load, autoRefreshSeconds * 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [t.runs.apiUnavailable]);
+  }, [autoRefreshSeconds, t.runs.apiUnavailable]);
 
   useEffect(() => {
     if (!monitorRunId) {
@@ -1413,7 +1421,7 @@ export default function RunsPage() {
       }
     };
     loadMonitor();
-    const timer = window.setInterval(loadMonitor, 2500);
+    const timer = window.setInterval(loadMonitor, autoRefreshSeconds * 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -1421,6 +1429,7 @@ export default function RunsPage() {
   }, [
     configs,
     monitorRunId,
+    autoRefreshSeconds,
     t.runs.apiUnavailable,
     t.runs.runCancelledNotice,
     t.runs.runFailedNotice,
@@ -1436,9 +1445,9 @@ export default function RunsPage() {
       fetchParallelTuning(tuningJob.id)
         .then(setTuningJob)
         .catch(() => undefined);
-    }, 1800);
+    }, autoRefreshSeconds * 1000);
     return () => window.clearInterval(timer);
-  }, [tuningJob?.id, tuningActive]);
+  }, [autoRefreshSeconds, tuningJob?.id, tuningActive]);
 
   useEffect(() => {
     if (
@@ -1688,7 +1697,7 @@ export default function RunsPage() {
       setTuningWorkspaceOpen(true);
       setTuningDialogOpen(false);
       setTuningNotice(
-        `调参任务已启动，adaptive probe=${payload.probeSampleCount}，final sampleCount=${payload.sampleCount}，最大 batch=${payload.maxBatchSize}。`
+        `调参任务已启动，single pass sampleCount=${payload.sampleCount}，最大 batch=${payload.maxBatchSize}。`
       );
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
@@ -1776,6 +1785,19 @@ export default function RunsPage() {
           <p>{t.runs.subtitle}</p>
         </div>
         <div className="toolbar">
+          <label className="select-button refresh-slider-control">
+            <span>{t.console.autoRefresh}</span>
+            <input
+              className="refresh-slider"
+              max={30}
+              min={1}
+              onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))}
+              step={1}
+              type="range"
+              value={autoRefreshSeconds}
+            />
+            <strong>{autoRefreshSeconds}s</strong>
+          </label>
           <button className="button" onClick={() => refreshBase()} title={t.common.updated} type="button">
             <RefreshCw size={16} />
           </button>
@@ -2112,7 +2134,7 @@ export default function RunsPage() {
                     <SlidersHorizontal size={18} />
                   </span>
                   <strong>快速模式</strong>
-                  <span>小样本筛选所有候选，只复测 Top 候选，适合快速得到一版可用参数。</span>
+                  <span>每个候选只测一轮，适合快速得到一版可用参数。</span>
                 </button>
                 <button
                   className={tuningForm.mode === "full" ? "run-mode-card tuning-mode-card selected" : "run-mode-card tuning-mode-card"}
@@ -2123,7 +2145,7 @@ export default function RunsPage() {
                     <BarChart3 size={18} />
                   </span>
                   <strong>完整模式</strong>
-                  <span>小样本筛选、自动扩展边界，并对 Top 候选重复测量取中位数。</span>
+                  <span>扩大候选范围并检测边界，但每个候选仍只测一轮。</span>
                 </button>
               </div>
 
@@ -2158,42 +2180,16 @@ export default function RunsPage() {
                       </div>
                     </div>
                     <div className="field">
-                      <label htmlFor="tuning-repeat">repeatCount</label>
+                      <label htmlFor="tuning-candidate-batches">每候选 batch 数</label>
                       <div className="tuning-input-wrap">
                         <input
-                          id="tuning-repeat"
+                          id="tuning-candidate-batches"
                           min={1}
-                          onChange={(event) => updateTuningForm({ repeatCount: Number(event.target.value) })}
+                          onChange={(event) => updateTuningForm({ candidateBatchCount: Number(event.target.value) })}
                           type="number"
-                          value={tuningForm.repeatCount}
+                          value={tuningForm.candidateBatchCount}
                         />
-                        <span>count</span>
-                      </div>
-                    </div>
-                    <div className="field">
-                      <label htmlFor="tuning-probe-samples">probeSampleCount</label>
-                      <div className="tuning-input-wrap">
-                        <input
-                          id="tuning-probe-samples"
-                          min={2}
-                          onChange={(event) => updateTuningForm({ probeSampleCount: Number(event.target.value) })}
-                          type="number"
-                          value={tuningForm.probeSampleCount}
-                        />
-                        <span>count</span>
-                      </div>
-                    </div>
-                    <div className="field">
-                      <label htmlFor="tuning-finalists">finalistCount</label>
-                      <div className="tuning-input-wrap">
-                        <input
-                          id="tuning-finalists"
-                          min={1}
-                          onChange={(event) => updateTuningForm({ finalistCount: Number(event.target.value) })}
-                          type="number"
-                          value={tuningForm.finalistCount}
-                        />
-                        <span>top</span>
+                        <span>batches</span>
                       </div>
                     </div>
                     <div className="field">
@@ -2390,15 +2386,13 @@ export default function RunsPage() {
                       <strong>{effectiveTuningPayload.sampleCount}</strong>
                     </div>
                     <div>
-                      <span>probe 样本</span>
-                      <strong>{effectiveTuningPayload.probeSampleCount}</strong>
-                    </div>
-                    <div>
-                      <span>复测候选</span>
-                      <strong>Top {effectiveTuningPayload.finalistCount}</strong>
+                      <span>每候选 batch 数</span>
+                      <strong>{effectiveTuningPayload.candidateBatchCount}</strong>
                     </div>
                   </div>
-                  <p className="tuning-estimate-note">实际执行会以后端检测到的算法能力为准；候选先用 probe 样本筛选，只有 Top 候选会完整复测。</p>
+                  <p className="tuning-estimate-note">
+                    实际执行会以后端检测到的算法能力为准；batch 搜索按每个候选固定 batch 次数取样，workers 搜索按 sampleCount 取样。
+                  </p>
                 </section>
 
                 <section className="run-dialog-section tuning-effective-section">
@@ -2425,20 +2419,12 @@ export default function RunsPage() {
                       <strong>{selectedTuningAttackCount}</strong>
                     </div>
                     <div className="tuning-preview-stat">
-                      <span>重复次数</span>
-                      <strong>{effectiveTuningPayload.repeatCount}</strong>
+                      <span>每候选测量</span>
+                      <strong>{effectiveTuningPayload.candidateBatchCount} batches</strong>
                     </div>
                     <div className="tuning-preview-stat">
                       <span>搜索策略</span>
-                      <strong>adaptive</strong>
-                    </div>
-                    <div className="tuning-preview-stat">
-                      <span>probe 样本</span>
-                      <strong>{effectiveTuningPayload.probeSampleCount}</strong>
-                    </div>
-                    <div className="tuning-preview-stat">
-                      <span>复测候选</span>
-                      <strong>Top {effectiveTuningPayload.finalistCount}</strong>
+                      <strong>single pass</strong>
                     </div>
                     <div className="tuning-preview-stat">
                       <span>3D 攻击</span>

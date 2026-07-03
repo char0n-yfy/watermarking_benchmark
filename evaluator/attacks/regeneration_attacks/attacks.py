@@ -1780,7 +1780,7 @@ class NoiseToImageAttack(BaseAttack):
                 [self.prompt] * len(jobs),
                 negative_prompt=[self.negative_prompt] * len(jobs),
                 image=watermarked_images,
-                control_image=control_images,
+                control_image=[control_images],
                 ip_adapter_image=watermarked_images,
                 strength=pipeline_strength,
                 generator=generators,

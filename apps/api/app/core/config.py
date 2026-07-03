@@ -75,6 +75,6 @@ def get_settings() -> Settings:
         api_port=int(os.getenv("API_PORT", "8000")),
         device=os.getenv("WM_BENCH_DEVICE", "cpu"),
         worker_poll_seconds=float(os.getenv("WM_BENCH_WORKER_POLL_SECONDS", "2")),
-        run_timeout_seconds=int(os.getenv("WM_BENCH_RUN_TIMEOUT_SECONDS", "3600")),
+        run_timeout_seconds=int(os.getenv("WM_BENCH_RUN_TIMEOUT_SECONDS", "0")),
         cors_origins=_csv_env("WM_BENCH_CORS_ORIGINS", DEFAULT_CORS_ORIGINS),
     )

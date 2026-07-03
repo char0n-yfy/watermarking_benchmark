@@ -34,6 +34,20 @@ class ParallelTuningPolicyTest(unittest.TestCase):
         self.assertEqual(request.to_json()["watermarkMethods"], ["dwsf", "trustmark-q"])
         self.assertEqual(request.to_json()["attackMethods"], ["jpeg", "brightness"])
 
+    def test_tuning_request_expands_samples_for_candidate_batches(self) -> None:
+        request = TuningRequest.from_payload(
+            {
+                "sampleCount": 64,
+                "candidateBatchCount": 3,
+                "batchCandidates": [1, 2, 4, 8, 16, 32, 64],
+                "maxBatchSize": 64,
+            }
+        )
+
+        self.assertEqual(request.sample_count, 192)
+        self.assertEqual(request.candidate_batch_count, 3)
+        self.assertEqual(request.to_json()["candidateBatchCount"], 3)
+
     def test_cancel_requests_running_job_stop_without_marking_terminal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -173,6 +187,7 @@ class ParallelTuningPolicyTest(unittest.TestCase):
             root = Path(tmp)
             service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
             request = TuningRequest(
+                search_strategy="adaptive",
                 sample_count=10,
                 probe_sample_count=4,
                 finalist_count=2,
@@ -203,9 +218,97 @@ class ParallelTuningPolicyTest(unittest.TestCase):
                 on_entry=entries.append,
             )
 
-            self.assertEqual(calls[:3], [(1, 4, "probe"), (2, 4, "probe"), (4, 4, "probe")])
-            self.assertEqual(calls[3:], [(2, 10, "final")] * 3 + [(4, 10, "final")] * 3)
+            self.assertEqual(calls[:3], [(1, 3, "probe"), (2, 6, "probe"), (4, 10, "probe")])
+            self.assertEqual(calls[3:], [(2, 6, "final")] * 3 + [(4, 10, "final")] * 3)
             self.assertEqual([entry["measurementPhase"] for entry in entries], ["probe", "probe", "probe", "final", "final"])
+
+    def test_single_pass_batch_search_measures_fixed_candidate_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            request = TuningRequest(
+                sample_count=10,
+                candidate_batch_count=3,
+                probe_sample_count=4,
+                finalist_count=2,
+                repeat_count=3,
+                batch_candidates=[1, 2, 4],
+            )
+            calls: list[tuple[int, int, str]] = []
+            entries: list[dict[str, object]] = []
+
+            def run_once(candidate: int, sample_count: int, phase: str) -> dict[str, object]:
+                calls.append((candidate, sample_count, phase))
+                return {
+                    "batchSize": candidate,
+                    "measurementPhase": phase,
+                    "sampleCount": sample_count,
+                    "elapsedSeconds": sample_count / float(candidate),
+                    "imagesPerSecond": float(candidate),
+                    "ok": True,
+                }
+
+            service._search_numeric_candidates(
+                job_id="tune_single",
+                request=request,
+                initial_candidates=[1, 2, 4],
+                max_value=4,
+                value_key="batchSize",
+                run_once=run_once,
+                on_entry=entries.append,
+            )
+
+            self.assertEqual(calls, [(1, 3, "single_pass"), (2, 6, "single_pass"), (4, 10, "single_pass")])
+            self.assertEqual([entry["measurementPhase"] for entry in entries], ["single_pass", "single_pass", "single_pass"])
+
+    def test_single_pass_worker_search_still_uses_full_sample_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            request = TuningRequest(sample_count=10, worker_candidates=[1, 2, 4])
+            calls: list[tuple[int, int, str]] = []
+
+            def run_once(candidate: int, sample_count: int, phase: str) -> dict[str, object]:
+                calls.append((candidate, sample_count, phase))
+                return {
+                    "workers": candidate,
+                    "measurementPhase": phase,
+                    "sampleCount": sample_count,
+                    "elapsedSeconds": sample_count / float(candidate),
+                    "imagesPerSecond": float(candidate),
+                    "ok": True,
+                }
+
+            service._search_numeric_candidates(
+                job_id="tune_workers",
+                request=request,
+                initial_candidates=[1, 2, 4],
+                max_value=4,
+                value_key="workers",
+                run_once=run_once,
+                on_entry=lambda entry: None,
+            )
+
+            self.assertEqual(calls, [(1, 10, "single_pass"), (2, 10, "single_pass"), (4, 10, "single_pass")])
+
+    def test_incremental_persist_merges_named_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_path = root / ".env.autodl"
+            env_path.write_text(
+                "WM_BENCH_ATTACK_BATCH_SIZES=cew_s2=4,noise_to_image=1\n",
+                encoding="utf-8",
+            )
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs", env_path=env_path)
+
+            service._persist_env_updates(
+                "tune_partial",
+                {"WM_BENCH_ATTACK_BATCH_SIZES": "noise_to_image=2"},
+                partial=True,
+            )
+
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertIn("WM_BENCH_ATTACK_BATCH_SIZES=cew_s2=4,noise_to_image=2", contents)
 
     def test_diffusion_regeneration_summary_expands_primary_batch_to_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

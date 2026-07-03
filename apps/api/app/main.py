@@ -50,11 +50,6 @@ def create_app() -> FastAPI:
     download_service = DatasetDownloadService(settings.resources_root, oss=oss_client)
     weight_download_service = WeightDownloadService(settings.resources_root, oss=oss_client)
     attack_weight_download_service = AttackWeightDownloadService(settings.resources_root, oss=oss_client)
-    tuning_service = ParallelTuningService(
-        resources_root=settings.resources_root,
-        runs_root=settings.runs_root,
-        device=settings.device,
-    )
 
     def tuning_env_path() -> Path:
         configured = os.getenv("WM_BENCH_DOTENV_PATH")
@@ -62,6 +57,13 @@ def create_app() -> FastAPI:
             path = Path(configured).expanduser()
             return path if path.is_absolute() else settings.project_root / path
         return Path(settings.project_root) / ".env.autodl"
+
+    tuning_service = ParallelTuningService(
+        resources_root=settings.resources_root,
+        runs_root=settings.runs_root,
+        device=settings.device,
+        env_path=tuning_env_path(),
+    )
 
     def accepts_html_page(request: Request) -> bool:
         accept = request.headers.get("accept", "").lower()
@@ -118,6 +120,7 @@ def create_app() -> FastAPI:
     @app.get("/system/runtime")
     def runtime(request: Request) -> dict[str, object]:
         workers = service.list_worker_heartbeats()
+        active_workers = [worker for worker in workers if is_fresh_worker(worker, settings.worker_poll_seconds)]
         effective_api_port = request_api_port(request)
         return {
             "environment": settings.environment,
@@ -130,8 +133,9 @@ def create_app() -> FastAPI:
             "apiPort": effective_api_port,
             "configuredApiPort": settings.api_port,
             "workerPollSeconds": settings.worker_poll_seconds,
-            "workers": [worker for worker in workers if is_fresh_worker(worker, settings.worker_poll_seconds)],
-            "knownWorkerCount": len(workers),
+            "workers": active_workers,
+            "knownWorkerCount": len(active_workers),
+            "staleWorkerCount": max(0, len(workers) - len(active_workers)),
         }
 
     @app.get("/system/readiness")

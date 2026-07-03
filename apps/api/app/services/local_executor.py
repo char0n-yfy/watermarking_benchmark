@@ -54,6 +54,8 @@ from app.services.local_artifacts import (
     RunStateWriter,
     append_jsonl as _append_jsonl,
     artifact_paths as _artifact_paths,
+    compact_result_units as _compact_result_units,
+    compact_result_units_file as _compact_result_units_file,
     latest_result_unit_map as _latest_result_unit_map,
     progress as _progress,
     read_jsonl as _read_jsonl,
@@ -3630,8 +3632,8 @@ def run_local_experiment(
                                 "status": "succeeded",
                             },
                         )
-                        positive_count = len(state.positive_extract_results) or len(state.copied_samples)
-                        negative_count = len(state.negative_extract_results) or len(state.copied_samples)
+                        positive_count = len(state.positive_extract_results)
+                        negative_count = len(state.negative_extract_results)
                         extract_images_done += positive_count + negative_count
                         extract_positive_images_done += positive_count
                         extract_negative_images_done += negative_count
@@ -3913,7 +3915,7 @@ def run_local_experiment(
                                 "status": state.status,
                             },
                         )
-                    quality_pair_count = len(quality_result.quality_records) or len(state.copied_samples) * 2
+                    quality_pair_count = len(quality_result.quality_records)
                     quality_pairs_done += quality_pair_count
                     state_writer.upsert_tree_path(
                         dataset_id=state.dataset_id,
@@ -4060,6 +4062,9 @@ def run_local_experiment(
         if stop_status is None:
             stop_status = _stop_status_from_callback(should_cancel)
 
+        result_units = _compact_result_units(result_units)
+        if paths["resultUnits"].exists():
+            result_units = _compact_result_units_file(paths["resultUnits"])
         failed = sum(1 for item in result_units if item["status"] != "succeeded")
         status = (
             stop_status

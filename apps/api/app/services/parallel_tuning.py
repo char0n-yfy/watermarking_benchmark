@@ -11,7 +11,7 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from evaluator.attacks import ATTACK_REGISTRY
@@ -55,6 +55,15 @@ NON_TUNABLE_ATTACK_METHODS = {"identity"}
 FIXED_ATTACK_BATCH_OVERRIDES: dict[str, int] = {}
 ACTIVE_TUNING_STATUSES = {"running", "cancelling"}
 TERMINAL_TUNING_STATUSES = {"succeeded", "failed", "cancelled"}
+NAMED_OVERRIDE_ENV_KEYS = {
+    "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
+    "WM_BENCH_WATERMARK_EXTRACT_BATCH_SIZES",
+    "WM_BENCH_WATERMARK_BATCH_SIZES",
+    "WM_BENCH_WATERMARK_CPU_WORKERS_BY_METHOD",
+    "WM_BENCH_ATTACK_BATCH_SIZES",
+    "WM_BENCH_ATTACK_CPU_WORKERS_BY_METHOD",
+    "WM_BENCH_PERCEPTUAL_BATCH_SIZES",
+}
 
 
 class TuningCancelled(Exception):
@@ -211,12 +220,59 @@ def _update_dotenv(path: Path, updates: dict[str, str]) -> None:
     path.write_text("\n".join(next_lines) + "\n", encoding="utf-8")
 
 
+def _read_dotenv_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _parse_named_overrides(value: str | None) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    if not value:
+        return parsed
+    for item in str(value).split(","):
+        if "=" not in item:
+            continue
+        key, item_value = item.split("=", 1)
+        key = key.strip()
+        if key:
+            parsed[key] = item_value.strip()
+    return parsed
+
+
+def _format_named_overrides(values: Mapping[str, str]) -> str:
+    return ",".join(f"{key}={value}" for key, value in values.items())
+
+
+def _merge_incremental_env_updates(
+    updates: dict[str, str],
+    *,
+    existing_values: Mapping[str, str],
+) -> dict[str, str]:
+    merged = dict(updates)
+    for key in NAMED_OVERRIDE_ENV_KEYS:
+        if key not in updates:
+            continue
+        current = _parse_named_overrides(existing_values.get(key) or os.environ.get(key))
+        current.update(_parse_named_overrides(updates.get(key)))
+        merged[key] = _format_named_overrides(current)
+    return merged
+
+
 @dataclass
 class TuningRequest:
     mode: str = "quick"
     sample_count: int = 16
     warmup_count: int = 2
-    search_strategy: str = "adaptive"
+    candidate_batch_count: int = 3
+    search_strategy: str = "single_pass"
     probe_sample_count: int = 8
     finalist_count: int = 2
     batch_candidates: list[int] = field(default_factory=lambda: [1, 2, 4, 8, 16])
@@ -249,14 +305,21 @@ class TuningRequest:
         max_batch_size = max(max(batch_candidates or [1]), int(payload.get("maxBatchSize") or max(batch_candidates or [1])))
         max_worker_count = max(max(worker_candidates or [1]), int(payload.get("maxWorkerCount") or max(worker_candidates or [1])))
         auto_expand = bool(payload.get("autoExpandCandidates", full_mode))
-        sample_count = max(2, int(payload.get("sampleCount") or default_samples), max(batch_candidates or [1]))
+        candidate_batch_count = max(1, int(payload.get("candidateBatchCount") or 3))
+        sample_count = max(
+            2,
+            int(payload.get("sampleCount") or default_samples),
+            max(batch_candidates or [1]),
+            max_batch_size * candidate_batch_count,
+        )
         if auto_expand:
-            sample_count = max(sample_count, max_batch_size)
-        search_strategy = str(payload.get("searchStrategy") or "adaptive").strip().lower() or "adaptive"
+            sample_count = max(sample_count, max_batch_size * candidate_batch_count)
+        search_strategy = str(payload.get("searchStrategy") or "single_pass").strip().lower() or "single_pass"
         return cls(
             mode=mode,
             sample_count=sample_count,
             warmup_count=max(1, int(payload.get("warmupCount") or 2)),
+            candidate_batch_count=candidate_batch_count,
             search_strategy=search_strategy,
             probe_sample_count=max(2, int(payload.get("probeSampleCount") or default_probe_samples)),
             finalist_count=max(1, int(payload.get("finalistCount") or default_finalists)),
@@ -281,6 +344,7 @@ class TuningRequest:
             "mode": self.mode,
             "sampleCount": self.sample_count,
             "warmupCount": self.warmup_count,
+            "candidateBatchCount": self.candidate_batch_count,
             "searchStrategy": self.search_strategy,
             "probeSampleCount": self.probe_sample_count,
             "finalistCount": self.finalist_count,
@@ -302,10 +366,18 @@ class TuningRequest:
 
 
 class ParallelTuningService:
-    def __init__(self, *, resources_root: Path, runs_root: Path, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        *,
+        resources_root: Path,
+        runs_root: Path,
+        device: str = "cpu",
+        env_path: Path | None = None,
+    ) -> None:
         self.resources_root = resources_root
         self.runs_root = runs_root
         self.device = device
+        self.env_path = env_path
         self.root = runs_root / "parallel_tuning"
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -390,8 +462,23 @@ class ParallelTuningService:
         updates = summary.get("envUpdates") if isinstance(summary, dict) else None
         if not isinstance(updates, dict) or not updates:
             raise ValueError("Tuning job did not produce environment updates")
-        target = env_path or (Path.cwd() / ".env.autodl")
-        cleaned_updates = apply_parallel_env_updates(updates)
+        saved = self._persist_env_updates(job_id, updates, env_path=env_path, partial=False)
+        self._event(job_id, "saved", "saved recommended parameters", saved)
+        return saved
+
+    def _persist_env_updates(
+        self,
+        job_id: str,
+        updates: dict[str, Any],
+        *,
+        env_path: Path | None = None,
+        partial: bool,
+    ) -> JsonDict:
+        target = env_path or self.env_path or (Path.cwd() / ".env.autodl")
+        existing_values = _read_dotenv_values(target)
+        string_updates = {str(key): str(value) for key, value in updates.items() if value is not None}
+        merged_updates = _merge_incremental_env_updates(string_updates, existing_values=existing_values)
+        cleaned_updates = apply_parallel_env_updates(merged_updates)
         _update_dotenv(target, cleaned_updates)
         runtime = write_runtime_parallel_env(self.runs_root, cleaned_updates, job_id=job_id, env_path=target)
         saved = {
@@ -400,8 +487,19 @@ class ParallelTuningService:
             "runtimePath": runtime["path"],
             "savedKeys": sorted(cleaned_updates),
             "appliedKeys": sorted(cleaned_updates),
+            "partial": partial,
         }
-        self._event(job_id, "saved", "saved recommended parameters", saved)
+        return saved
+
+    def _autosave_report_parameters(self, job_id: str, report: JsonDict) -> JsonDict | None:
+        summary = self._build_summary(report)
+        updates = summary.get("envUpdates") if isinstance(summary, dict) else None
+        if not isinstance(updates, dict) or not updates:
+            return None
+        saved = self._persist_env_updates(job_id, updates, partial=True)
+        summary["autosave"] = saved
+        summary["autosavedAt"] = _utc_timestamp()
+        report["summary"] = summary
         return saved
 
     def cancel(self, job_id: str) -> JsonDict:
@@ -607,6 +705,7 @@ class ParallelTuningService:
                     completed_steps += int(record.get("_stepCount", 1))
                     record.pop("_stepCount", None)
                     report["watermarks"].append(record)
+                    self._autosave_report_parameters(job_id, report)
                     _write_json(job_dir / "report.json", report)
                     self._progress(job_id, completed_steps, estimated_steps, f"watermark {record.get('method')} tuned")
 
@@ -617,6 +716,7 @@ class ParallelTuningService:
                     completed_steps += int(record.get("_stepCount", 1))
                     record.pop("_stepCount", None)
                     report["attacks"].append(record)
+                    self._autosave_report_parameters(job_id, report)
                     _write_json(job_dir / "report.json", report)
                     self._progress(job_id, completed_steps, estimated_steps, f"attack {record.get('method')} tuned")
 
@@ -627,10 +727,16 @@ class ParallelTuningService:
                 completed_steps += int(quality_record.get("_stepCount", 1))
                 quality_record.pop("_stepCount", None)
                 report["quality"] = quality_record
+                self._autosave_report_parameters(job_id, report)
                 _write_json(job_dir / "report.json", report)
                 self._progress(job_id, completed_steps, estimated_steps, "quality metrics tuned")
 
             summary = self._build_summary(report)
+            updates = summary.get("envUpdates") if isinstance(summary, dict) else None
+            if isinstance(updates, dict) and updates:
+                saved = self._persist_env_updates(job_id, updates, partial=False)
+                summary["autosave"] = saved
+                summary["autosavedAt"] = _utc_timestamp()
             report["summary"] = summary
             report["finishedAt"] = _utc_timestamp()
             _write_json(job_dir / "report.json", report)
@@ -715,8 +821,10 @@ class ParallelTuningService:
         candidate_count = max(1, len(candidates))
         if request.search_strategy == "exhaustive":
             return candidate_count * max(1, request.repeat_count)
-        finalist_count = min(max(1, request.finalist_count), candidate_count)
-        return candidate_count + finalist_count * max(1, request.repeat_count)
+        if request.search_strategy in {"adaptive", "topk", "top_k"}:
+            finalist_count = min(max(1, request.finalist_count), candidate_count)
+            return candidate_count + finalist_count * max(1, request.repeat_count)
+        return candidate_count
 
     def _measure_repeated(self, repeat_count: int, value_key: str, run_once: Any, should_cancel: Any | None = None) -> JsonDict:
         repetitions: list[JsonDict] = []
@@ -767,7 +875,9 @@ class ParallelTuningService:
         entries: list[JsonDict] = []
 
         def measurement_sample_count(candidate: int, *, final: bool) -> int:
-            if final or request.search_strategy == "exhaustive":
+            if value_key == "batchSize":
+                return min(request.sample_count, max(1, int(candidate)) * max(1, request.candidate_batch_count))
+            if final or request.search_strategy in {"exhaustive", "single_pass", "single-pass", "one_pass", "one-pass"}:
                 return request.sample_count
             return min(request.sample_count, max(2, request.probe_sample_count, int(candidate)))
 
@@ -828,6 +938,11 @@ class ParallelTuningService:
             return entries
 
         index = 0
+        measurement_phase = (
+            "probe"
+            if request.search_strategy in {"adaptive", "topk", "top_k"}
+            else "single_pass"
+        )
         while index < len(schedule):
             self._ensure_not_cancelled(job_id)
             candidate = schedule[index]
@@ -836,7 +951,7 @@ class ParallelTuningService:
                 candidate,
                 repeat_count=1,
                 sample_count=measurement_sample_count(candidate, final=False),
-                phase="probe",
+                phase=measurement_phase,
             )
             self._ensure_not_cancelled(job_id)
             entries.append(entry)
@@ -868,6 +983,9 @@ class ParallelTuningService:
                     break
 
             index += 1
+
+        if request.search_strategy not in {"adaptive", "topk", "top_k"}:
+            return entries
 
         valid_probe_entries = [
             entry

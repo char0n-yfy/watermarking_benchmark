@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import socket
 import sys
 import time
@@ -18,10 +17,6 @@ from app.core.config import get_settings
 from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
 from app.services.runtime_parallel_config import apply_runtime_parallel_env
-
-
-class RunTimeoutError(TimeoutError):
-    pass
 
 
 def build_service() -> ExperimentService:
@@ -56,23 +51,9 @@ def _heartbeat(
     )
 
 
-def _raise_timeout(_signum: int, _frame: object) -> None:
-    raise RunTimeoutError("run exceeded WM_BENCH_RUN_TIMEOUT_SECONDS")
-
-
 @contextmanager
 def _run_timeout(seconds: int):
-    if seconds <= 0 or not hasattr(signal, "SIGALRM"):
-        yield
-        return
-
-    previous = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(seconds)
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous)
+    yield
 
 
 def run_once(worker_id: str | None = None) -> int:

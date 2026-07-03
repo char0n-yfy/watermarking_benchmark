@@ -100,6 +100,35 @@ def _phase_percent(current: int, total: int) -> int:
     return int(round((max(0, min(current, total)) / total) * 100))
 
 
+def _result_unit_key(record: JsonDict) -> str | None:
+    for key in ("resultUnitKey", "cellKey"):
+        value = record.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def compact_result_units(records: list[JsonDict]) -> list[JsonDict]:
+    latest_by_key: dict[str, JsonDict] = {}
+    key_order: list[str] = []
+    unkeyed_records: list[JsonDict] = []
+    for record in records:
+        key = _result_unit_key(record)
+        if key is None:
+            unkeyed_records.append(dict(record))
+            continue
+        if key not in latest_by_key:
+            key_order.append(key)
+        latest_by_key[key] = dict(record)
+    return [latest_by_key[key] for key in key_order] + unkeyed_records
+
+
+def compact_result_units_file(result_units_path: Path) -> list[JsonDict]:
+    compacted = compact_result_units(read_jsonl(result_units_path))
+    write_jsonl(result_units_path, compacted)
+    return compacted
+
+
 def default_phase_states() -> list[JsonDict]:
     return [
         {
@@ -216,6 +245,9 @@ class RunStateWriter:
             phase["current"] = max(0, int(phase.get("current") or 0) + int(delta))
         else:
             phase["current"] = max(0, int(current))
+        total_value = int(phase.get("total") or 0)
+        if total_value > 0:
+            phase["current"] = min(int(phase.get("current") or 0), total_value)
         if current_item is not None:
             phase["currentItem"] = current_item
         if counters:
@@ -384,7 +416,7 @@ def write_run_status(
 
 def latest_result_unit_map(result_units_path: Path) -> dict[str, JsonDict]:
     return {
-        str(record["cellKey"]): dict(record)
+        str(key): dict(record)
         for record in read_jsonl(result_units_path)
-        if isinstance(record.get("cellKey"), str)
+        if (key := _result_unit_key(record)) is not None
     }

@@ -28,6 +28,7 @@ RESUMABLE_STATUSES = {"paused", "failed", "partially_failed"}
 STOP_INTENT_CANCEL = "cancel"
 STOP_INTENT_PAUSE = "pause"
 HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
+WORKER_HEARTBEAT_RETENTION_SECONDS = 3600
 
 
 def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
@@ -703,6 +704,7 @@ class ExperimentService:
     ) -> None:
         now = utc_now()
         with self.database.connect() as connection:
+            self._prune_worker_heartbeats(connection, now=now)
             connection.execute(
                 """
                 INSERT OR REPLACE INTO worker_heartbeats (
@@ -713,8 +715,44 @@ class ExperimentService:
                 (worker_id, status, pid, device, current_run_id, message, now),
             )
 
+    def _prune_worker_heartbeats(self, connection: Any, *, now: str) -> None:
+        try:
+            now_dt = datetime.fromisoformat(now)
+        except ValueError:
+            return
+        cutoff = now_dt.timestamp() - WORKER_HEARTBEAT_RETENTION_SECONDS
+        rows = connection.execute("SELECT worker_id, last_seen_at FROM worker_heartbeats").fetchall()
+        stale_ids: list[str] = []
+        for row in rows:
+            try:
+                last_seen = datetime.fromisoformat(row["last_seen_at"])
+            except (TypeError, ValueError):
+                stale_ids.append(row["worker_id"])
+                continue
+            if last_seen.timestamp() < cutoff:
+                stale_ids.append(row["worker_id"])
+        if stale_ids:
+            connection.executemany(
+                "DELETE FROM worker_heartbeats WHERE worker_id = ?",
+                [(worker_id,) for worker_id in stale_ids],
+            )
+
+    def _prune_dead_worker_heartbeats(self, connection: Any) -> None:
+        rows = connection.execute("SELECT worker_id, pid FROM worker_heartbeats").fetchall()
+        dead_ids = [
+            row["worker_id"]
+            for row in rows
+            if isinstance(row["pid"], int) and row["pid"] > 0 and not Path(f"/proc/{row['pid']}").exists()
+        ]
+        if dead_ids:
+            connection.executemany(
+                "DELETE FROM worker_heartbeats WHERE worker_id = ?",
+                [(worker_id,) for worker_id in dead_ids],
+            )
+
     def list_worker_heartbeats(self) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
+            self._prune_dead_worker_heartbeats(connection)
             rows = connection.execute(
                 "SELECT * FROM worker_heartbeats ORDER BY last_seen_at DESC"
             ).fetchall()
