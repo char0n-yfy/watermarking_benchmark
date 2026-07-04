@@ -85,8 +85,8 @@ function detailRadarSubtitle(categoryKey: OverviewAttackResourceCategoryKey, lan
       en: "Detection robustness (AUC) across 4 3D motion resources (point/ahead merged)"
     },
     regeneration_attacks: {
-      zh: "4 种再生成资源（扩散族合并 2×/4×/单轮 preset）的检测鲁棒性（AUC）",
-      en: "Detection robustness (AUC) across 4 regeneration resources (2×/4×/single-pass diffusion merged)"
+      zh: "6 种再生成资源（与资源页一致）的检测鲁棒性（AUC）",
+      en: "Detection robustness (AUC) across 6 regeneration resources (aligned with Resources page)"
     },
     consumer_enhancement_workflow_attacks: {
       zh: "16 种消费级增强资源（与资源页一致）的检测鲁棒性（AUC）",

@@ -87,6 +87,8 @@ export const REGENERATION_DIFFUSION_FAMILY_METHODS = ["regen_diffusion", "2x_reg
 
 export const REGENERATION_RESOURCE_METHODS = [
   "regen_diffusion",
+  "2x_regen",
+  "4x_regen",
   "noise_to_image",
   "regen_vae",
   "image_to_vedio"
@@ -139,9 +141,6 @@ export function resourceMethodFromExecutionMethod(attackMethod: string): string 
   if (viewpoint) {
     return viewpoint[1] ?? null;
   }
-  if ((REGENERATION_DIFFUSION_FAMILY_METHODS as readonly string[]).includes(attackMethod)) {
-    return "regen_diffusion";
-  }
   if (attackMethod in ATTACK_RESOURCE_DISPLAY_NAMES) {
     return attackMethod;
   }
@@ -152,9 +151,6 @@ export function executionMethodMatchesResourceMethod(
   attackMethod: string,
   resourceMethod: string
 ): boolean {
-  if (resourceMethod === "regen_diffusion") {
-    return (REGENERATION_DIFFUSION_FAMILY_METHODS as readonly string[]).includes(attackMethod);
-  }
   if (resourceMethod === attackMethod) {
     return true;
   }
