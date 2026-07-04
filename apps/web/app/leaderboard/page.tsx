@@ -1,34 +1,43 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CheckCircle2, Download, Gauge, ShieldCheck, Trophy } from "lucide-react";
+import { BarChart3, Download } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
-import { BenchmarkRadar } from "@/components/BenchmarkRadar";
+import { curveDomainColor } from "@/components/RobustnessCurve";
 import { useLanguage } from "@/components/LanguageProvider";
-import { fetchBenchmarkProtocols, fetchLeaderboard } from "@/lib/api";
-import { formatMetric } from "@/lib/insights";
-import type { BenchmarkProtocol, LeaderboardResponse } from "@/lib/types";
+import { chartBarFill } from "@/lib/chart-colors";
+import { fetchAlgorithms, fetchLeaderboard } from "@/lib/api";
+import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
+import type { AlgorithmVersion, BenchmarkLeaderboardRow, LeaderboardResponse } from "@/lib/types";
+
+type RankingMetric = "robustness" | "complexity" | "fidelity" | "composite";
+
+const RANKING_METRICS: RankingMetric[] = ["robustness", "complexity", "fidelity", "composite"];
+const COMPOSITE_WEIGHTS = {
+  robustness: 0.5,
+  fidelity: 0.3,
+  complexity: 0.2
+} as const;
 
 export default function LeaderboardPage() {
   const { language, t } = useLanguage();
-  const [protocols, setProtocols] = useState<BenchmarkProtocol[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
-  const [notice, setNotice] = useState("");
+  const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>([]);
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric>("composite");
+  const [selectedRankingRow, setSelectedRankingRow] = useState<BenchmarkLeaderboardRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchBenchmarkProtocols(), fetchLeaderboard()])
-      .then(([nextProtocols, nextLeaderboard]) => {
+    Promise.all([fetchLeaderboard(), fetchAlgorithms().catch(() => [] as AlgorithmVersion[])])
+      .then(([nextLeaderboard, nextAlgorithms]) => {
         if (cancelled) {
           return;
         }
-        setProtocols(nextProtocols);
         setLeaderboard(nextLeaderboard);
+        setAlgorithms(nextAlgorithms);
       })
       .catch(() => {
-        if (!cancelled) {
-          setNotice(language === "zh" ? "API 未启动或暂无评分数据。" : "API is unavailable or no scores exist yet.");
-        }
+        // Keep the page shell available; empty charts already show no-data states.
       });
     return () => {
       cancelled = true;
@@ -36,15 +45,8 @@ export default function LeaderboardPage() {
   }, [language]);
 
   const rows = leaderboard?.rows ?? [];
-  const topRow = rows[0] ?? null;
-  const protocol = leaderboard?.protocol ?? protocols[0] ?? null;
-  const requirements =
-    language === "zh"
-      ? ["固定 5000 张样本", "正负样本同攻击流程", "七类 WAVES 攻击", "TPR@0.1%FPR", "NQD < 0.8", "完整 coverage"]
-      : ["Fixed 5,000 samples", "Matched positive/negative attacks", "Seven WAVES attack classes", "TPR@0.1%FPR", "NQD < 0.8", "Full coverage"];
-
-  const officialRows = useMemo(() => rows.filter((row) => row.officialEligible), [rows]);
-  const provisionalRows = useMemo(() => rows.filter((row) => !row.officialEligible), [rows]);
+  const algorithmNames = useMemo(() => buildAlgorithmNames(algorithms), [algorithms]);
+  const algorithmColorDomain = useMemo(() => rows.map((row) => row.algorithmId), [rows]);
 
   return (
     <AppShell active="leaderboard">
@@ -62,132 +64,287 @@ export default function LeaderboardPage() {
       </div>
 
       <section className="leaderboard-grid">
-        <div className="panel leaderboard-hero">
-          {rows.length === 0 ? (
-            <div className="leaderboard-empty">
-              <div className="leaderboard-icon">
-                <Trophy size={26} />
-              </div>
-              <div>
-                <h2>{t.leaderboard.pendingTitle}</h2>
-                <p>{notice || t.leaderboard.noRows}</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="panel-header">
-                <h2>{topRow?.officialEligible ? t.leaderboard.officialRows : t.leaderboard.provisionalRows}</h2>
-                <span className={topRow?.officialEligible ? "badge ok" : "badge warn"}>
-                  {topRow?.officialEligible ? t.common.official : t.common.provisional}
-                </span>
-              </div>
-              <div className="panel-body table-scroll">
-                <ScoreTable rows={officialRows.length ? officialRows : provisionalRows} />
-              </div>
-            </>
-          )}
-        </div>
+        <AlgorithmEvaluationRanking
+          algorithmColorDomain={algorithmColorDomain}
+          algorithmNames={algorithmNames}
+          language={language}
+          metric={rankingMetric}
+          onPick={setSelectedRankingRow}
+          rows={rows}
+          selectedAlgorithmId={selectedRankingRow?.algorithmId}
+          setMetric={setRankingMetric}
+        />
 
-        <div className="panel">
-          <div className="panel-header">
-            <h2>{t.results.radar}</h2>
-            <BarChart3 size={16} />
-          </div>
-          <div className="panel-body">
-            <BenchmarkRadar categories={topRow?.categoryScores ?? []} emptyText={t.leaderboard.pendingBody} />
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>{t.leaderboard.protocol}</h2>
-            <ShieldCheck size={16} />
-          </div>
-          <div className="panel-body metric-list">
-            <div className="metric-row">
-              <div>
-                <Gauge size={16} />
-                <span>{protocol?.name ?? "waves-official-detection-v1"}</span>
+        {selectedRankingRow ? (
+          <div className="panel leaderboard-ranking-detail">
+            <div className="panel-header">
+              <h2>{displayAlgorithm(selectedRankingRow.algorithmId, algorithmNames)}</h2>
+              <span className={selectedRankingRow.officialEligible ? "badge ok" : "badge warn"}>
+                {selectedRankingRow.officialEligible ? t.common.official : t.common.provisional}
+              </span>
+            </div>
+            <div className="panel-body metric-list">
+              <div className="metric-row">
+                <span>WRS-v2</span>
+                <strong>{selectedRankingRow.wrs == null ? "n/a" : selectedRankingRow.wrs.toFixed(1)}</strong>
               </div>
-              <strong>{protocol?.task ?? "detection"}</strong>
-            </div>
-            <div className="metric-row">
-              <span>{t.results.tprAtFpr}</span>
-              <strong>{protocol ? `${(protocol.fprTarget * 100).toFixed(1)}% FPR` : "0.1% FPR"}</strong>
-            </div>
-            <div className="metric-row">
-              <span>{t.results.nqd}</span>
-              <strong>&lt; {protocol?.practicalNqdThreshold ?? 0.8}</strong>
-            </div>
-            <div className="metric-row">
-              <span>{t.common.samples}</span>
-              <strong>{protocol?.officialMinSamples ?? 5000}</strong>
-            </div>
-            <div className="metric-row">
-              <span>{t.leaderboard.protocolStatus}</span>
-              <strong>
-                {officialRows.length} {t.common.official} · {provisionalRows.length} {t.common.provisional}
-              </strong>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>{t.leaderboard.requirements}</h2>
-            <Gauge size={16} />
-          </div>
-          <div className="panel-body requirement-grid">
-            {requirements.map((item) => (
-              <div className="requirement-item" key={item}>
-                <CheckCircle2 size={15} />
-                <span>{item}</span>
+              <div className="metric-row">
+                <span>{language === "zh" ? "鲁棒性" : "Robustness"}</span>
+                <strong>{formatPercent(robustnessScore(selectedRankingRow))}</strong>
               </div>
-            ))}
+              <div className="metric-row">
+                <span>{t.results.cleanFidelity}</span>
+                <strong>{formatPercent(normalizedFidelityScore(selectedRankingRow, rows))}</strong>
+              </div>
+              <div className="metric-row">
+                <span>{language === "zh" ? "算法复杂度" : "Algorithm complexity"}</span>
+                <strong>{formatPercent(algorithmSimplicityScore(selectedRankingRow, rows))}</strong>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : null}
       </section>
     </AppShell>
   );
+}
 
-  function ScoreTable({ rows: tableRows }: { rows: LeaderboardResponse["rows"] }) {
-    if (tableRows.length === 0) {
-      return <div className="empty compact-empty">{t.leaderboard.noRows}</div>;
-    }
-    return (
-      <table className="table compact-table">
-        <thead>
-          <tr>
-            <th>{t.common.rank}</th>
-            <th>{t.common.algorithm}</th>
-            <th>{t.common.wrs}</th>
-            <th>{t.results.cleanFidelity}</th>
-            <th>{t.results.nqd}</th>
-            <th>{t.common.coverage}</th>
-            <th>{t.common.runtime}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tableRows.map((row) => (
-            <tr key={`${row.runId ?? "run"}-${row.algorithmId}`}>
-              <td>{row.rank}</td>
-              <td>
-                <strong>{row.algorithmId}</strong>
-                <span className="subtle-cell">{row.configName ?? row.runId}</span>
-              </td>
-              <td>{row.wrs == null ? "n/a" : row.wrs.toFixed(1)}</td>
-              <td>{formatMetric(row.cleanFidelity)}</td>
-              <td>{formatMetric(row.avgNqd)}</td>
-              <td>
-                {row.coverage.coveredCategoryCount}/{row.coverage.requiredCategoryCount}
-              </td>
-              <td>{row.runtimeMs == null ? "n/a" : `${(row.runtimeMs / 1000).toFixed(2)}s`}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
+function AlgorithmEvaluationRanking({
+  algorithmColorDomain,
+  algorithmNames,
+  language,
+  metric,
+  onPick,
+  rows,
+  selectedAlgorithmId,
+  setMetric
+}: {
+  algorithmColorDomain: string[];
+  algorithmNames: Record<string, string>;
+  language: string;
+  metric: RankingMetric;
+  onPick: (row: BenchmarkLeaderboardRow) => void;
+  rows: BenchmarkLeaderboardRow[];
+  selectedAlgorithmId?: string;
+  setMetric: (metric: RankingMetric) => void;
+}) {
+  if (rows.length === 0) {
+    return null;
   }
+  const rankedRows = rankRowsByMetric(rows, metric);
+  const maxScore = Math.max(...rankedRows.map((row) => rankingMetricScore(row, metric, rows)), 1);
+  const labels = rankingLabels(language);
+  return (
+    <section className="panel interactive-bars-panel overview-ladder-panel leaderboard-ranking-panel">
+      <div className="panel-header">
+        <h2>{language === "zh" ? "算法评估排名" : "Algorithm evaluation ranking"}</h2>
+        <BarChart3 size={16} />
+      </div>
+      <div className="ranking-mode-tabs overview-evaluation-tabs">
+        {RANKING_METRICS.map((key) => (
+          <button className={metric === key ? "active" : ""} key={key} onClick={() => setMetric(key)} type="button">
+            {labels[key]}
+          </button>
+        ))}
+      </div>
+      <p className="overview-evaluation-note">{rankingDescription(metric, language)}</p>
+      <div className="panel-body interactive-bars">
+        {rankedRows.map((row, index) => {
+          const value = rankingMetricScore(row, metric, rows);
+          const width = `${Math.max(3, (value / maxScore) * 100)}%`;
+          const color = curveDomainColor(algorithmColorDomain, row.algorithmId);
+          return (
+            <button
+              className={selectedAlgorithmId === row.algorithmId ? "interactive-bar-row active" : "interactive-bar-row"}
+              key={row.algorithmId}
+              onClick={() => onPick(row)}
+              type="button"
+            >
+              <span>{index + 1}. {displayAlgorithm(row.algorithmId, algorithmNames)}</span>
+              <i style={{ width, background: chartBarFill(color) }} />
+              <strong>{formatRankingValue(row, metric, rows)}</strong>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function buildAlgorithmNames(algorithms: AlgorithmVersion[]): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const algorithm of algorithms) {
+    const label = displayAlgorithm(algorithm.id, {}, algorithm.name, algorithm.method);
+    names[algorithm.id] = label;
+    if (algorithm.method) {
+      names[algorithm.method] = label;
+    }
+  }
+  return names;
+}
+
+function displayAlgorithm(
+  id: string,
+  resourceNames: Record<string, string> = {},
+  fallbackName?: string,
+  methodOverride?: string
+): string {
+  const method = methodOverride ?? id.replace(/^alg[-_]/, "");
+  return resourceNames[id] ?? resourceNames[method] ?? resolveWatermarkDisplayName(method, fallbackName || displayTokenLabel(method));
+}
+
+function displayTokenLabel(value: string): string {
+  return value
+    .replace(/^alg[-_]/, "")
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => {
+      const lower = part.toLowerCase();
+      if (["dct", "dwt", "svd", "ssl", "wam", "cin", "dwsf"].includes(lower)) {
+        return lower.toUpperCase();
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join("-");
+}
+
+function rankingLabels(language: string): Record<RankingMetric, string> {
+  return {
+    robustness: language === "zh" ? "鲁棒性" : "Robustness",
+    complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity",
+    fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
+    composite: language === "zh" ? "综合评分" : "Composite score"
+  };
+}
+
+function rankingDescription(metric: RankingMetric, language: string): string {
+  if (metric === "robustness") {
+    return language === "zh"
+      ? "按已覆盖攻击类别的平均鲁棒得分排序，分数越高表示抗攻击能力越强。"
+      : "Ranked by mean robustness over covered attack families; higher is more robust.";
+  }
+  if (metric === "complexity") {
+    return language === "zh"
+      ? "按相对运行效率排序，分数越高表示算法越轻量、运行越快。"
+      : "Ranked by relative runtime efficiency; higher means lighter and faster.";
+  }
+  if (metric === "fidelity") {
+    return language === "zh"
+      ? "按无攻击条件下的图像保真度排序，分数越高表示水印引入的失真越小。"
+      : "Ranked by clean fidelity; higher means less visible distortion.";
+  }
+  return language === "zh"
+    ? "综合评分 = 50% 鲁棒性 + 30% 自身保真度 + 20% 算法复杂度（效率分，越高越好）。缺失维度会按可用项重新归一化。"
+    : "Composite = 50% robustness + 30% fidelity + 20% complexity efficiency. Missing dimensions are renormalized.";
+}
+
+function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric): BenchmarkLeaderboardRow[] {
+  return [...rows].sort((left, right) => {
+    const leftScore = rankingMetricScore(left, metric, rows);
+    const rightScore = rankingMetricScore(right, metric, rows);
+    return rightScore - leftScore || left.algorithmId.localeCompare(right.algorithmId);
+  });
+}
+
+function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): number {
+  if (metric === "robustness") {
+    return (robustnessScore(row) ?? 0) * 100;
+  }
+  if (metric === "fidelity") {
+    return (normalizedFidelityScore(row, rows) ?? 0) * 100;
+  }
+  if (metric === "complexity") {
+    return (algorithmSimplicityScore(row, rows) ?? 0) * 100;
+  }
+  return (compositeScore(row, rows) ?? 0) * 100;
+}
+
+function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): string {
+  if (metric === "robustness") {
+    return formatPercent(robustnessScore(row));
+  }
+  if (metric === "fidelity") {
+    return formatPercent(normalizedFidelityScore(row, rows));
+  }
+  if (metric === "complexity") {
+    return formatPercent(algorithmSimplicityScore(row, rows));
+  }
+  return formatPercent(compositeScore(row, rows));
+}
+
+function compositeScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
+  const components: Array<{ value: number; weight: number }> = [];
+  const robustness = robustnessScore(row);
+  if (robustness != null) {
+    components.push({ value: robustness, weight: COMPOSITE_WEIGHTS.robustness });
+  }
+  const fidelity = normalizedFidelityScore(row, rows);
+  if (fidelity != null) {
+    components.push({ value: fidelity, weight: COMPOSITE_WEIGHTS.fidelity });
+  }
+  const complexity = algorithmSimplicityScore(row, rows);
+  if (complexity != null) {
+    components.push({ value: complexity, weight: COMPOSITE_WEIGHTS.complexity });
+  }
+  if (components.length === 0) {
+    return null;
+  }
+  const weightSum = components.reduce((total, item) => total + item.weight, 0);
+  return components.reduce((total, item) => total + item.value * item.weight, 0) / weightSum;
+}
+
+function robustnessScore(row: BenchmarkLeaderboardRow): number | null {
+  return meanNumber(
+    row.categoryScores
+      .filter((category) => category.covered)
+      .map((category) => category.score)
+  );
+}
+
+function normalizedFidelityScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
+  const value = finiteOrNull(row.cleanFidelity);
+  const values = rows.map((item) => finiteOrNull(item.cleanFidelity)).filter((item): item is number => item != null);
+  if (value == null || values.length === 0) {
+    return null;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (max <= min) {
+    return 1;
+  }
+  return Math.max(0, Math.min(1, (value - min) / (max - min)));
+}
+
+function algorithmSimplicityScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
+  const runtime = finiteOrNull(row.runtimeMs);
+  const runtimes = rows.map((item) => finiteOrNull(item.runtimeMs)).filter((value): value is number => value != null && value > 0);
+  if (runtime == null || runtime <= 0 || runtimes.length === 0) {
+    return null;
+  }
+  const min = Math.min(...runtimes);
+  const max = Math.max(...runtimes);
+  if (max <= min) {
+    return 1;
+  }
+  const logMin = Math.log1p(min);
+  const logMax = Math.log1p(max);
+  const ratio = (Math.log1p(runtime) - logMin) / Math.max(0.0001, logMax - logMin);
+  return Math.max(0, Math.min(1, 1 - ratio));
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "n/a" : (value * 100).toFixed(1);
+}
+
+function finiteOrNull(value: number | null | undefined): number | null {
+  return value == null || !Number.isFinite(value) ? null : value;
+}
+
+function meanNumber(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (!finite.length) {
+    return null;
+  }
+  return finite.reduce((total, value) => total + value, 0) / finite.length;
 }
 
 function exportLeaderboardCsv(rows: LeaderboardResponse["rows"]) {
