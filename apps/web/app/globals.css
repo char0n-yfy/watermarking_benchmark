@@ -196,7 +196,8 @@
 }
 
 .interactive-bar-row:hover,
-.interactive-bar-row:focus-visible {
+.interactive-bar-row:focus-visible,
+.interactive-bar-row.active {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
   background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
   transform: translateY(-1px);
@@ -2934,6 +2935,11 @@ a.button {
 
 .leaderboard-grid {
   grid-template-columns: minmax(520px, 1.4fr) minmax(320px, 0.8fr);
+}
+
+.leaderboard-ranking-panel,
+.leaderboard-ranking-detail {
+  grid-column: 1 / -1;
 }
 
 .leaderboard-hero {

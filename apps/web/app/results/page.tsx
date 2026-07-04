@@ -26,7 +26,6 @@ import {
   curveDomainShape,
   curveSeriesColor
 } from "@/components/RobustnessCurve";
-import { chartBarFill } from "@/lib/chart-colors";
 import {
   buildMainOverviewRadarSeries,
   buildMainOverviewRadarTemplate,
@@ -51,14 +50,6 @@ import type {
 } from "@/lib/types";
 
 type ResultsTab = "overview" | "attack" | "quality" | "debug";
-type OverviewEvaluationMetric = "robustness" | "complexity" | "fidelity" | "composite";
-
-const OVERVIEW_EVALUATION_METRICS: OverviewEvaluationMetric[] = ["robustness", "complexity", "fidelity", "composite"];
-const OVERVIEW_COMPOSITE_WEIGHTS = {
-  robustness: 0.5,
-  complexity: 0.2,
-  fidelity: 0.3
-} as const;
 
 type AttackSelectorKey = "dataset" | "attack";
 type AttackHeatmapMetric = "tpr" | "nqd";
@@ -202,7 +193,6 @@ export default function ResultsPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
-  const [overviewEvaluationMetric, setOverviewEvaluationMetric] = useState<OverviewEvaluationMetric>("composite");
   const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<string[]>([]);
   const [attackDatasetIds, setAttackDatasetIds] = useState<string[]>([]);
   const [attackAttackIds, setAttackAttackIds] = useState<string[]>([]);
@@ -667,16 +657,9 @@ export default function ResultsPage() {
         ))}
       </section>
 
-      {activeTab !== "debug" && activeTab !== "quality" && activeTab !== "overview" ? (
-        <AlgorithmSelector
-          algorithmIds={algorithmIds}
-          selectedAlgorithmIds={selectedAlgorithmIds}
-          setSelectedAlgorithmIds={setSelectedAlgorithmIds}
-          title={t.results.selectedAlgorithms}
-        />
+      {activeInsight && activeInsight.kind !== "run" && activeTab !== "quality" && activeTab !== "overview" ? (
+        <InsightStrip insight={activeInsight} />
       ) : null}
-
-      {activeInsight && activeTab !== "quality" && activeTab !== "overview" ? <InsightStrip insight={activeInsight} /> : null}
 
       {activeTab === "overview" ? (
         <OverviewTab
@@ -684,7 +667,6 @@ export default function ResultsPage() {
           allScoreRows={scoreRows}
           legacyRows={selectedLegacyRows}
           qualityAvailableCurvePoints={qualityAvailableCurvePoints}
-          overviewEvaluationMetric={overviewEvaluationMetric}
           resourceAlgorithmNames={resourceAlgorithmNames}
           overviewDetailRadars={overviewDetailRadars}
           overviewMainRadarCategories={overviewMainRadarCategories}
@@ -693,7 +675,6 @@ export default function ResultsPage() {
           score={score}
           scoreRows={selectedScoreRows}
           selectedAlgorithmIds={selectedAlgorithmIds}
-          setOverviewEvaluationMetric={setOverviewEvaluationMetric}
           setSelectedAlgorithmIds={setSelectedAlgorithmIds}
         />
       ) : null}
@@ -788,77 +769,10 @@ export default function ResultsPage() {
     );
   }
 
-  function InteractiveScoreBars({
-    metric,
-    metrics = OVERVIEW_EVALUATION_METRICS,
-    rows,
-    setMetric,
-    title,
-    algorithmColorDomain
-  }: {
-    metric: OverviewEvaluationMetric;
-    metrics?: OverviewEvaluationMetric[];
-    rows: BenchmarkLeaderboardRow[];
-    setMetric: (value: OverviewEvaluationMetric) => void;
-    title?: string;
-    algorithmColorDomain: string[];
-  }) {
-    if (rows.length === 0) {
-      return null;
-    }
-    const rankedRows = rankRowsByMetric(rows, metric);
-    const maxScore = Math.max(...rankedRows.map((row) => rankingMetricScore(row, metric, rows)), 1);
-    const metricLabels = overviewEvaluationLabels(language);
-    return (
-      <section className="panel interactive-bars-panel overview-ladder-panel">
-        <div className="panel-header">
-          <h2>{title ?? uiText("算法评估排名", "Algorithm evaluation ranking")}</h2>
-          <BarChart3 size={16} />
-        </div>
-        <div className="ranking-mode-tabs overview-evaluation-tabs">
-          {metrics.map((key) => (
-            <button className={metric === key ? "active" : ""} key={key} onClick={() => setMetric(key)} type="button">
-              {metricLabels[key]}
-            </button>
-          ))}
-        </div>
-        <p className="overview-evaluation-note">{overviewEvaluationDescription(metric, language)}</p>
-        <div className="panel-body interactive-bars">
-          {rankedRows.map((row, index) => {
-            const value = rankingMetricScore(row, metric, rows);
-            const width = `${Math.max(3, (value / maxScore) * 100)}%`;
-            const barColor = curveDomainColor(algorithmColorDomain, row.algorithmId);
-            return (
-              <button
-                className="interactive-bar-row"
-                key={row.algorithmId}
-                onClick={() => {
-                  setActiveInsight({
-                    kind: "algorithm",
-                    key: row.algorithmId,
-                    title: displayAlgorithm(row.algorithmId, resourceAlgorithmNames),
-                    body: `${metricLabels[metric]} ${formatRankingValue(row, metric, rows)}`,
-                    meta: rankingMetricMeta(row, metric, rows, language)
-                  });
-                }}
-                type="button"
-              >
-                <span>{index + 1}. {displayAlgorithm(row.algorithmId, resourceAlgorithmNames)}</span>
-                <i style={{ width, background: chartBarFill(barColor) }} />
-                <strong>{formatRankingValue(row, metric, rows)}</strong>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-    );
-  }
-
   function OverviewTab({
     algorithmIds,
     allScoreRows,
     legacyRows,
-    overviewEvaluationMetric,
     qualityAvailableCurvePoints,
     resourceAlgorithmNames,
     overviewDetailRadars,
@@ -868,13 +782,11 @@ export default function ResultsPage() {
     score,
     scoreRows,
     selectedAlgorithmIds,
-    setOverviewEvaluationMetric,
     setSelectedAlgorithmIds
   }: {
     algorithmIds: string[];
     allScoreRows: BenchmarkLeaderboardRow[];
     legacyRows: ReturnType<typeof rankAggregates>;
-    overviewEvaluationMetric: OverviewEvaluationMetric;
     qualityAvailableCurvePoints: BenchmarkCurvePoint[];
     resourceAlgorithmNames: Record<string, string>;
     overviewDetailRadars: ReturnType<typeof buildOverviewDetailRadars>;
@@ -884,7 +796,6 @@ export default function ResultsPage() {
     score: BenchmarkScore | null;
     scoreRows: BenchmarkLeaderboardRow[];
     selectedAlgorithmIds: string[];
-    setOverviewEvaluationMetric: (value: OverviewEvaluationMetric) => void;
     setSelectedAlgorithmIds: (value: string[] | ((current: string[]) => string[])) => void;
   }) {
     const algorithmOptions =
@@ -1011,14 +922,6 @@ export default function ResultsPage() {
             </div>
           ))}
         </section>
-
-        <InteractiveScoreBars
-          algorithmColorDomain={algorithmColorDomain}
-          metric={overviewEvaluationMetric}
-          rows={scoreRows}
-          setMetric={setOverviewEvaluationMetric}
-          title={uiText("算法评估排名", "Algorithm evaluation ranking")}
-        />
 
         {scoreRows.length === 0 && results ? (
           <section className="panel">
@@ -3113,131 +3016,6 @@ function formatCount(value: number | null | undefined): string {
     return "n/a";
   }
   return Math.round(value).toLocaleString();
-}
-
-function overviewEvaluationLabels(language: string): Record<OverviewEvaluationMetric, string> {
-  return {
-    robustness: language === "zh" ? "鲁棒性" : "Robustness",
-    complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity",
-    fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
-    composite: language === "zh" ? "综合评分" : "Composite score"
-  };
-}
-
-function overviewEvaluationDescription(metric: OverviewEvaluationMetric, language: string): string {
-  if (metric === "robustness") {
-    return language === "zh"
-      ? "按已覆盖攻击类的平均鲁棒得分排序，分数越高表示抗攻击能力越强。"
-      : "Ranked by mean robustness over covered attack families; higher is more robust.";
-  }
-  if (metric === "complexity") {
-    return language === "zh"
-      ? "按相对运行效率排序，分数越高表示算法越轻量、运行越快。"
-      : "Ranked by relative runtime efficiency; higher means lighter and faster.";
-  }
-  if (metric === "fidelity") {
-    return language === "zh"
-      ? "按无攻击条件下的图像保真度排序，分数越高表示水印引入的失真越小。"
-      : "Ranked by clean fidelity; higher means less visible distortion.";
-  }
-  return language === "zh"
-    ? "综合评分 = 50% 鲁棒性 + 30% 自身保真度 + 20% 算法复杂度（效率分，越高越好）。缺失维度会按可用项重新归一化。"
-    : "Composite = 50% robustness + 30% fidelity + 20% complexity efficiency (higher is better). Missing dimensions are renormalized.";
-}
-
-function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: OverviewEvaluationMetric): BenchmarkLeaderboardRow[] {
-  return [...rows].sort((left, right) => {
-    const leftScore = rankingMetricScore(left, metric, rows);
-    const rightScore = rankingMetricScore(right, metric, rows);
-    return rightScore - leftScore || left.algorithmId.localeCompare(right.algorithmId);
-  });
-}
-
-function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: OverviewEvaluationMetric, rows: BenchmarkLeaderboardRow[]): number {
-  if (metric === "robustness") {
-    return (robustnessScore(row) ?? 0) * 100;
-  }
-  if (metric === "fidelity") {
-    return (finiteOrNull(row.cleanFidelity) ?? 0) * 100;
-  }
-  if (metric === "complexity") {
-    return (algorithmSimplicityScore(row, rows) ?? 0) * 100;
-  }
-  return (overviewCompositeScore(row, rows) ?? 0) * 100;
-}
-
-function formatRankingValue(row: BenchmarkLeaderboardRow, metric: OverviewEvaluationMetric, rows: BenchmarkLeaderboardRow[]): string {
-  if (metric === "robustness") {
-    const value = robustnessScore(row);
-    return value == null ? "n/a" : (value * 100).toFixed(1);
-  }
-  if (metric === "fidelity") {
-    return formatMetric(row.cleanFidelity);
-  }
-  if (metric === "complexity") {
-    const score = algorithmSimplicityScore(row, rows);
-    return score == null ? "n/a" : (score * 100).toFixed(1);
-  }
-  const score = overviewCompositeScore(row, rows);
-  return score == null ? "n/a" : (score * 100).toFixed(1);
-}
-
-function rankingMetricMeta(
-  row: BenchmarkLeaderboardRow,
-  metric: OverviewEvaluationMetric,
-  rows: BenchmarkLeaderboardRow[],
-  language: string
-): string {
-  if (metric === "complexity") {
-    const runtime = row.runtimeMs == null ? "n/a" : `${row.runtimeMs.toFixed(1)} ms`;
-    return language === "zh" ? `运行时间 ${runtime}` : `runtime ${runtime}`;
-  }
-  if (metric === "fidelity") {
-    return `Clean ${formatMetric(row.cleanFidelity)} / NQD ${formatMetric(row.avgNqd)}`;
-  }
-  if (metric === "robustness") {
-    const value = robustnessScore(row);
-    return language === "zh"
-      ? `鲁棒性 ${value == null ? "n/a" : (value * 100).toFixed(1)} / WRS ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)}`
-      : `robustness ${value == null ? "n/a" : (value * 100).toFixed(1)} / WRS ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)}`;
-  }
-  const robustness = robustnessScore(row);
-  const fidelity = finiteOrNull(row.cleanFidelity);
-  const complexity = algorithmSimplicityScore(row, rows);
-  const composite = overviewCompositeScore(row, rows);
-  if (language === "zh") {
-    return `鲁棒 ${robustness == null ? "n/a" : (robustness * 100).toFixed(1)} / 保真 ${fidelity == null ? "n/a" : (fidelity * 100).toFixed(1)} / 效率 ${complexity == null ? "n/a" : (complexity * 100).toFixed(1)} / 综合 ${composite == null ? "n/a" : (composite * 100).toFixed(1)}`;
-  }
-  return `robust ${robustness == null ? "n/a" : (robustness * 100).toFixed(1)} / fidelity ${fidelity == null ? "n/a" : (fidelity * 100).toFixed(1)} / efficiency ${complexity == null ? "n/a" : (complexity * 100).toFixed(1)} / composite ${composite == null ? "n/a" : (composite * 100).toFixed(1)}`;
-}
-
-function overviewCompositeScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
-  const components: Array<{ value: number; weight: number }> = [];
-  const robustness = robustnessScore(row);
-  if (robustness != null) {
-    components.push({ value: robustness, weight: OVERVIEW_COMPOSITE_WEIGHTS.robustness });
-  }
-  const fidelity = finiteOrNull(row.cleanFidelity);
-  if (fidelity != null) {
-    components.push({ value: fidelity, weight: OVERVIEW_COMPOSITE_WEIGHTS.fidelity });
-  }
-  const complexity = algorithmSimplicityScore(row, rows);
-  if (complexity != null) {
-    components.push({ value: complexity, weight: OVERVIEW_COMPOSITE_WEIGHTS.complexity });
-  }
-  if (components.length === 0) {
-    return null;
-  }
-  const weightSum = components.reduce((total, item) => total + item.weight, 0);
-  return components.reduce((total, item) => total + item.value * item.weight, 0) / weightSum;
-}
-
-function robustnessScore(row: BenchmarkLeaderboardRow): number | null {
-  return meanNumber(
-    row.categoryScores
-      .filter((category) => category.covered)
-      .map((category) => category.score)
-  );
 }
 
 function algorithmSimplicityScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
