@@ -1,28 +1,8 @@
 import { buildCurveSeries } from "@/lib/insights";
+import { ALGORITHM_CHART_COLORS, chartColorByIndex, chartColorForDomain } from "@/lib/chart-colors";
 import type { BenchmarkCurvePoint, BenchmarkScore, RunResults } from "@/lib/types";
 
-export const SCORE_CURVE_COLORS = [
-  "#2563eb",
-  "#0f766e",
-  "#a16207",
-  "#b42318",
-  "#7c3aed",
-  "#0891b2",
-  "#be185d",
-  "#4d7c0f",
-  "#c2410c",
-  "#4338ca",
-  "#047857",
-  "#9f1239",
-  "#e11d48",
-  "#65a30d",
-  "#0e7490",
-  "#ca8a04",
-  "#9333ea",
-  "#dc2626",
-  "#059669",
-  "#475569"
-] as const;
+export const SCORE_CURVE_COLORS = ALGORITHM_CHART_COLORS;
 
 export const SCORE_CURVE_SHAPES = [
   "circle",
@@ -42,7 +22,7 @@ export type RobustnessCurveGroupMode = "algorithm" | "variant" | "combination";
 export type RobustnessCurveEncodingMode = "series" | "semantic";
 
 export function curveSeriesColor(index: number) {
-  return SCORE_CURVE_COLORS[index % SCORE_CURVE_COLORS.length];
+  return chartColorByIndex(index);
 }
 
 export function curveSeriesShape(index: number): ScoreCurveShape {
@@ -55,7 +35,7 @@ export function curveDomainIndex(domain: string[], key: string): number {
 }
 
 export function curveDomainColor(domain: string[], key: string): string {
-  return curveSeriesColor(curveDomainIndex(domain, key));
+  return chartColorForDomain(domain, key);
 }
 
 export function curveDomainShape(domain: string[], key: string): ScoreCurveShape {

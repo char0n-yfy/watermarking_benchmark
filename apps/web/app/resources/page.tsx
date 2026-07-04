@@ -21,6 +21,12 @@ import {
   attacks as fallbackAttacks,
   datasets as fallbackDatasets
 } from "@/lib/mock-data";
+import {
+  ATTACK_RESOURCE_DISPLAY_NAMES as ATTACK_DISPLAY_NAMES,
+  ATTACK_RESOURCE_METHOD_ORDER as ATTACK_METHOD_ORDER,
+  VIEWPOINT_MOTION_LABELS,
+  VIEWPOINT_MOTION_ORDER
+} from "@/lib/attack-resource-taxonomy";
 import { buildDatasetReference, getAttackReference, getWatermarkReference, referenceOverviewText } from "@/lib/resource-references";
 import { resolveWatermarkDisplayName, watermarkMethodSubtitle } from "@/lib/watermark-display";
 import type { AlgorithmVersion, AttackPreset, DatasetCatalogItem, DatasetDownloadJob, DatasetDownloadMode, DatasetVersion, ResourceStatus, WeightDownloadJob } from "@/lib/types";
@@ -86,7 +92,6 @@ interface AttackResourceDetail {
 
 const DEFAULT_RESOURCE_PAGE_SIZE = 8;
 const HIDDEN_RESOURCE_ATTACK_METHODS = new Set(["identity"]);
-const VIEWPOINT_MOTION_ORDER = ["swipe", "shake", "rotate", "rotate_forward"] as const;
 const VIEWPOINT_MAX_DISPARITY_LEVELS = [0.01, 0.02, 0.1] as const;
 const REGENERATION_UNIT_METHODS = ["2x_regen", "4x_regen", "regen_diffusion", "noise_to_image"] as const;
 const REGENERATION_VAE_METHOD = "regen_vae";
@@ -139,42 +144,6 @@ const ATTACK_CATEGORY_ORDER: Record<string, number> = {
   regeneration_attacks: 40,
   consumer_enhancement_workflow_attacks: 50
 };
-const ATTACK_METHOD_ORDER: Record<string, number> = {
-  brightness: 10,
-  contrast: 11,
-  gaussian_blur: 12,
-  gaussian_noise: 13,
-  jpeg: 14,
-  resize: 15,
-  resized_crop: 16,
-  rotation: 17,
-  erasing: 18,
-  screen_shoot: 20,
-  print_camera: 21,
-  combined_physical: 22,
-  "2x_regen": 40,
-  "4x_regen": 41,
-  regen_diffusion: 42,
-  noise_to_image: 43,
-  regen_vae: 44,
-  image_to_vedio: 45,
-  cew_e1: 50,
-  cew_e2: 51,
-  cew_e3: 52,
-  cew_e4: 53,
-  cew_c1: 54,
-  cew_c2: 55,
-  cew_c3: 56,
-  cew_c4: 57,
-  cew_d1: 58,
-  cew_d2: 59,
-  cew_d3: 60,
-  cew_d4: 61,
-  cew_d5: 62,
-  cew_s1: 63,
-  cew_s2: 64,
-  cew_s3: 65
-};
 const WATERMARK_METHOD_ORDER: Record<string, number> = {
   "invisible-watermark-dwtdct": 10,
   "invisible-watermark-dwtdctsvd": 11,
@@ -196,49 +165,7 @@ const WATERMARK_METHOD_ORDER: Record<string, number> = {
   chunkyseal: 62,
   vine: 70
 };
-const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
-  brightness: { en: "Brightness", zh: "亮度调整" },
-  contrast: { en: "Contrast", zh: "对比度调整" },
-  gaussian_blur: { en: "Gaussian Blur", zh: "高斯模糊" },
-  gaussian_noise: { en: "Gaussian Noise", zh: "高斯噪声" },
-  jpeg: { en: "JPEG Compression", zh: "JPEG 压缩" },
-  resize: { en: "Resize", zh: "缩放" },
-  resized_crop: { en: "Resized Crop", zh: "缩放裁剪" },
-  rotation: { en: "Rotation", zh: "旋转" },
-  erasing: { en: "Random Erasing", zh: "区域擦除" },
-  screen_shoot: { en: "PIMoG-style Screen-Camera", zh: "屏幕-拍摄信道" },
-  print_camera: { en: "CamMark-style Print-Camera", zh: "打印-拍摄信道" },
-  combined_physical: { en: "Combined Physical Channel", zh: "组合物理信道" },
-  "2x_regen": { en: "2-pass Diffusion Regeneration", zh: "2轮扩散再生成" },
-  "4x_regen": { en: "4-pass Diffusion Regeneration", zh: "4轮扩散再生成" },
-  regen_diffusion: { en: "WAVES Diffusion Regeneration", zh: "扩散再生成" },
-  noise_to_image: { en: "CtrlRegen Noise-to-Image", zh: "噪声到图像再生成" },
-  regen_vae: { en: "CompressAI VAE Reconstruction", zh: "VAE 再生成" },
-  image_to_vedio: { en: "NFPA Image-to-Video", zh: "图像到视频再生成" },
-  cew_e1: { en: "Auto-Tone", zh: "自动色调" },
-  cew_e2: { en: "Warm-Vivid", zh: "暖色鲜艳" },
-  cew_e3: { en: "Film-Faded", zh: "胶片褪色" },
-  cew_e4: { en: "Local-Clarity HDR", zh: "局部清晰 HDR" },
-  cew_c1: { en: "Basic Auto-Fix SR", zh: "自动修复+超分" },
-  cew_c2: { en: "Color Retouch SR", zh: "色彩修饰+超分" },
-  cew_c3: { en: "Detail Enhance SR", zh: "细节增强+超分" },
-  cew_c4: { en: "Full Enhancement Chain", zh: "完整增强链" },
-  cew_d1: { en: "Zero-DCE++ Auto-Light", zh: "自动补光" },
-  cew_d2: { en: "DeepWB Auto-WhiteBalance", zh: "自动白平衡" },
-  cew_d3: { en: "Image-Adaptive 3D LUT", zh: "自适应 AI 色彩" },
-  cew_d4: { en: "Retinexformer Detail Low-Light Enhance", zh: "低光细节增强" },
-  cew_d5: { en: "NAFNet/Restormer AI-Denoise", zh: "AI 去噪" },
-  cew_s1: { en: "Real-ESRGAN", zh: "Real-ESRGAN" },
-  cew_s2: { en: "SwinIR", zh: "SwinIR" },
-  cew_s3: { en: "BSRGAN", zh: "BSRGAN" }
-};
 const VIEWPOINT_METHOD_PATTERN = /^3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)$/;
-const VIEWPOINT_MOTION_LABELS: Record<(typeof VIEWPOINT_MOTION_ORDER)[number], { en: string; zh: string }> = {
-  swipe: { en: "Swipe", zh: "横向扫动" },
-  shake: { en: "Shake", zh: "抖动" },
-  rotate: { en: "Rotate", zh: "环绕旋转" },
-  rotate_forward: { en: "Rotate Forward", zh: "前向环绕" }
-};
 const DISTORTION_STRENGTH_MAPPINGS: Record<string, { param: string; zero: string; one: string }> = {
   brightness: { param: "factor", zero: "1.0", one: "2.0" },
   contrast: { param: "factor", zero: "1.0", one: "2.0" },
@@ -2064,6 +1991,9 @@ function attackMethodControlSummary(
 ) {
   if (category === "3d_viewpoint_rerendering") {
     return language === "zh" ? `${detail.presetCount} 个底层 preset` : `${detail.presetCount} execution presets`;
+  }
+  if (method === "regen_diffusion") {
+    return language === "zh" ? `${detail.presetCount} 个扩散清洗 preset` : `${detail.presetCount} diffusion presets`;
   }
   if (method === REGENERATION_VAE_METHOD) {
     return language === "zh" ? "VAE 权重类型 + quality" : "VAE model + quality";

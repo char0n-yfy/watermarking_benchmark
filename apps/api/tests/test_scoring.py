@@ -16,6 +16,7 @@ from app.services.scoring import (
     PROTOCOL_ID,
     aggregate_benchmark_score,
     attack_category,
+    attack_resource_category,
     build_curve_points,
     compute_image_quality_pairs_with_profile,
     compute_quality_summary,
@@ -36,6 +37,17 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(attack_category("combined_physical", "combined_physical_strong"), "physical-combined")
         self.assertEqual(attack_category("cp_resize_export"), "content-preserving-workflow")
         self.assertEqual(attack_category("cew_restore"), "consumer-enhancement-workflow")
+
+    def test_resource_attack_categories_match_overview_taxonomy(self) -> None:
+        self.assertEqual(attack_resource_category("jpeg"), "distortion_attacks")
+        self.assertEqual(attack_resource_category("screen_shoot"), "physical_channel_attacks")
+        self.assertEqual(
+            attack_resource_category("3d_viewpoint_rerendering_rotate_point"),
+            "3d_viewpoint_rerendering",
+        )
+        self.assertEqual(attack_resource_category("regen_vae"), "regeneration_attacks")
+        self.assertEqual(attack_resource_category("cew_restore"), "consumer_enhancement_workflow_attacks")
+        self.assertIsNone(attack_resource_category("identity"))
 
     def test_score_cell_uses_negative_quantile_for_low_fpr_threshold(self) -> None:
         scoring = score_cell(
@@ -85,7 +97,8 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(score["status"], "provisional")
         self.assertFalse(score["officialEligible"])
         self.assertAlmostEqual(score["wrs"], 80.0)
-        self.assertIn("regeneration", score["coverage"]["missingCategories"])
+        self.assertEqual(score["coverage"]["requiredCategoryCount"], 5)
+        self.assertIn("regeneration_attacks", score["coverage"]["missingCategories"])
 
     def test_score_cell_from_records_accepts_bit_strings(self) -> None:
         metrics = {"psnr": 35.0, "ssim": 0.92, "msSsim": 0.93, "nmi": 0.96}

@@ -224,7 +224,7 @@ ATTACK_PARAM_BY_METHOD = {
     "screen_shoot": "strength",
 }
 
-PHYSICAL_CHANNEL_METHODS = {"screen_shoot", "print_camera", "combined_physical"}
+DIFFUSION_REGENERATION_DISPLAY_METHODS = {"regen_diffusion", "2x_regen", "4x_regen"}
 VIEWPOINT_RERENDERING_METHOD_PATTERN = re.compile(
     r"3d_viewpoint_rerendering_(swipe|shake|rotate|rotate_forward)_(point|ahead)"
 )
@@ -288,7 +288,15 @@ def _viewpoint_resource_metadata(method: str) -> dict[str, Any]:
     }
 
 
+def _regeneration_resource_metadata(method: str) -> dict[str, Any]:
+    if method in DIFFUSION_REGENERATION_DISPLAY_METHODS:
+        return {"displayMethod": "regen_diffusion"}
+    return {}
+
+
 def _attack_resource_method(method: str) -> str:
+    if method in DIFFUSION_REGENERATION_DISPLAY_METHODS:
+        return "regen_diffusion"
     metadata = _viewpoint_resource_metadata(method)
     return str(metadata.get("displayMethod") or method)
 
@@ -393,7 +401,7 @@ def _base_attack_preset(method: str, cls: type[Any]) -> dict[str, Any]:
         else ATTACK_STRENGTH_SWEEPS.get(method, [0.5] if strength_param else [0.0])
     )
     category = _attack_category(method, cls)
-    resource_metadata = _viewpoint_resource_metadata(method)
+    resource_metadata = {**_viewpoint_resource_metadata(method), **_regeneration_resource_metadata(method)}
     display_method = _attack_resource_method(method)
     params = {"save_intermediates": False} if _is_viewpoint_rerendering_variant(method) else {}
     return {

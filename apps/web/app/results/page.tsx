@@ -10,7 +10,6 @@ import {
   Filter,
   Gauge,
   Info,
-  Layers3,
   PlayCircle,
   RefreshCw,
   Search,
@@ -26,6 +25,12 @@ import {
   curveDomainColor,
   curveDomainShape
 } from "@/components/RobustnessCurve";
+import { chartBarFill } from "@/lib/chart-colors";
+import {
+  buildMainOverviewRadarSeries,
+  buildMainOverviewRadarTemplate,
+  buildOverviewDetailRadars
+} from "@/lib/overview-radar";
 import { fetchAlgorithms, fetchAttacks, fetchRunResults, fetchRunScore, fetchRuns } from "@/lib/api";
 import { formatMetric, rankAggregates, statusBadgeClass } from "@/lib/insights";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
@@ -44,7 +49,15 @@ import type {
 } from "@/lib/types";
 
 type ResultsTab = "overview" | "attack" | "quality" | "debug";
-type RankingMetric = "waves" | "robustness" | "fidelity" | "complexity";
+type OverviewEvaluationMetric = "robustness" | "complexity" | "fidelity" | "composite";
+
+const OVERVIEW_EVALUATION_METRICS: OverviewEvaluationMetric[] = ["robustness", "complexity", "fidelity", "composite"];
+const OVERVIEW_COMPOSITE_WEIGHTS = {
+  robustness: 0.5,
+  complexity: 0.2,
+  fidelity: 0.3
+} as const;
+
 type QualitySelectorKey = "dataset" | "algorithm" | "attack";
 type StatusFilter = RunStatus | "all";
 type StringArraySetter = (value: string[] | ((current: string[]) => string[])) => void;
@@ -140,7 +153,7 @@ export default function ResultsPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
-  const [rankingMetric, setRankingMetric] = useState<RankingMetric>("waves");
+  const [overviewEvaluationMetric, setOverviewEvaluationMetric] = useState<OverviewEvaluationMetric>("composite");
   const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<string[]>([]);
   const [qualityAttackFilter, setQualityAttackFilter] = useState("all");
   const [qualityDatasetIds, setQualityDatasetIds] = useState<string[]>([]);
@@ -407,19 +420,37 @@ export default function ResultsPage() {
     [debugAttack, debugSearch, debugStatus, failedOnly, results, selectedSet]
   );
 
-  const radarCategories = useMemo(
-    () => buildRadarCategories(selectedScoreRows, score, language, selectedScoreRows),
-    [language, score, selectedScoreRows]
+  const overviewMainRadarCategories = useMemo(
+    () => buildMainOverviewRadarTemplate(language),
+    [language]
   );
-  const radarSeries = useMemo(
+  const overviewMainRadarSeries = useMemo(
     () =>
-      selectedScoreRows.map((row) => ({
-        id: row.algorithmId,
-        label: displayAlgorithm(row.algorithmId, resourceAlgorithmNames),
-        categories: buildRadarCategories([row], score, language, selectedScoreRows)
-      })),
-    [language, resourceAlgorithmNames, score, selectedScoreRows]
+      buildMainOverviewRadarSeries(
+        selectedScoreRows,
+        scoreRows,
+        score?.attackLeaderboard ?? [],
+        overviewMainRadarCategories,
+        algorithmSimplicityScore,
+        Object.fromEntries(
+          selectedScoreRows.map((row) => [row.algorithmId, displayAlgorithm(row.algorithmId, resourceAlgorithmNames)])
+        )
+      ),
+    [overviewMainRadarCategories, resourceAlgorithmNames, score?.attackLeaderboard, scoreRows, selectedScoreRows]
   );
+  const overviewDetailRadars = useMemo(
+    () =>
+      buildOverviewDetailRadars(
+        selectedScoreRows,
+        score?.attackLeaderboard ?? [],
+        Object.fromEntries(
+          selectedScoreRows.map((row) => [row.algorithmId, displayAlgorithm(row.algorithmId, resourceAlgorithmNames)])
+        ),
+        language
+      ),
+    [language, resourceAlgorithmNames, score?.attackLeaderboard, selectedScoreRows]
+  );
+
   const emptyCopy =
     language === "zh"
       ? {
@@ -565,7 +596,7 @@ export default function ResultsPage() {
         ))}
       </section>
 
-      {activeTab !== "debug" && activeTab !== "quality" ? (
+      {activeTab !== "debug" && activeTab !== "quality" && activeTab !== "overview" ? (
         <AlgorithmSelector
           algorithmIds={algorithmIds}
           selectedAlgorithmIds={selectedAlgorithmIds}
@@ -574,18 +605,25 @@ export default function ResultsPage() {
         />
       ) : null}
 
-      {activeInsight && activeTab !== "quality" ? <InsightStrip insight={activeInsight} /> : null}
+      {activeInsight && activeTab !== "quality" && activeTab !== "overview" ? <InsightStrip insight={activeInsight} /> : null}
 
       {activeTab === "overview" ? (
         <OverviewTab
+          algorithmIds={algorithmIds}
+          allScoreRows={scoreRows}
           legacyRows={selectedLegacyRows}
-          radarCategories={radarCategories}
-          radarSeries={radarSeries}
-          rankingMetric={rankingMetric}
+          qualityAvailableCurvePoints={qualityAvailableCurvePoints}
+          overviewEvaluationMetric={overviewEvaluationMetric}
+          resourceAlgorithmNames={resourceAlgorithmNames}
+          overviewDetailRadars={overviewDetailRadars}
+          overviewMainRadarCategories={overviewMainRadarCategories}
+          overviewMainRadarSeries={overviewMainRadarSeries}
           results={results}
           score={score}
           scoreRows={selectedScoreRows}
-          setRankingMetric={setRankingMetric}
+          selectedAlgorithmIds={selectedAlgorithmIds}
+          setOverviewEvaluationMetric={setOverviewEvaluationMetric}
+          setSelectedAlgorithmIds={setSelectedAlgorithmIds}
         />
       ) : null}
 
@@ -663,36 +701,44 @@ export default function ResultsPage() {
 
   function InteractiveScoreBars({
     metric,
+    metrics = OVERVIEW_EVALUATION_METRICS,
     rows,
-    setMetric
+    setMetric,
+    title,
+    algorithmColorDomain
   }: {
-    metric: RankingMetric;
+    metric: OverviewEvaluationMetric;
+    metrics?: OverviewEvaluationMetric[];
     rows: BenchmarkLeaderboardRow[];
-    setMetric: (value: RankingMetric) => void;
+    setMetric: (value: OverviewEvaluationMetric) => void;
+    title?: string;
+    algorithmColorDomain: string[];
   }) {
     if (rows.length === 0) {
       return null;
     }
     const rankedRows = rankRowsByMetric(rows, metric);
     const maxScore = Math.max(...rankedRows.map((row) => rankingMetricScore(row, metric, rows)), 1);
-    const metricLabels = rankingMetricLabels(language);
+    const metricLabels = overviewEvaluationLabels(language);
     return (
-      <section className="panel interactive-bars-panel">
+      <section className="panel interactive-bars-panel overview-ladder-panel">
         <div className="panel-header">
-          <h2>{uiText("水印算法排名", "Watermark ranking")}</h2>
+          <h2>{title ?? uiText("算法评估排名", "Algorithm evaluation ranking")}</h2>
           <BarChart3 size={16} />
         </div>
-        <div className="ranking-mode-tabs">
-          {(Object.keys(metricLabels) as RankingMetric[]).map((key) => (
+        <div className="ranking-mode-tabs overview-evaluation-tabs">
+          {metrics.map((key) => (
             <button className={metric === key ? "active" : ""} key={key} onClick={() => setMetric(key)} type="button">
               {metricLabels[key]}
             </button>
           ))}
         </div>
+        <p className="overview-evaluation-note">{overviewEvaluationDescription(metric, language)}</p>
         <div className="panel-body interactive-bars">
           {rankedRows.map((row, index) => {
             const value = rankingMetricScore(row, metric, rows);
             const width = `${Math.max(3, (value / maxScore) * 100)}%`;
+            const barColor = curveDomainColor(algorithmColorDomain, row.algorithmId);
             return (
               <button
                 className="interactive-bar-row"
@@ -709,7 +755,7 @@ export default function ResultsPage() {
                 type="button"
               >
                 <span>{index + 1}. {displayAlgorithm(row.algorithmId, resourceAlgorithmNames)}</span>
-                <i style={{ width }} />
+                <i style={{ width, background: chartBarFill(barColor) }} />
                 <strong>{formatRankingValue(row, metric, rows)}</strong>
               </button>
             );
@@ -720,106 +766,183 @@ export default function ResultsPage() {
   }
 
   function OverviewTab({
+    algorithmIds,
+    allScoreRows,
     legacyRows,
-    radarCategories,
-    radarSeries,
-    rankingMetric,
+    overviewEvaluationMetric,
+    qualityAvailableCurvePoints,
+    resourceAlgorithmNames,
+    overviewDetailRadars,
+    overviewMainRadarCategories,
+    overviewMainRadarSeries,
     results,
     score,
     scoreRows,
-    setRankingMetric
+    selectedAlgorithmIds,
+    setOverviewEvaluationMetric,
+    setSelectedAlgorithmIds
   }: {
+    algorithmIds: string[];
+    allScoreRows: BenchmarkLeaderboardRow[];
     legacyRows: ReturnType<typeof rankAggregates>;
-    radarCategories: BenchmarkCategoryScore[];
-    radarSeries: Array<{ id: string; label: string; categories: BenchmarkCategoryScore[] }>;
-    rankingMetric: RankingMetric;
+    overviewEvaluationMetric: OverviewEvaluationMetric;
+    qualityAvailableCurvePoints: BenchmarkCurvePoint[];
+    resourceAlgorithmNames: Record<string, string>;
+    overviewDetailRadars: ReturnType<typeof buildOverviewDetailRadars>;
+    overviewMainRadarCategories: ReturnType<typeof buildMainOverviewRadarTemplate>;
+    overviewMainRadarSeries: ReturnType<typeof buildMainOverviewRadarSeries>;
     results: RunResults | null;
     score: BenchmarkScore | null;
     scoreRows: BenchmarkLeaderboardRow[];
-    setRankingMetric: (value: RankingMetric) => void;
+    selectedAlgorithmIds: string[];
+    setOverviewEvaluationMetric: (value: OverviewEvaluationMetric) => void;
+    setSelectedAlgorithmIds: (value: string[] | ((current: string[]) => string[])) => void;
   }) {
-    return (
-      <>
-        <InteractiveScoreBars metric={rankingMetric} rows={scoreRows} setMetric={setRankingMetric} />
+    const algorithmOptions =
+      qualityAvailableCurvePoints.length > 0
+        ? buildQualityAlgorithmOptions(qualityAvailableCurvePoints, resourceAlgorithmNames)
+        : algorithmIds.map((algorithmId) => {
+            const row = allScoreRows.find((item) => item.algorithmId === algorithmId);
+            return {
+              id: algorithmId,
+              label: displayAlgorithm(algorithmId, resourceAlgorithmNames),
+              meta: `${algorithmId} / ${row?.cellCount ?? 0} ${uiText("个单元", "cells")}`,
+              count: row?.cellCount ?? 0
+            };
+          });
 
-        <section className="results-grid">
-          <div className="panel">
+    const algorithmColorDomain = useMemo(
+      () => [...new Set(scoreRows.map((row) => row.algorithmId))].sort((left, right) => left.localeCompare(right)),
+      [scoreRows]
+    );
+
+    return (
+      <div className="overview-stack">
+        <section className="panel quality-selector-panel overview-algorithm-panel">
+          <div className="panel-header">
+            <h2>{uiText("水印算法评估", "Watermark algorithm evaluation")}</h2>
+            <Filter size={16} />
+          </div>
+          <div className="panel-body">
+            <div className="quality-selector-grid overview-algorithm-grid">
+              <div className="quality-selector-trigger active overview-algorithm-trigger">
+                <span>{uiText("水印算法", "Watermark algorithms")}</span>
+                <strong>
+                  {selectedAlgorithmIds.length}/{algorithmOptions.length}
+                </strong>
+              </div>
+            </div>
+            <div className="quality-selector-drawer overview-algorithm-drawer">
+              <div className="quality-selector-actions">
+                <button onClick={() => setSelectedAlgorithmIds(algorithmOptions.map((item) => item.id))} type="button">
+                  {uiText("全选", "All")}
+                </button>
+                <button onClick={() => setSelectedAlgorithmIds([])} type="button">
+                  {uiText("清空", "Clear")}
+                </button>
+              </div>
+              <div className="quality-selector-list overview-algorithm-list">
+                {algorithmOptions.map((item) => (
+                  <label className="quality-selector-option" key={item.id}>
+                    <input
+                      checked={selectedAlgorithmIds.includes(item.id)}
+                      onChange={() =>
+                        setSelectedAlgorithmIds((current) =>
+                          current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{item.label}</strong>
+                      <em>{item.meta}</em>
+                    </span>
+                    <b>{item.count}</b>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="quality-selection-summary">
+              <span>
+                {selectedAlgorithmIds.length} {uiText("个已选算法", "algorithms selected")} / {scoreRows.length}{" "}
+                {uiText("个参与鲁棒性对比", "in robustness comparison")}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel overview-radar-panel">
+          <div className="panel-header">
+            <h2>{uiText("算法综合雷达图", "Algorithm overview radar")}</h2>
+            <BarChart3 size={16} />
+          </div>
+          <div className="panel-body overview-radar-body">
+            <BenchmarkRadar
+              categories={overviewMainRadarCategories}
+              emptyText={t.common.noData}
+              onSelectCategory={(category) =>
+                setActiveInsight({
+                  kind: "category",
+                  key: category.key,
+                  title: category.label,
+                  body: `${uiText("得分", "Score")} ${formatMetric(category.score)}`,
+                  meta: category.key
+                })
+              }
+              selectedCategoryKey={activeInsight?.kind === "category" ? activeInsight.key : undefined}
+              series={overviewMainRadarSeries}
+              colorDomain={algorithmColorDomain}
+              variant="hero"
+            />
+          </div>
+        </section>
+
+        <section className="overview-radar-detail-grid">
+          {overviewDetailRadars.map((detail) => (
+            <div className="panel overview-radar-detail-panel" key={detail.categoryKey}>
+              <div className="panel-header">
+                <div className="overview-radar-detail-heading">
+                  <h2>{detail.title}</h2>
+                  <p>{detail.subtitle}</p>
+                </div>
+                <BarChart3 size={16} />
+              </div>
+              <div className="panel-body overview-radar-detail-body">
+                {detail.categories.length > 0 ? (
+                  <BenchmarkRadar
+                    categories={detail.categories}
+                    colorDomain={algorithmColorDomain}
+                    emptyText={t.common.noData}
+                    series={detail.series}
+                  />
+                ) : (
+                  <div className="empty compact-empty">{t.common.noData}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <InteractiveScoreBars
+          algorithmColorDomain={algorithmColorDomain}
+          metric={overviewEvaluationMetric}
+          rows={scoreRows}
+          setMetric={setOverviewEvaluationMetric}
+          title={uiText("算法评估排名", "Algorithm evaluation ranking")}
+        />
+
+        {scoreRows.length === 0 && results ? (
+          <section className="panel">
             <div className="panel-header">
               <h2>{t.results.benchmarkScore}</h2>
               <Trophy size={16} />
             </div>
             <div className="panel-body table-scroll">
-              {scoreRows.length > 0 ? (
-                <ScoreRowsTable rows={scoreRows} />
-              ) : results ? (
-                <LegacyRowsTable rows={legacyRows} />
-              ) : (
-                <div className="empty compact-empty">{t.common.noData}</div>
-              )}
+              <LegacyRowsTable rows={legacyRows} />
             </div>
-          </div>
-
-          <div className="panel quality-combo-panel">
-            <div className="panel-header">
-              <h2>{t.results.radar}</h2>
-              <BarChart3 size={16} />
-            </div>
-            <div className="panel-body">
-              <BenchmarkRadar
-                categories={radarCategories}
-                emptyText={t.console.needMultipleStrengths}
-                onSelectCategory={(category) =>
-                  setActiveInsight({
-                    kind: "category",
-                    key: category.key,
-                    title: category.label,
-                    body: `Score ${formatMetric(category.score)} across ${category.cellCount} cells`,
-                    meta: `Mean NQD ${formatMetric(category.meanNqd)}`
-                  })
-                }
-                selectedCategoryKey={activeInsight?.kind === "category" ? activeInsight.key : undefined}
-                series={radarSeries}
-              />
-            </div>
-          </div>
-        </section>
-
-        <section className="results-grid">
-          <div className="panel">
-            <div className="panel-header">
-              <h2>{t.results.scoreBreakdown}</h2>
-              <Info size={16} />
-            </div>
-            <div className="panel-body score-breakdown-grid">
-              {(score?.categoryScores ?? []).map((category) => (
-                <button
-                  className={category.covered ? "score-breakdown-card covered interactive" : "score-breakdown-card interactive"}
-                  key={category.key}
-                  onClick={() =>
-                    setActiveInsight({
-                      kind: "category",
-                      key: category.key,
-                      title: category.label,
-                      body: `Score ${formatMetric(category.score)} across ${category.cellCount} cells`,
-                      meta: `Mean NQD ${formatMetric(category.meanNqd)}`
-                    })
-                  }
-                  type="button"
-                >
-                  <span>{category.label}</span>
-                  <strong>{category.score == null ? "n/a" : category.score.toFixed(2)}</strong>
-                  <small>
-                    {category.cellCount} {t.runs.cells} / NQD {formatMetric(category.meanNqd)}
-                  </small>
-                </button>
-              ))}
-              {!score ? <div className="empty compact-empty">{t.common.noData}</div> : null}
-            </div>
-          </div>
-
-          <CoverageMatrix rows={scoreRows} score={score} />
-        </section>
-      </>
+          </section>
+        ) : null}
+      </div>
     );
   }
 
@@ -1720,49 +1843,6 @@ export default function ResultsPage() {
     );
   }
 
-  function CoverageMatrix({ rows, score }: { rows: BenchmarkLeaderboardRow[]; score: BenchmarkScore | null }) {
-    const categories = score?.categoryScores ?? [];
-    return (
-      <div className="panel">
-        <div className="panel-header">
-          <h2>{t.results.coverageMatrix}</h2>
-          <Layers3 size={16} />
-        </div>
-        <div className="panel-body coverage-matrix-wrap">
-          {categories.length > 0 && rows.length > 0 ? (
-            <div className="coverage-matrix">
-              <div className="coverage-matrix-row header">
-                <span>{t.results.category}</span>
-                {rows.map((row) => (
-                  <strong key={row.algorithmId}>{row.algorithmId}</strong>
-                ))}
-              </div>
-              {categories.map((category) => (
-                <div className="coverage-matrix-row" key={category.key}>
-                  <span>{category.label}</span>
-                  {rows.map((row) => {
-                    const algorithmCategory = row.categoryScores.find((item) => item.key === category.key);
-                    return (
-                      <i
-                        className={algorithmCategory?.covered ? "coverage-cell covered" : "coverage-cell"}
-                        key={`${row.algorithmId}-${category.key}`}
-                        title={algorithmCategory?.score == null ? "n/a" : algorithmCategory.score.toFixed(2)}
-                      >
-                        {algorithmCategory?.covered ? "✓" : "—"}
-                      </i>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty compact-empty">{t.common.noData}</div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   function AlgorithmSelector({
     algorithmIds,
     selectedAlgorithmIds,
@@ -2193,16 +2273,37 @@ function formatCount(value: number | null | undefined): string {
   return Math.round(value).toLocaleString();
 }
 
-function rankingMetricLabels(language: string): Record<RankingMetric, string> {
+function overviewEvaluationLabels(language: string): Record<OverviewEvaluationMetric, string> {
   return {
-    waves: language === "zh" ? "WAVES 评分" : "WAVES score",
     robustness: language === "zh" ? "鲁棒性" : "Robustness",
+    complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity",
     fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
-    complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity"
+    composite: language === "zh" ? "综合评分" : "Composite score"
   };
 }
 
-function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric): BenchmarkLeaderboardRow[] {
+function overviewEvaluationDescription(metric: OverviewEvaluationMetric, language: string): string {
+  if (metric === "robustness") {
+    return language === "zh"
+      ? "按已覆盖攻击类的平均鲁棒得分排序，分数越高表示抗攻击能力越强。"
+      : "Ranked by mean robustness over covered attack families; higher is more robust.";
+  }
+  if (metric === "complexity") {
+    return language === "zh"
+      ? "按相对运行效率排序，分数越高表示算法越轻量、运行越快。"
+      : "Ranked by relative runtime efficiency; higher means lighter and faster.";
+  }
+  if (metric === "fidelity") {
+    return language === "zh"
+      ? "按无攻击条件下的图像保真度排序，分数越高表示水印引入的失真越小。"
+      : "Ranked by clean fidelity; higher means less visible distortion.";
+  }
+  return language === "zh"
+    ? "综合评分 = 50% 鲁棒性 + 30% 自身保真度 + 20% 算法复杂度（效率分，越高越好）。缺失维度会按可用项重新归一化。"
+    : "Composite = 50% robustness + 30% fidelity + 20% complexity efficiency (higher is better). Missing dimensions are renormalized.";
+}
+
+function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: OverviewEvaluationMetric): BenchmarkLeaderboardRow[] {
   return [...rows].sort((left, right) => {
     const leftScore = rankingMetricScore(left, metric, rows);
     const rightScore = rankingMetricScore(right, metric, rows);
@@ -2210,23 +2311,20 @@ function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric
   });
 }
 
-function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): number {
-  if (metric === "waves") {
-    return finiteOrNull(row.wrs) ?? 0;
-  }
+function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: OverviewEvaluationMetric, rows: BenchmarkLeaderboardRow[]): number {
   if (metric === "robustness") {
     return (robustnessScore(row) ?? 0) * 100;
   }
   if (metric === "fidelity") {
     return (finiteOrNull(row.cleanFidelity) ?? 0) * 100;
   }
-  return (algorithmSimplicityScore(row, rows) ?? 0) * 100;
+  if (metric === "complexity") {
+    return (algorithmSimplicityScore(row, rows) ?? 0) * 100;
+  }
+  return (overviewCompositeScore(row, rows) ?? 0) * 100;
 }
 
-function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): string {
-  if (metric === "waves") {
-    return row.wrs == null ? "n/a" : row.wrs.toFixed(1);
-  }
+function formatRankingValue(row: BenchmarkLeaderboardRow, metric: OverviewEvaluationMetric, rows: BenchmarkLeaderboardRow[]): string {
   if (metric === "robustness") {
     const value = robustnessScore(row);
     return value == null ? "n/a" : (value * 100).toFixed(1);
@@ -2234,27 +2332,62 @@ function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric,
   if (metric === "fidelity") {
     return formatMetric(row.cleanFidelity);
   }
-  const score = algorithmSimplicityScore(row, rows);
+  if (metric === "complexity") {
+    const score = algorithmSimplicityScore(row, rows);
+    return score == null ? "n/a" : (score * 100).toFixed(1);
+  }
+  const score = overviewCompositeScore(row, rows);
   return score == null ? "n/a" : (score * 100).toFixed(1);
 }
 
 function rankingMetricMeta(
   row: BenchmarkLeaderboardRow,
-  metric: RankingMetric,
+  metric: OverviewEvaluationMetric,
   rows: BenchmarkLeaderboardRow[],
   language: string
 ): string {
   if (metric === "complexity") {
     const runtime = row.runtimeMs == null ? "n/a" : `${row.runtimeMs.toFixed(1)} ms`;
-    return language === "zh" ? `运行时间 ${runtime}，越快复杂度评分越高` : `runtime ${runtime}; faster means higher score`;
+    return language === "zh" ? `运行时间 ${runtime}` : `runtime ${runtime}`;
   }
   if (metric === "fidelity") {
     return `Clean ${formatMetric(row.cleanFidelity)} / NQD ${formatMetric(row.avgNqd)}`;
   }
   if (metric === "robustness") {
-    return language === "zh" ? "按攻击类平均鲁棒得分排序" : "Mean robustness over attack families";
+    const value = robustnessScore(row);
+    return language === "zh"
+      ? `鲁棒性 ${value == null ? "n/a" : (value * 100).toFixed(1)} / WRS ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)}`
+      : `robustness ${value == null ? "n/a" : (value * 100).toFixed(1)} / WRS ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)}`;
   }
-  return `WRS ${row.wrs == null ? "n/a" : row.wrs.toFixed(1)} / ${row.protocolStatus}`;
+  const robustness = robustnessScore(row);
+  const fidelity = finiteOrNull(row.cleanFidelity);
+  const complexity = algorithmSimplicityScore(row, rows);
+  const composite = overviewCompositeScore(row, rows);
+  if (language === "zh") {
+    return `鲁棒 ${robustness == null ? "n/a" : (robustness * 100).toFixed(1)} / 保真 ${fidelity == null ? "n/a" : (fidelity * 100).toFixed(1)} / 效率 ${complexity == null ? "n/a" : (complexity * 100).toFixed(1)} / 综合 ${composite == null ? "n/a" : (composite * 100).toFixed(1)}`;
+  }
+  return `robust ${robustness == null ? "n/a" : (robustness * 100).toFixed(1)} / fidelity ${fidelity == null ? "n/a" : (fidelity * 100).toFixed(1)} / efficiency ${complexity == null ? "n/a" : (complexity * 100).toFixed(1)} / composite ${composite == null ? "n/a" : (composite * 100).toFixed(1)}`;
+}
+
+function overviewCompositeScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
+  const components: Array<{ value: number; weight: number }> = [];
+  const robustness = robustnessScore(row);
+  if (robustness != null) {
+    components.push({ value: robustness, weight: OVERVIEW_COMPOSITE_WEIGHTS.robustness });
+  }
+  const fidelity = finiteOrNull(row.cleanFidelity);
+  if (fidelity != null) {
+    components.push({ value: fidelity, weight: OVERVIEW_COMPOSITE_WEIGHTS.fidelity });
+  }
+  const complexity = algorithmSimplicityScore(row, rows);
+  if (complexity != null) {
+    components.push({ value: complexity, weight: OVERVIEW_COMPOSITE_WEIGHTS.complexity });
+  }
+  if (components.length === 0) {
+    return null;
+  }
+  const weightSum = components.reduce((total, item) => total + item.weight, 0);
+  return components.reduce((total, item) => total + item.value * item.weight, 0) / weightSum;
 }
 
 function robustnessScore(row: BenchmarkLeaderboardRow): number | null {
@@ -2263,102 +2396,6 @@ function robustnessScore(row: BenchmarkLeaderboardRow): number | null {
       .filter((category) => category.covered)
       .map((category) => category.score)
   );
-}
-
-function buildRadarCategories(
-  rows: BenchmarkLeaderboardRow[],
-  score: BenchmarkScore | null,
-  language: string,
-  allRows: BenchmarkLeaderboardRow[]
-): BenchmarkCategoryScore[] {
-  const specs = radarAxisSpecs(language);
-  return specs.map((spec) => {
-    const values = rows.map((row) => radarAxisScore(row, spec.key, score, allRows));
-    const value = meanNumber(values);
-    return {
-      key: spec.key,
-      label: spec.label,
-      score: value,
-      meanNqd: meanNumber(rows.map((row) => row.avgNqd)),
-      cellCount: rows.reduce((total, row) => total + row.cellCount, 0),
-      covered: value != null
-    };
-  });
-}
-
-function radarAxisSpecs(language: string): Array<{ key: string; label: string }> {
-  if (language === "zh") {
-    return [
-      { key: "classic-distortion", label: "经典失真" },
-      { key: "physical-channel", label: "物理信道" },
-      { key: "viewpoint-3d", label: "3D 视角重渲染" },
-      { key: "regeneration", label: "再生成" },
-      { key: "consumer-enhancement", label: "消费级增强" },
-      { key: "clean-fidelity", label: "无攻击保真度" },
-      { key: "algorithm-complexity", label: "算法复杂度" }
-    ];
-  }
-  return [
-    { key: "classic-distortion", label: "Classic Distortion" },
-    { key: "physical-channel", label: "Physical Channel" },
-    { key: "viewpoint-3d", label: "3D Viewpoint" },
-    { key: "regeneration", label: "Regeneration" },
-    { key: "consumer-enhancement", label: "Consumer Enhancement" },
-    { key: "clean-fidelity", label: "Clean Fidelity" },
-    { key: "algorithm-complexity", label: "Algorithm Complexity" }
-  ];
-}
-
-function radarAxisScore(
-  row: BenchmarkLeaderboardRow,
-  axisKey: string,
-  score: BenchmarkScore | null,
-  allRows: BenchmarkLeaderboardRow[]
-): number | null {
-  if (axisKey === "classic-distortion") {
-    return categoryScore(row, ["distortion-single", "distortion-combination"]);
-  }
-  if (axisKey === "physical-channel") {
-    return categoryScore(row, ["physical-screen", "physical-print", "physical-combined"]);
-  }
-  if (axisKey === "viewpoint-3d") {
-    return curvePointScore(row, score, (point) => isViewpointAttack(point));
-  }
-  if (axisKey === "regeneration") {
-    return curvePointScore(row, score, (point) => point.attackCategory === "regeneration" && !isViewpointAttack(point)) ?? categoryScore(row, ["regeneration"]);
-  }
-  if (axisKey === "consumer-enhancement") {
-    return categoryScore(row, ["consumer-enhancement-workflow"]);
-  }
-  if (axisKey === "clean-fidelity") {
-    return finiteOrNull(row.cleanFidelity);
-  }
-  return algorithmSimplicityScore(row, allRows);
-}
-
-function categoryScore(row: BenchmarkLeaderboardRow, keys: string[]): number | null {
-  return meanNumber(
-    keys
-      .map((key) => row.categoryScores.find((category) => category.key === key)?.score)
-      .filter((value) => value != null)
-  );
-}
-
-function curvePointScore(
-  row: BenchmarkLeaderboardRow,
-  score: BenchmarkScore | null,
-  predicate: (point: BenchmarkCurvePoint) => boolean
-): number | null {
-  return meanNumber(
-    (score?.curvePoints ?? [])
-      .filter((point) => point.algorithmId === row.algorithmId && predicate(point))
-      .map((point) => point.yTprAtFpr)
-  );
-}
-
-function isViewpointAttack(point: BenchmarkCurvePoint): boolean {
-  const haystack = `${point.attackPresetId} ${point.attackMethod} ${point.attackCategory}`.toLowerCase();
-  return haystack.includes("3d") || haystack.includes("viewpoint") || haystack.includes("rerender");
 }
 
 function algorithmSimplicityScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {

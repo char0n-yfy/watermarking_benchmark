@@ -16,7 +16,7 @@ Import-DotEnvFile -Path (Join-Path $RootDir ".env") -OverwriteExisting | Out-Nul
 
 $VenvDir = if ($env:WM_BENCH_VENV) { $env:WM_BENCH_VENV } else { ".venv" }
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
-$RunsRoot = if ($env:WM_BENCH_RUNS_ROOT) { $env:WM_BENCH_RUNS_ROOT } else { Join-Path $RootDir "runs\local" }
+$RunsRoot = if ($env:WM_BENCH_RUNS_ROOT) { $env:WM_BENCH_RUNS_ROOT } else { Join-Path $RootDir "runs" }
 $LogDir = if ($env:WM_BENCH_LOG_DIR) { $env:WM_BENCH_LOG_DIR } else { Join-Path $RunsRoot "logs" }
 $PidDir = if ($env:WM_BENCH_PID_DIR) { $env:WM_BENCH_PID_DIR } else { Join-Path $RunsRoot "pids" }
 $DbPath = if ($env:WM_BENCH_DB_PATH) { $env:WM_BENCH_DB_PATH } else { Join-Path $RunsRoot "wmbench.sqlite" }

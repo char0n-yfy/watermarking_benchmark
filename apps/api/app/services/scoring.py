@@ -58,8 +58,21 @@ WRS_ATTACK_CATEGORIES = [
     AttackCategory("adversarial", "Adversarial", "Adversarial embedding or surrogate-detector attacks."),
 ]
 
+RESOURCE_ATTACK_CATEGORIES = [
+    AttackCategory("distortion_attacks", "Classic distortion", "Classic single-image distortion attacks."),
+    AttackCategory("physical_channel_attacks", "Physical channel", "Screen-shoot, print-camera, and combined physical attacks."),
+    AttackCategory("3d_viewpoint_rerendering", "3D viewpoint re-rendering", "3D viewpoint motion re-rendering attacks."),
+    AttackCategory("regeneration_attacks", "Regeneration", "Diffusion, VAE, noise-to-image, and image-to-video regeneration."),
+    AttackCategory(
+        "consumer_enhancement_workflow_attacks",
+        "Consumer enhancement",
+        "Consumer-grade enhancement workflow attacks.",
+    ),
+]
+
 WAVES_ATTACK_CATEGORIES = WRS_ATTACK_CATEGORIES
 WAVES_CATEGORY_KEYS = [category.key for category in WRS_ATTACK_CATEGORIES]
+RESOURCE_ATTACK_CATEGORY_KEYS = [category.key for category in RESOURCE_ATTACK_CATEGORIES]
 
 # The official WAVES paper calibrates quality metrics with corpus-level 10% and
 # 90% quantiles. These anchors make local smoke runs scoreable before the project
@@ -131,6 +144,58 @@ def attack_category(method: str, preset_id: str | None = None) -> str:
     if "combo" in token or "distcom" in token:
         return "distortion-combination"
     return "distortion-single"
+
+
+def attack_resource_category(method: str) -> str | None:
+    token = method.lower().replace("-", "_")
+    if not token or token == "identity":
+        return None
+    if token.startswith("3d_viewpoint_rerendering"):
+        return "3d_viewpoint_rerendering"
+    if token in {"screen_shoot", "print_camera", "combined_physical"}:
+        return "physical_channel_attacks"
+    if token.startswith("cew_"):
+        return "consumer_enhancement_workflow_attacks"
+    if (
+        token.startswith("regen_")
+        or token in {"2x_regen", "4x_regen", "noise_to_image", "image_to_vedio"}
+    ):
+        return "regeneration_attacks"
+    return "distortion_attacks"
+
+
+def _resource_coverage(scored_cells: list[JsonDict]) -> JsonDict:
+    covered_keys: list[str] = []
+    missing_keys: list[str] = []
+    for category in RESOURCE_ATTACK_CATEGORIES:
+        has_data = any(
+            attack_resource_category(str(cell.get("attackMethod") or "")) == category.key
+            and bool(cell.get("scoring", {}).get("practicalForWrs"))
+            for cell in scored_cells
+        )
+        if has_data:
+            covered_keys.append(category.key)
+        else:
+            missing_keys.append(category.key)
+
+    sample_counts = [
+        int(cell["scoring"].get("sampleCount") or 0)
+        for cell in scored_cells
+        if attack_resource_category(str(cell.get("attackMethod") or "")) in RESOURCE_ATTACK_CATEGORY_KEYS
+        and cell["scoring"].get("practicalForWrs")
+    ]
+    meets_sample_floor = bool(sample_counts) and min(sample_counts) >= OFFICIAL_MIN_SAMPLES
+
+    return {
+        "requiredCategories": RESOURCE_ATTACK_CATEGORY_KEYS,
+        "coveredCategories": covered_keys,
+        "missingCategories": missing_keys,
+        "coveredCategoryCount": len(covered_keys),
+        "requiredCategoryCount": len(RESOURCE_ATTACK_CATEGORIES),
+        "coverageRatio": len(covered_keys) / len(RESOURCE_ATTACK_CATEGORIES),
+        "minSampleCount": min(sample_counts) if sample_counts else 0,
+        "meetsSampleFloor": meets_sample_floor,
+    }
 
 
 def attack_param_strength(attack_strength: float, attack_params: Mapping[str, Any] | None = None) -> JsonDict:
@@ -353,14 +418,9 @@ def _aggregate_benchmark_core(scored_cells: list[JsonDict]) -> JsonDict:
         )
 
     covered = [item for item in category_scores if item["covered"]]
-    missing = [item["key"] for item in category_scores if not item["covered"]]
-    sample_counts = [
-        int(cell["scoring"].get("sampleCount") or 0)
-        for cell in scored_cells
-        if cell["scoring"].get("attackCategory") in WAVES_CATEGORY_KEYS
-    ]
-    meets_sample_floor = bool(sample_counts) and min(sample_counts) >= OFFICIAL_MIN_SAMPLES
-    official_eligible = len(missing) == 0 and meets_sample_floor
+    wrs_missing = [item["key"] for item in category_scores if not item["covered"]]
+    coverage = _resource_coverage(scored_cells)
+    official_eligible = len(coverage["missingCategories"]) == 0 and coverage["meetsSampleFloor"]
     wrs_values = [float(item["score"]) for item in covered if item["score"] is not None]
     wrs = None if not wrs_values else 100.0 * sum(wrs_values) / len(wrs_values)
 
@@ -377,16 +437,8 @@ def _aggregate_benchmark_core(scored_cells: list[JsonDict]) -> JsonDict:
         "performanceThresholds": list(PERFORMANCE_THRESHOLDS),
         "officialMinSamples": OFFICIAL_MIN_SAMPLES,
         "categoryScores": category_scores,
-        "coverage": {
-            "requiredCategories": WAVES_CATEGORY_KEYS,
-            "coveredCategories": [item["key"] for item in covered],
-            "missingCategories": missing,
-            "coveredCategoryCount": len(covered),
-            "requiredCategoryCount": len(WAVES_ATTACK_CATEGORIES),
-            "coverageRatio": len(covered) / len(WAVES_ATTACK_CATEGORIES),
-            "minSampleCount": min(sample_counts) if sample_counts else 0,
-            "meetsSampleFloor": meets_sample_floor,
-        },
+        "coverage": coverage,
+        "wrsMissingCategories": wrs_missing,
     }
 
 
