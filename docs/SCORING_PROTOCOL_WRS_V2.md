@@ -5,54 +5,49 @@ keeps a WAVES-style attack leaderboard for attack-specific diagnosis.
 
 ## Main Leaderboard
 
-WRS-v2 ranks watermarking algorithms by robustness under a physical-aware
-attack taxonomy. Each completed experiment cell contributes:
+WRS-v2 ranks watermarking algorithms by robustness under the same five-class
+attack taxonomy used on the Resources page. Each completed experiment cell
+contributes:
 
 - `TPR@FPR=0.001` as the detection performance value.
 - `NQD` as normalized quality degradation.
 - normalized attack strength in `[0, 1]`.
-- an attack family category.
+- a resource attack category.
 
-For each algorithm and each attack family, WRS-v2 computes the area under the
-performance curve over normalized attack strength. Cells are included only when
-they are practical for ranking:
+For each algorithm and each of the five categories, WRS-v2 computes the area
+under the performance curve over normalized attack strength. Cells are included
+only when they are practical for ranking:
 
-- the attack family is part of the WRS-v2 taxonomy;
+- the attack maps to one of the five resource categories;
 - `TPR@FPR` is available;
 - `NQD` is available and below the practical-quality threshold.
 
-The main `wrs` score is the mean of covered family AUC values scaled to 0-100.
-Runs remain `provisional` until every required family is covered and the sample
+The main `wrs` score is the mean of covered category AUC values scaled to 0-100.
+Runs remain `provisional` until every required category is covered and the sample
 floor is met.
 
 ## Attack Taxonomy
 
-The WRS-v2 attack families are:
+WRS-v2 and coverage both use these five resource categories:
 
-- `distortion-single`
-- `distortion-combination`
-- `content-preserving-workflow`
-- `consumer-enhancement-workflow`
-- `regeneration`
-- `physical-screen`
-- `physical-print`
-- `physical-combined`
-- `adversarial`
+- `distortion_attacks`
+- `physical_channel_attacks`
+- `3d_viewpoint_rerendering`
+- `regeneration_attacks`
+- `consumer_enhancement_workflow_attacks`
 
-The physical families are intentionally separate. This keeps screen-shoot,
-print-camera, and two-hop combined physical failure modes visible instead of
-hiding them inside one averaged physical bucket.
+Legacy scored cells that still store the older nine-family labels are mapped into
+these five buckets when WRS is recomputed.
 
 ## Method Profiles
 
 The leaderboard includes secondary fields for interpretation:
 
-- `physicalScore`: mean of `physical-screen`, `physical-print`, and
-  `physical-combined` scores when present.
-- `worstCategory`: the weakest covered attack family.
+- `physicalScore`: score for `physical_channel_attacks` when present.
+- `worstCategory`: the weakest covered category.
 - `profileTags`: short labels such as `physical-robust`,
-  `screen-specialist`, `print-specialist`, `combined-fragile`,
-  `quality-first`, `fast-lightweight`, and `geometry-fragile`.
+  `geometry-fragile`, `enhancement-fragile`, `regeneration-fragile`,
+  `quality-first`, and `fast-lightweight`.
 
 These fields explain why an algorithm ranks where it does. They should not
 replace the primary WRS-v2 rank.
@@ -70,7 +65,7 @@ The attack leaderboard keeps the WAVES-style `Q@P + AvgP/AvgQ` view:
 - `AUC`: performance AUC over normalized attack strength.
 
 This table answers a different question from the main leaderboard: which attack
-families and strengths expose the failure surface of each algorithm.
+presets and strengths expose the failure surface of each algorithm.
 
 ## UI Behavior
 

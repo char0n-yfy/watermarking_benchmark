@@ -80,7 +80,7 @@ export function buildActiveRunRows(
   const attackMap = new Map(attacks.map((attack) => [attack.id, attack.name]));
 
   return runs
-    .filter((run) => run.status === "queued" || run.status === "running" || run.status === "paused")
+    .filter((run) => run.status === "running" || run.status === "paused")
     .map((run) => {
       const config = configMap.get(run.configId);
       return {

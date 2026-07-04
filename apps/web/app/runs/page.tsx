@@ -289,7 +289,7 @@ function badgeClass(status: DemoRunRecord["status"]) {
 }
 
 function isActiveRun(status: DemoRunRecord["status"]) {
-  return status === "queued" || status === "running";
+  return status === "running" || status === "paused";
 }
 
 function isResumableRun(status: DemoRunRecord["status"]) {
@@ -1306,7 +1306,7 @@ export default function RunsPage() {
       latestTuning = null;
     }
 
-    const manageableRuns = loadedRuns.filter((run) => isActiveRun(run.status) || isResumableRun(run.status));
+    const manageableRuns = loadedRuns.filter((run) => isActiveRun(run.status));
     setConfigs(loadedConfigs);
     setActiveRuns(manageableRuns);
     if (latestTuning) {
@@ -1835,7 +1835,7 @@ export default function RunsPage() {
     busy ||
     (startMode === "new"
       ? !selectedConfig || !taskNameInput.trim()
-      : !selectedResumeRun || (!isActiveRun(selectedResumeRun.status) && !isResumableRun(selectedResumeRun.status)));
+      : !selectedResumeRun || !isActiveRun(selectedResumeRun.status));
 
   return (
     <AppShell active="runs">

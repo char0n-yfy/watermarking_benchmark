@@ -483,8 +483,8 @@ class ExperimentService:
 
     def list_runs(self, *, scope: str | None = None) -> list[dict[str, Any]]:
         self.reconcile_stale_runs()
-        active_statuses = ["queued", "running"]
-        unfinished_statuses = ["queued", "running", "paused", "failed", "partially_failed"]
+        active_statuses = ["running", "paused"]
+        unfinished_statuses = ["running", "paused", "failed", "partially_failed"]
         with self.database.connect() as connection:
             if scope == "active":
                 rows = connection.execute(
@@ -494,7 +494,7 @@ class ExperimentService:
                     ORDER BY
                       CASE status
                         WHEN 'running' THEN 0
-                        WHEN 'queued' THEN 1
+                        WHEN 'paused' THEN 1
                         ELSE 2
                       END,
                       updated_at DESC
@@ -507,15 +507,14 @@ class ExperimentService:
                 rows = connection.execute(
                     """
                     SELECT * FROM experiment_runs
-                    WHERE status IN (?, ?, ?, ?, ?)
+                    WHERE status IN (?, ?, ?, ?)
                     ORDER BY
                       CASE status
                         WHEN 'running' THEN 0
-                        WHEN 'queued' THEN 1
-                        WHEN 'paused' THEN 2
-                        WHEN 'failed' THEN 3
-                        WHEN 'partially_failed' THEN 4
-                        ELSE 5
+                        WHEN 'paused' THEN 1
+                        WHEN 'failed' THEN 2
+                        WHEN 'partially_failed' THEN 3
+                        ELSE 4
                       END,
                       updated_at DESC
                     """,
@@ -646,9 +645,9 @@ class ExperimentService:
     def _run_matches_scope(self, run: dict[str, Any], scope: str | None) -> bool:
         status = str(run.get("status") or "")
         if scope == "active":
-            return status in {"queued", "running"}
+            return status in {"running", "paused"}
         if scope == "unfinished":
-            return status in {"queued", "running", "paused", "failed", "partially_failed"}
+            return status in {"running", "paused", "failed", "partially_failed"}
         return True
 
     def _imported_run_name(self, selection: dict[str, Any]) -> str:

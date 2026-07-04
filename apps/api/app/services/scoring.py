@@ -54,18 +54,6 @@ class AttackCategory:
     description: str
 
 
-WRS_ATTACK_CATEGORIES = [
-    AttackCategory("distortion-single", "Distortion Single", "Single image distortion attacks."),
-    AttackCategory("distortion-combination", "Distortion Combination", "Combined distortion pipelines."),
-    AttackCategory("content-preserving-workflow", "Content-Preserving Workflow", "Realistic editing/export workflows that preserve image semantics."),
-    AttackCategory("consumer-enhancement-workflow", "Consumer Enhancement Workflow", "Consumer enhancement and restoration workflows."),
-    AttackCategory("regeneration", "Regeneration", "VAE, diffusion, video, 3D re-rendering, and rinsing-style regeneration attacks."),
-    AttackCategory("physical-screen", "Physical Screen", "Screen-shooting physical channel attacks."),
-    AttackCategory("physical-print", "Physical Print", "Print-camera physical channel attacks."),
-    AttackCategory("physical-combined", "Physical Combined", "Multi-hop print-camera and screen-shooting combined physical attacks."),
-    AttackCategory("adversarial", "Adversarial", "Adversarial embedding or surrogate-detector attacks."),
-]
-
 RESOURCE_ATTACK_CATEGORIES = [
     AttackCategory("distortion_attacks", "Classic distortion", "Classic single-image distortion attacks."),
     AttackCategory("physical_channel_attacks", "Physical channel", "Screen-shoot, print-camera, and combined physical attacks."),
@@ -78,9 +66,12 @@ RESOURCE_ATTACK_CATEGORIES = [
     ),
 ]
 
-WAVES_ATTACK_CATEGORIES = WRS_ATTACK_CATEGORIES
-WAVES_CATEGORY_KEYS = [category.key for category in WRS_ATTACK_CATEGORIES]
-RESOURCE_ATTACK_CATEGORY_KEYS = [category.key for category in RESOURCE_ATTACK_CATEGORIES]
+# WRS-v2 uses the same five resource categories as the Resources page taxonomy.
+WRS_ATTACK_CATEGORIES = RESOURCE_ATTACK_CATEGORIES
+WAVES_ATTACK_CATEGORIES = RESOURCE_ATTACK_CATEGORIES
+WAVES_CATEGORY_KEYS = RESOURCE_ATTACK_CATEGORY_KEYS = [
+    category.key for category in RESOURCE_ATTACK_CATEGORIES
+]
 
 # The official WAVES paper calibrates quality metrics with corpus-level 10% and
 # 90% quantiles. These anchors make local smoke runs scoreable before the project
@@ -118,7 +109,7 @@ def benchmark_protocols() -> list[JsonDict]:
             "id": PROTOCOL_ID,
             "name": PROTOCOL_NAME,
             "task": "detection",
-            "rankMethod": "WRS-v2: mean attack-family AUC over normalized strength in practical NQD range",
+            "rankMethod": "WRS-v2: mean of five resource-category AUC values over normalized attack strength",
             "fprTarget": FPR_TARGET,
             "officialMinSamples": OFFICIAL_MIN_SAMPLES,
             "practicalNqdThreshold": PRACTICAL_NQD_THRESHOLD,
@@ -138,6 +129,7 @@ def benchmark_protocols() -> list[JsonDict]:
 
 
 def attack_category(method: str, preset_id: str | None = None) -> str:
+    """Fine-grained attack family label retained for diagnostics and legacy artifacts."""
     token = f"{preset_id or ''} {method}".lower()
     parts = [part for part in token.replace("-", "_").split() if part]
     if "identity" in token:
@@ -171,6 +163,46 @@ def attack_category(method: str, preset_id: str | None = None) -> str:
     if "combo" in token or "distcom" in token:
         return "distortion-combination"
     return "distortion-single"
+
+
+def cell_wrs_category(cell: JsonDict) -> str | None:
+    """Resolve the five-class WRS category for a scored cell."""
+    method = str(cell.get("attackMethod") or "")
+    resource_category = attack_resource_category(method)
+    if resource_category:
+        return resource_category
+
+    scoring = cell.get("scoring")
+    if isinstance(scoring, Mapping):
+        stored = scoring.get("attackCategory")
+        if isinstance(stored, str) and stored in RESOURCE_ATTACK_CATEGORY_KEYS:
+            return stored
+        if isinstance(stored, str):
+            return _legacy_attack_family_to_resource_category(stored, method)
+    return None
+
+
+def _legacy_attack_family_to_resource_category(family: str, method: str) -> str | None:
+    token = f"{family} {method}".lower()
+    if family in RESOURCE_ATTACK_CATEGORY_KEYS:
+        return family
+    if family.startswith("physical-"):
+        return "physical_channel_attacks"
+    if family == "consumer-enhancement-workflow" or token.startswith("cew_"):
+        return "consumer_enhancement_workflow_attacks"
+    if family == "regeneration" or "3d_viewpoint_rerendering" in token:
+        if token.startswith("3d_viewpoint") or "3d_viewpoint" in method.lower():
+            return "3d_viewpoint_rerendering"
+        return "regeneration_attacks"
+    if family in {
+        "distortion-single",
+        "distortion-combination",
+        "content-preserving-workflow",
+        "adversarial",
+        "clean-control",
+    }:
+        return "distortion_attacks"
+    return attack_resource_category(method)
 
 
 def attack_resource_category(method: str) -> str | None:
@@ -292,7 +324,7 @@ def score_cell(
 
     nqd = quality_summary.get("normalizedQualityDegradation")
     clean_nqd = clean_quality_summary.get("normalizedQualityDegradation")
-    category = attack_category(attack_method, attack_preset_id)
+    category = attack_resource_category(attack_method)
     variant = attack_variant_summary(attack_params)
     param_strength = attack_param_strength(attack_strength, attack_params)
     return {
@@ -322,7 +354,7 @@ def score_cell(
         "quality": quality_summary,
         "cleanQuality": clean_quality_summary,
         "elapsedMs": elapsed_ms,
-        "practicalForWrs": category in WAVES_CATEGORY_KEYS
+        "practicalForWrs": category in RESOURCE_ATTACK_CATEGORY_KEYS
         and tpr is not None
         and nqd is not None
         and float(nqd) < PRACTICAL_NQD_THRESHOLD,
@@ -364,7 +396,7 @@ def score_cell_from_records(
     clean_quality_summary = summarize_quality_records(clean_quality_records)
     nqd = quality_summary.get("normalizedQualityDegradation")
     clean_nqd = clean_quality_summary.get("normalizedQualityDegradation")
-    category = attack_category(attack_method, attack_preset_id)
+    category = attack_resource_category(attack_method)
     variant = attack_variant_summary(attack_params)
     param_strength = attack_param_strength(attack_strength, attack_params)
     return {
@@ -394,7 +426,7 @@ def score_cell_from_records(
         "quality": quality_summary,
         "cleanQuality": clean_quality_summary,
         "elapsedMs": elapsed_ms,
-        "practicalForWrs": category in WAVES_CATEGORY_KEYS
+        "practicalForWrs": category in RESOURCE_ATTACK_CATEGORY_KEYS
         and tpr is not None
         and nqd is not None
         and float(nqd) < PRACTICAL_NQD_THRESHOLD,
@@ -416,7 +448,7 @@ def _aggregate_benchmark_core(scored_cells: list[JsonDict]) -> JsonDict:
         category_cells = [
             cell
             for cell in scored_cells
-            if cell["scoring"].get("attackCategory") == category.key
+            if cell_wrs_category(cell) == category.key
             and cell["scoring"].get("practicalForWrs")
         ]
         attack_scores = [
@@ -494,7 +526,7 @@ def rank_algorithm_scores(scored_cells: list[JsonDict]) -> list[JsonDict]:
         physical_values = [
             item["score"]
             for item in score["categoryScores"]
-            if item["key"].startswith("physical-") and item.get("score") is not None
+            if item["key"] == "physical_channel_attacks" and item.get("score") is not None
         ]
         covered_scores = [
             item
@@ -761,30 +793,19 @@ def _profile_tags(
         if item.get("score") is not None
     }
     tags: list[str] = []
-    physical_values = [
-        scores[key]
-        for key in ("physical-screen", "physical-print", "physical-combined")
-        if key in scores
-    ]
-    if len(physical_values) == 3 and min(physical_values) >= 0.75:
+    physical = scores.get("physical_channel_attacks")
+    if physical is not None and physical >= 0.75:
         tags.append("physical-robust")
-    if scores.get("physical-screen", 0.0) >= 0.75 and scores.get("physical-print", 1.0) < 0.65:
-        tags.append("screen-specialist")
-    if scores.get("physical-print", 0.0) >= 0.75 and scores.get("physical-screen", 1.0) < 0.65:
-        tags.append("print-specialist")
-    if (
-        "physical-combined" in scores
-        and max(scores.get("physical-screen", 0.0), scores.get("physical-print", 0.0))
-        - scores["physical-combined"]
-        >= 0.20
-    ):
-        tags.append("combined-fragile")
+    if scores.get("3d_viewpoint_rerendering", 1.0) < 0.45:
+        tags.append("geometry-fragile")
+    if scores.get("consumer_enhancement_workflow_attacks", 1.0) < 0.45:
+        tags.append("enhancement-fragile")
+    if scores.get("regeneration_attacks", 1.0) < 0.45:
+        tags.append("regeneration-fragile")
     if clean_fidelity is not None and clean_fidelity >= 0.85:
         tags.append("quality-first")
     if runtime_ms is not None and runtime_ms < 1000.0:
         tags.append("fast-lightweight")
-    if scores.get("physical-screen", 1.0) < 0.45 or scores.get("physical-print", 1.0) < 0.45:
-        tags.append("geometry-fragile")
     return tags[:4]
 
 

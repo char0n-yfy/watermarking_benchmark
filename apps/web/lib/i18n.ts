@@ -106,7 +106,7 @@ export const translations = {
       datasetsSummary: "数据集摘要",
       officialLeaderboardPending: "正式天梯图等待固定评测协议和批量结果。",
       needMultipleStrengths: "需要同一算法在多个攻击强度下的结果才能绘制曲线。",
-      noActiveRuns: "当前没有运行中、等待执行或已暂停的实验。"
+      noActiveRuns: "当前没有运行中或已暂停的实验。"
     },
     configs: {
       title: "实验配置",
@@ -203,7 +203,7 @@ export const translations = {
     },
     runs: {
       title: "运行控制台",
-      subtitle: "提交实验、监控正在运行任务，并续跑未完成任务",
+      subtitle: "提交实验、监控正在运行或已暂停的任务，并续跑暂停中的实验",
       recent: "最近运行",
       run: "运行",
       status: "状态",
@@ -246,11 +246,11 @@ export const translations = {
       startExperiment: "开始实验",
       startExperimentHint: "新建一个实验任务，或从失败、暂停、部分完成的任务继续执行。",
       startDialogTitle: "开始实验",
-      startDialogHint: "选择从头创建任务，或读取已有未完成任务进行续跑。",
+      startDialogHint: "选择从头创建任务，或读取已有运行中/已暂停任务进行续跑。",
       newTask: "新建任务",
       newTaskHint: "命名任务并选择已有实验配置，从头开始排队执行。",
       continueTask: "从已有任务继续",
-      continueTaskHint: "选择暂停、失败、部分完成或正在队列中的任务继续监控/续跑。",
+      continueTaskHint: "选择已暂停或正在运行的任务继续监控/续跑。",
       taskName: "任务名称",
       taskNamePlaceholder: "例如：DWT-DCT 经典失真 smoke",
       defaultTaskName: "实验任务",
@@ -518,7 +518,7 @@ export const translations = {
       datasetsSummary: "Datasets summary",
       officialLeaderboardPending: "The official leaderboard is waiting for a fixed benchmark protocol and batch results.",
       needMultipleStrengths: "Multiple attack strengths for the same algorithm are required to draw curves.",
-      noActiveRuns: "No running, queued, or paused experiments right now."
+      noActiveRuns: "No running or paused experiments right now."
     },
     configs: {
       title: "Experiment Configs",
@@ -615,7 +615,7 @@ export const translations = {
     },
     runs: {
       title: "Run Console",
-      subtitle: "Submit experiments, monitor active work, and resume unfinished tasks",
+      subtitle: "Submit experiments, monitor running or paused tasks, and resume paused work",
       recent: "Recent runs",
       run: "Run",
       status: "Status",
@@ -662,7 +662,7 @@ export const translations = {
       newTask: "New Task",
       newTaskHint: "Name the task and choose a saved experiment config.",
       continueTask: "Continue Task",
-      continueTaskHint: "Resume or monitor a paused, failed, partially completed, queued, or running task.",
+      continueTaskHint: "Resume or monitor a paused or running task.",
       taskName: "Task name",
       taskNamePlaceholder: "Example: DWT-DCT distortion smoke",
       defaultTaskName: "Experiment task",

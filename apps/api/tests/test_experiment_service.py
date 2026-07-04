@@ -151,7 +151,7 @@ class ExperimentServiceTest(unittest.TestCase):
             run = service.create_run(config["id"])
 
             self.assertEqual(run["status"], "queued")
-            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
             finished = service.execute_run(run["id"])
             results = service.get_run_results(run["id"])
             score = service.get_run_score(run["id"])
@@ -275,14 +275,14 @@ class ExperimentServiceTest(unittest.TestCase):
 
             self.assertEqual(paused["status"], "paused")
             self.assertTrue(paused["cancelRequested"])
-            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
+            self.assertEqual([item["id"] for item in service.list_runs(scope="active")], [run["id"]])
             self.assertEqual([item["id"] for item in service.list_runs(scope="unfinished")], [run["id"]])
 
             resumed = service.resume_run(run["id"])
 
             self.assertEqual(resumed["status"], "queued")
             self.assertFalse(resumed["cancelRequested"])
-            self.assertEqual(service.list_runs(scope="active")[0]["id"], run["id"])
+            self.assertNotIn(run["id"], [item["id"] for item in service.list_runs(scope="active")])
 
     def test_cancel_queued_run_is_not_resumable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

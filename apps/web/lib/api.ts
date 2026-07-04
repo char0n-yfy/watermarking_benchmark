@@ -235,16 +235,12 @@ export function fetchRuns(options?: { scope?: "active" | "unfinished" }): Promis
   return requestJson<DemoRunRecord[]>(`/runs${query}`);
 }
 
-/** Prefer unfinished runs; fall back when an older API build rejects that scope. */
+/** Open runs: running or paused only (no queued waiting list). */
 export async function fetchManageableRuns(): Promise<DemoRunRecord[]> {
   try {
-    return await fetchRuns({ scope: "unfinished" });
+    return await fetchRuns({ scope: "active" });
   } catch {
-    try {
-      return await fetchRuns({ scope: "active" });
-    } catch {
-      return await fetchRuns();
-    }
+    return await fetchRuns();
   }
 }
 

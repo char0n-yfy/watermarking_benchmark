@@ -20,6 +20,7 @@ from app.services.scoring import (
     attack_category,
     attack_resource_category,
     build_curve_points,
+    cell_wrs_category,
     compute_image_quality_pairs_with_profile,
     compute_quality_summary,
     score_cell,
@@ -28,12 +29,15 @@ from app.services.scoring import (
 
 
 class ScoringTest(unittest.TestCase):
-    def test_ctrlregen_and_nfpa_are_regeneration_scoring_categories(self) -> None:
-        self.assertEqual(attack_category("noise_to_image"), "regeneration")
-        self.assertEqual(attack_category("image_to_vedio"), "regeneration")
-        self.assertEqual(attack_category("3d_viewpoint_rerendering_rotate_point"), "regeneration")
+    def test_ctrlregen_and_nfpa_use_resource_scoring_categories(self) -> None:
+        self.assertEqual(attack_resource_category("noise_to_image"), "regeneration_attacks")
+        self.assertEqual(attack_resource_category("image_to_vedio"), "regeneration_attacks")
+        self.assertEqual(
+            attack_resource_category("3d_viewpoint_rerendering_rotate_point"),
+            "3d_viewpoint_rerendering",
+        )
 
-    def test_physical_attacks_have_separate_wrs_v2_categories(self) -> None:
+    def test_attack_family_taxonomy_remains_available_for_diagnostics(self) -> None:
         self.assertEqual(attack_category("screen_shoot", "screen_shoot_strong"), "physical-screen")
         self.assertEqual(attack_category("print_camera", "print_camera_medium"), "physical-print")
         self.assertEqual(attack_category("combined_physical", "combined_physical_strong"), "physical-combined")
@@ -50,6 +54,25 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(attack_resource_category("regen_vae"), "regeneration_attacks")
         self.assertEqual(attack_resource_category("cew_restore"), "consumer_enhancement_workflow_attacks")
         self.assertIsNone(attack_resource_category("identity"))
+
+    def test_legacy_attack_family_cells_map_into_five_class_wrs(self) -> None:
+        legacy_cell = {
+            "attackMethod": "jpeg",
+            "scoring": {
+                "attackCategory": "distortion-single",
+                "practicalForWrs": True,
+            },
+        }
+        self.assertEqual(cell_wrs_category(legacy_cell), "distortion_attacks")
+
+        legacy_physical = {
+            "attackMethod": "screen_shoot",
+            "scoring": {
+                "attackCategory": "physical-screen",
+                "practicalForWrs": True,
+            },
+        }
+        self.assertEqual(cell_wrs_category(legacy_physical), "physical_channel_attacks")
 
     def test_score_cell_uses_negative_quantile_for_low_fpr_threshold(self) -> None:
         scoring = score_cell(
@@ -72,7 +95,7 @@ class ScoringTest(unittest.TestCase):
         )
 
         self.assertEqual(scoring["protocolId"], PROTOCOL_ID)
-        self.assertEqual(scoring["attackCategory"], "distortion-single")
+        self.assertEqual(scoring["attackCategory"], "distortion_attacks")
         self.assertAlmostEqual(scoring["tprAtFpr"], 1.0)
         self.assertLess(scoring["empiricalFpr"], 0.01)
         self.assertTrue(scoring["practicalForWrs"])
@@ -84,7 +107,7 @@ class ScoringTest(unittest.TestCase):
             "attackMethod": "jpeg",
             "attackStrength": 0.5,
             "scoring": {
-                "attackCategory": "distortion-single",
+                "attackCategory": "distortion_attacks",
                 "practicalForWrs": True,
                 "tprAtFpr": 0.8,
                 "normalizedQualityDegradation": 0.2,
@@ -120,7 +143,7 @@ class ScoringTest(unittest.TestCase):
         )
 
         self.assertEqual(scoring["protocolId"], PROTOCOL_ID)
-        self.assertEqual(scoring["attackCategory"], "physical-screen")
+        self.assertEqual(scoring["attackCategory"], "physical_channel_attacks")
         self.assertAlmostEqual(scoring["meanPositiveDetectionScore"], 0.75)
         self.assertAlmostEqual(scoring["meanNegativeDetectionScore"], 0.25)
         self.assertAlmostEqual(scoring["tprAtFpr"], 1.0)
@@ -137,7 +160,7 @@ class ScoringTest(unittest.TestCase):
                     "attackStrength": 0.0,
                     "attackParams": {"quality": 3, "vae_model_name": "bmshj2018-factorized"},
                     "scoring": {
-                        "attackCategory": "regeneration",
+                        "attackCategory": "regeneration_attacks",
                         "tprAtFpr": 0.75,
                         "normalizedQualityDegradation": 0.42,
                         "sampleCount": 12,

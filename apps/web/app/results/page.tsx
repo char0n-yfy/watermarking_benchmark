@@ -2818,10 +2818,17 @@ const ATTACK_CATEGORY_LABELS: Record<string, string> = {
 
 function normalizeAttackCategory(category: string, attackPresetId = "", attackMethod = ""): string {
   const text = `${category} ${attackPresetId} ${attackMethod}`.toLowerCase();
-  if (text.includes("3d") || text.includes("viewpoint") || text.includes("rerender")) {
-    return "3d-viewpoint-rerendering";
+  if (
+    text.includes("distortion_attacks") ||
+    text.includes("distortion-single") ||
+    text.includes("distortion-combination") ||
+    text.includes("content-preserving") ||
+    text.includes("adversarial")
+  ) {
+    return "classical-distortion";
   }
   if (
+    text.includes("physical_channel_attacks") ||
     text.includes("physical") ||
     text.includes("screen_shoot") ||
     text.includes("screen-shoot") ||
@@ -2832,10 +2839,24 @@ function normalizeAttackCategory(category: string, attackPresetId = "", attackMe
   ) {
     return "physical-channel";
   }
-  if (text.includes("consumer-enhancement") || text.includes("cew_") || text.includes("atk-cew")) {
+  if (
+    text.includes("3d_viewpoint_rerendering") ||
+    text.includes("3d") ||
+    text.includes("viewpoint") ||
+    text.includes("rerender")
+  ) {
+    return "3d-viewpoint-rerendering";
+  }
+  if (
+    text.includes("consumer_enhancement_workflow_attacks") ||
+    text.includes("consumer-enhancement") ||
+    text.includes("cew_") ||
+    text.includes("atk-cew")
+  ) {
     return "consumer-enhancement";
   }
   if (
+    text.includes("regeneration_attacks") ||
     text.includes("regeneration") ||
     text.includes("regen") ||
     text.includes("diffusion") ||
