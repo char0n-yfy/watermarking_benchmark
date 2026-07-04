@@ -465,7 +465,7 @@ export interface ParallelTuningSummary {
 
 export interface ParallelTuningJob {
   id: string;
-  status: "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | string;
+  status: "running" | "pausing" | "paused" | "cancelling" | "succeeded" | "failed" | "cancelled" | string;
   progress: number;
   message?: string | null;
   request?: Record<string, unknown>;
@@ -479,6 +479,8 @@ export interface ParallelTuningJob {
   traceback?: string | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string;
+  pauseRequested?: boolean;
+  pauseRequestedAt?: string;
 }
 
 export interface ParallelTuningSaveResult {

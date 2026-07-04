@@ -35,7 +35,9 @@ import {
   fetchManageableRuns,
   fetchRunState,
   fetchSavedConfigs,
+  pauseParallelTuning,
   pauseRun,
+  resumeParallelTuning,
   resumeRun,
   saveParallelTuning,
   startParallelTuning
@@ -1206,8 +1208,10 @@ export default function RunsPage() {
     [runState, selectedStage?.phase]
   );
   const tuningRunning = tuningJob?.status === "running";
+  const tuningPausing = tuningJob?.status === "pausing";
+  const tuningPaused = tuningJob?.status === "paused";
   const tuningStopping = tuningJob?.status === "cancelling";
-  const tuningActive = tuningRunning || tuningStopping;
+  const tuningActive = tuningRunning || tuningPausing || tuningStopping;
   const tuningEnvEntries = Object.entries(tuningJob?.summary?.envUpdates ?? {});
   const tuningChartPoints = useMemo(() => tuningPoints(tuningJob, resourceNames), [resourceNames, tuningJob]);
   const tuningProcessGroups = useMemo(() => buildTuningProcessGroups(tuningChartPoints), [tuningChartPoints]);
@@ -1798,6 +1802,45 @@ export default function RunsPage() {
     }
   };
 
+  const pauseTuning = async () => {
+    if (!tuningJob?.id) {
+      return;
+    }
+    setTuningBusy(true);
+    setTuningNotice("");
+    try {
+      const updated = await pauseParallelTuning(tuningJob.id);
+      setTuningJob(updated);
+      setTuningNotice(
+        updated.status === "paused"
+          ? "调参任务已暂停，可稍后从已保存检查点继续。"
+          : "暂停请求已发送，当前候选完成清理后会保存检查点。"
+      );
+    } catch (error) {
+      setTuningNotice(error instanceof Error ? error.message : "暂停调参失败。");
+    } finally {
+      setTuningBusy(false);
+    }
+  };
+
+  const resumeTuning = async () => {
+    if (!tuningJob?.id) {
+      return;
+    }
+    setTuningBusy(true);
+    setTuningNotice("");
+    try {
+      const updated = await resumeParallelTuning(tuningJob.id);
+      setTuningJob(updated);
+      setTuningWorkspaceOpen(true);
+      setTuningNotice("调参任务已继续，将跳过已完成的算法记录。");
+    } catch (error) {
+      setTuningNotice(error instanceof Error ? error.message : "继续调参失败。");
+    } finally {
+      setTuningBusy(false);
+    }
+  };
+
   const stopTuning = async () => {
     if (!tuningJob?.id) {
       return;
@@ -1947,7 +1990,20 @@ export default function RunsPage() {
               <Save size={16} />
               保存参数
             </button>
-            <button className="button danger" disabled={tuningBusy || !tuningRunning} onClick={stopTuning} type="button">
+            <button className="button" disabled={tuningBusy || !tuningRunning} onClick={pauseTuning} type="button">
+              <PauseCircle size={16} />
+              {tuningPausing ? "正在暂停" : "暂停调参"}
+            </button>
+            <button className="button" disabled={tuningBusy || !tuningPaused} onClick={resumeTuning} type="button">
+              <PlayCircle size={16} />
+              继续调参
+            </button>
+            <button
+              className="button danger"
+              disabled={tuningBusy || (!tuningRunning && !tuningPausing && !tuningPaused)}
+              onClick={stopTuning}
+              type="button"
+            >
               <Square size={16} />
               {tuningStopping ? "正在停止" : "停止调参"}
             </button>

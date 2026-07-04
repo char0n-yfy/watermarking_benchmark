@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from statistics import median
 from typing import Any, Iterable, Mapping
@@ -56,7 +56,7 @@ DIFFUSION_REGENERATION_EQUIVALENT_METHODS = (
 )
 NON_TUNABLE_ATTACK_METHODS = {"identity"}
 FIXED_ATTACK_BATCH_OVERRIDES: dict[str, int] = {}
-ACTIVE_TUNING_STATUSES = {"running", "cancelling"}
+ACTIVE_TUNING_STATUSES = {"running", "pausing", "cancelling"}
 TERMINAL_TUNING_STATUSES = {"succeeded", "failed", "cancelled"}
 NAMED_OVERRIDE_ENV_KEYS = {
     "WM_BENCH_WATERMARK_EMBED_BATCH_SIZES",
@@ -71,6 +71,10 @@ NAMED_OVERRIDE_ENV_KEYS = {
 
 
 class TuningCancelled(Exception):
+    pass
+
+
+class TuningPaused(Exception):
     pass
 
 
@@ -429,6 +433,38 @@ class ParallelTuningService:
             thread.start()
         return self.get(job_id)
 
+    def resume(self, job_id: str) -> JsonDict:
+        with self._lock:
+            state = self.get(job_id)
+            if state.get("status") != "paused":
+                raise ValueError("Only paused tuning jobs can be resumed")
+            live_thread_ids = self._live_thread_ids_locked()
+            if live_thread_ids:
+                live_state = self._state_for_live_thread(live_thread_ids[0])
+                if live_state.get("status") == "running":
+                    raise ValueError(f"Parallel tuning job already running: {live_thread_ids[0]}")
+                raise ValueError(f"Parallel tuning job still stopping: {live_thread_ids[0]}")
+            request = TuningRequest.from_payload(state.get("request") if isinstance(state.get("request"), dict) else {})
+            state["status"] = "running"
+            state["pauseRequested"] = False
+            state["cancelRequested"] = False
+            state["message"] = "resuming tuning"
+            state.pop("finishedAt", None)
+            events = list(state.get("events") or [])
+            events.append(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "stage": "resumed",
+                    "message": "tuning resumed",
+                }
+            )
+            state["events"] = events[-200:]
+            self._write_state(job_id, state)
+            thread = threading.Thread(target=self._run_job, args=(job_id, request), daemon=True)
+            self._threads[job_id] = thread
+            thread.start()
+        return self.get(job_id)
+
     def _live_thread_ids_locked(self) -> list[str]:
         live: list[str] = []
         finished: list[str] = []
@@ -520,6 +556,8 @@ class ParallelTuningService:
             state = self.get(job_id)
             if state.get("status") in TERMINAL_TUNING_STATUSES:
                 return state
+            if state.get("status") == "paused":
+                return self._mark_cancelled_locked(state)
             state["cancelRequested"] = True
             state["cancelRequestedAt"] = state.get("cancelRequestedAt") or _utc_timestamp()
             thread = self._threads.get(job_id)
@@ -538,6 +576,69 @@ class ParallelTuningService:
             state["events"] = events[-200:]
             self._write_state(job_id, state)
             return state
+
+    def pause(self, job_id: str) -> JsonDict:
+        with self._lock:
+            state = self.get(job_id)
+            if state.get("status") == "paused":
+                return state
+            if state.get("status") in TERMINAL_TUNING_STATUSES:
+                return state
+            state["pauseRequested"] = True
+            state["pauseRequestedAt"] = state.get("pauseRequestedAt") or _utc_timestamp()
+            thread = self._threads.get(job_id)
+            if thread is None or not thread.is_alive():
+                return self._mark_paused_locked(state)
+            state["status"] = "pausing"
+            state["message"] = "tuning pause requested"
+            events = list(state.get("events") or [])
+            events.append(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "stage": "pause_requested",
+                    "message": "tuning pause requested",
+                }
+            )
+            state["events"] = events[-200:]
+            self._write_state(job_id, state)
+            return state
+
+    def _attach_report_summary_locked(self, state: JsonDict) -> JsonDict:
+        job_id = str(state["id"])
+        report = self._load_report(job_id)
+        if report is None:
+            return state
+        summary = report.get("summary")
+        if not isinstance(summary, dict):
+            summary = self._build_summary(report)
+            report["summary"] = summary
+            _write_json(self.root / job_id / "report.json", report)
+        state["report"] = report
+        state["summary"] = summary
+        return state
+
+    def _mark_paused_locked(self, state: JsonDict) -> JsonDict:
+        state["status"] = "paused"
+        state["pauseRequested"] = True
+        state["finishedAt"] = state.get("finishedAt") or _utc_timestamp()
+        state["message"] = "tuning paused"
+        events = list(state.get("events") or [])
+        if not events or events[-1].get("stage") != "paused":
+            events.append(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "stage": "paused",
+                    "message": "tuning paused",
+                }
+            )
+        state["events"] = events[-200:]
+        self._attach_report_summary_locked(state)
+        self._write_state(str(state["id"]), state)
+        return state
+
+    def _mark_paused(self, job_id: str) -> JsonDict:
+        with self._lock:
+            return self._mark_paused_locked(self.get(job_id))
 
     def _mark_cancelled_locked(self, state: JsonDict) -> JsonDict:
         state["status"] = "cancelled"
@@ -599,8 +700,32 @@ class ParallelTuningService:
             return False
         return bool(state.get("cancelRequested")) or state.get("status") in {"cancelled", "cancelling"}
 
-    def _ensure_not_cancelled(self, job_id: str) -> None:
-        if self._is_cancel_requested(job_id):
+    def _requested_stop_status(self, job_id: str) -> str | None:
+        try:
+            state = self.get(job_id)
+        except KeyError:
+            return None
+        if bool(state.get("cancelRequested")) or state.get("status") in {"cancelled", "cancelling"}:
+            return "cancelled"
+        if bool(state.get("pauseRequested")) or state.get("status") in {"paused", "pausing"}:
+            return "paused"
+        return None
+
+    def _raise_for_requested_stop(self, status: str | bool | None) -> None:
+        if not status:
+            return
+        if status in {"paused", "pausing", "pause"}:
+            raise TuningPaused()
+        raise TuningCancelled()
+
+    def _is_stop_requested(self, job_id: str) -> str | None:
+        return self._requested_stop_status(job_id)
+
+    def _ensure_not_stopped(self, job_id: str) -> None:
+        status = self._requested_stop_status(job_id)
+        if status == "paused":
+            raise TuningPaused()
+        if status == "cancelled":
             raise TuningCancelled()
 
     def _viewpoint_rerendering_methods(self) -> list[str]:
@@ -665,6 +790,44 @@ class ParallelTuningService:
                 continue
             _mark_output_cleaned(entry, str(output_dir))
 
+    def _load_report(self, job_id: str) -> JsonDict | None:
+        report_path = self.root / job_id / "report.json"
+        if not report_path.exists():
+            return None
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return report if isinstance(report, dict) else None
+
+    def _remaining_request_for_report(self, request: TuningRequest, report: JsonDict | None) -> TuningRequest:
+        if not report:
+            return request
+        completed_watermarks = {
+            str(record.get("method"))
+            for record in report.get("watermarks") or []
+            if isinstance(record, dict) and record.get("method")
+        }
+        watermark_methods = request.watermark_methods or sorted(WATERMARK_REGISTRY)
+        remaining_watermarks = [method for method in watermark_methods if method not in completed_watermarks]
+
+        completed_attacks = {
+            str(record.get("method"))
+            for record in report.get("attacks") or []
+            if isinstance(record, dict) and record.get("method")
+        }
+        remaining_attacks = [method for method in self._attack_methods_for_tuning(request) if method not in completed_attacks]
+
+        quality_done = isinstance(report.get("quality"), dict) and bool(report.get("quality"))
+        return replace(
+            request,
+            tune_watermarks=request.tune_watermarks and bool(remaining_watermarks),
+            watermark_methods=remaining_watermarks,
+            tune_attacks=request.tune_attacks and bool(remaining_attacks),
+            attack_methods=remaining_attacks,
+            tune_quality=request.tune_quality and not quality_done,
+        )
+
     def _limited_input_dir(
         self,
         source_dir: Path,
@@ -687,34 +850,46 @@ class ParallelTuningService:
             os.environ.setdefault("MKL_NUM_THREADS", "1")
             os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
             os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
-            needs_inputs = request.tune_watermarks or request.tune_attacks or request.tune_quality
+            existing_report = self._load_report(job_id)
+            execution_request = self._remaining_request_for_report(request, existing_report)
+            needs_inputs = execution_request.tune_watermarks or execution_request.tune_attacks or execution_request.tune_quality
             if needs_inputs:
-                input_dir = self._prepare_inputs(job_id, request)
-                warmup_dir = self._subset_dir(input_dir, job_dir / "warmup_inputs", min(request.warmup_count, request.sample_count))
+                input_dir = self._prepare_inputs(job_id, execution_request)
+                warmup_dir = self._subset_dir(
+                    input_dir,
+                    job_dir / "warmup_inputs",
+                    min(execution_request.warmup_count, execution_request.sample_count),
+                )
             else:
                 input_dir = job_dir / "canonical_inputs"
                 warmup_dir = job_dir / "warmup_inputs"
                 input_dir.mkdir(parents=True, exist_ok=True)
                 warmup_dir.mkdir(parents=True, exist_ok=True)
                 self._event(job_id, "prepare", "no tuning stages selected; skipped input preparation")
-            self._ensure_not_cancelled(job_id)
-            estimated_steps = self._estimate_steps(request)
+            self._ensure_not_stopped(job_id)
+            estimated_steps = self._estimate_steps(execution_request)
             completed_steps = 0
-            report: JsonDict = {
-                "jobId": job_id,
-                "device": self.device,
-                "request": request.to_json(),
-                "inputDir": str(input_dir),
-                "watermarks": [],
-                "attacks": [],
-                "quality": {},
-                "startedAt": _utc_timestamp(),
-            }
+            report: JsonDict = existing_report or {
+                    "jobId": job_id,
+                    "device": self.device,
+                    "request": request.to_json(),
+                    "watermarks": [],
+                    "attacks": [],
+                    "quality": {},
+                    "startedAt": _utc_timestamp(),
+                }
+            report.setdefault("jobId", job_id)
+            report.setdefault("device", self.device)
+            report.setdefault("request", request.to_json())
+            report.setdefault("watermarks", [])
+            report.setdefault("attacks", [])
+            report.setdefault("quality", {})
+            report["inputDir"] = str(input_dir)
 
-            if request.tune_watermarks:
-                self._ensure_not_cancelled(job_id)
-                for record in self._benchmark_watermarks(job_id, request, input_dir, warmup_dir):
-                    self._ensure_not_cancelled(job_id)
+            if execution_request.tune_watermarks:
+                self._ensure_not_stopped(job_id)
+                for record in self._benchmark_watermarks(job_id, execution_request, input_dir, warmup_dir):
+                    self._ensure_not_stopped(job_id)
                     completed_steps += int(record.get("_stepCount", 1))
                     record.pop("_stepCount", None)
                     report["watermarks"].append(record)
@@ -722,10 +897,10 @@ class ParallelTuningService:
                     _write_json(job_dir / "report.json", report)
                     self._progress(job_id, completed_steps, estimated_steps, f"watermark {record.get('method')} tuned")
 
-            if request.tune_attacks:
-                self._ensure_not_cancelled(job_id)
-                for record in self._benchmark_attacks(job_id, request, input_dir):
-                    self._ensure_not_cancelled(job_id)
+            if execution_request.tune_attacks:
+                self._ensure_not_stopped(job_id)
+                for record in self._benchmark_attacks(job_id, execution_request, input_dir):
+                    self._ensure_not_stopped(job_id)
                     completed_steps += int(record.get("_stepCount", 1))
                     record.pop("_stepCount", None)
                     report["attacks"].append(record)
@@ -733,10 +908,10 @@ class ParallelTuningService:
                     _write_json(job_dir / "report.json", report)
                     self._progress(job_id, completed_steps, estimated_steps, f"attack {record.get('method')} tuned")
 
-            if request.tune_quality:
-                self._ensure_not_cancelled(job_id)
-                quality_record = self._benchmark_quality(job_id, request, input_dir)
-                self._ensure_not_cancelled(job_id)
+            if execution_request.tune_quality:
+                self._ensure_not_stopped(job_id)
+                quality_record = self._benchmark_quality(job_id, execution_request, input_dir)
+                self._ensure_not_stopped(job_id)
                 completed_steps += int(quality_record.get("_stepCount", 1))
                 quality_record.pop("_stepCount", None)
                 report["quality"] = quality_record
@@ -753,7 +928,7 @@ class ParallelTuningService:
             report["summary"] = summary
             report["finishedAt"] = _utc_timestamp()
             _write_json(job_dir / "report.json", report)
-            self._ensure_not_cancelled(job_id)
+            self._ensure_not_stopped(job_id)
             self._mutate_state(
                 job_id,
                 status="succeeded",
@@ -762,10 +937,15 @@ class ParallelTuningService:
                 report=report,
                 summary=summary,
             )
+        except TuningPaused:
+            self._mark_paused(job_id)
         except TuningCancelled:
             self._mark_cancelled(job_id)
         except Exception as exc:
-            if self._is_cancel_requested(job_id):
+            stop_status = self._requested_stop_status(job_id)
+            if stop_status == "paused":
+                self._mark_paused(job_id)
+            elif stop_status == "cancelled":
                 self._mark_cancelled(job_id)
             else:
                 self._mutate_state(
@@ -844,11 +1024,11 @@ class ParallelTuningService:
     def _measure_repeated(self, repeat_count: int, value_key: str, run_once: Any, should_cancel: Any | None = None) -> JsonDict:
         repetitions: list[JsonDict] = []
         for repeat_index in range(repeat_count):
-            if should_cancel is not None and should_cancel():
-                raise TuningCancelled()
+            if should_cancel is not None:
+                self._raise_for_requested_stop(should_cancel())
             entry = dict(run_once())
-            if should_cancel is not None and should_cancel():
-                raise TuningCancelled()
+            if should_cancel is not None:
+                self._raise_for_requested_stop(should_cancel())
             entry["repeatIndex"] = repeat_index + 1
             repetitions.append(entry)
             if _oom_like(entry.get("error")) or not entry.get("ok"):
@@ -905,13 +1085,13 @@ class ParallelTuningService:
                     sample_count,
                     phase,
                 ),
-                should_cancel=lambda: self._is_cancel_requested(job_id),
+                should_cancel=lambda: self._is_stop_requested(job_id),
             )
 
         if request.search_strategy == "exhaustive":
             index = 0
             while index < len(schedule):
-                self._ensure_not_cancelled(job_id)
+                self._ensure_not_stopped(job_id)
                 candidate = schedule[index]
                 previous_best = _best_by_throughput(entries)
                 entry = run_measurement(
@@ -920,7 +1100,7 @@ class ParallelTuningService:
                     sample_count=measurement_sample_count(candidate, final=True),
                     phase="exhaustive",
                 )
-                self._ensure_not_cancelled(job_id)
+                self._ensure_not_stopped(job_id)
                 entries.append(entry)
                 on_entry(entry)
                 if _oom_like(entry.get("error")) or not entry.get("ok"):
@@ -959,7 +1139,7 @@ class ParallelTuningService:
             else "single_pass"
         )
         while index < len(schedule):
-            self._ensure_not_cancelled(job_id)
+            self._ensure_not_stopped(job_id)
             candidate = schedule[index]
             previous_best = _best_by_throughput(entries)
             entry = run_measurement(
@@ -968,7 +1148,7 @@ class ParallelTuningService:
                 sample_count=measurement_sample_count(candidate, final=False),
                 phase=measurement_phase,
             )
-            self._ensure_not_cancelled(job_id)
+            self._ensure_not_stopped(job_id)
             entries.append(entry)
             on_entry(entry)
             if _oom_like(entry.get("error")) or not entry.get("ok"):
@@ -1022,14 +1202,14 @@ class ParallelTuningService:
             }
         )
         for candidate in finalist_values:
-            self._ensure_not_cancelled(job_id)
+            self._ensure_not_stopped(job_id)
             entry = run_measurement(
                 candidate,
                 repeat_count=request.repeat_count,
                 sample_count=measurement_sample_count(candidate, final=True),
                 phase="final",
             )
-            self._ensure_not_cancelled(job_id)
+            self._ensure_not_stopped(job_id)
             entries.append(entry)
             on_entry(entry)
             if _oom_like(entry.get("error")):

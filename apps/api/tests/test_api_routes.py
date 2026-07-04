@@ -73,6 +73,55 @@ class ApiRoutesTest(unittest.TestCase):
             self.assertEqual(listed.status_code, 200)
             self.assertIn(created.json()["id"], [job["id"] for job in listed.json()])
 
+    def test_parallel_tuning_can_pause_and_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
+            os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
+            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
+
+            from app.core.config import get_settings
+
+            get_settings.cache_clear()
+            from app.main import create_app
+            from fastapi.testclient import TestClient
+
+            client = TestClient(create_app())
+            job_id = "tune_api_pause"
+            state_dir = root / "runs" / "parallel_tuning" / job_id
+            state_dir.mkdir(parents=True)
+            (state_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "id": job_id,
+                        "status": "running",
+                        "progress": 12,
+                        "message": "running",
+                        "request": {"tuneWatermarks": False, "tuneAttacks": False, "tuneQuality": False},
+                        "events": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            pause_response = client.post(f"/system/parallel-tuning/{job_id}/pause")
+            self.assertEqual(pause_response.status_code, 200)
+            self.assertEqual(pause_response.json()["status"], "paused")
+
+            resume_response = client.post(f"/system/parallel-tuning/{job_id}/resume")
+            self.assertEqual(resume_response.status_code, 200)
+            self.assertEqual(resume_response.json()["id"], job_id)
+            self.assertEqual(resume_response.json()["status"], "running")
+
+            tuning_state = resume_response.json()
+            for _attempt in range(20):
+                if tuning_state["status"] != "running":
+                    break
+                time.sleep(0.05)
+                tuning_state = client.get(f"/system/parallel-tuning/{job_id}").json()
+            self.assertEqual(tuning_state["status"], "succeeded")
+
     def test_post_run_queues_and_runtime_is_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

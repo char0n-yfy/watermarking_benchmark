@@ -83,6 +83,68 @@ class ParallelTuningPolicyTest(unittest.TestCase):
             self.assertEqual(cancelled["message"], "tuning cancellation requested")
             self.assertEqual(cancelled["events"][-1]["stage"], "cancel_requested")
 
+    def test_pause_requests_running_job_stop_without_marking_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            service._write_state(
+                "tune_pause",
+                {
+                    "id": "tune_pause",
+                    "status": "running",
+                    "progress": 18,
+                    "message": "running slow candidate",
+                    "events": [],
+                    "request": {"tuneWatermarks": False, "tuneAttacks": False, "tuneQuality": False},
+                },
+            )
+            release = threading.Event()
+            thread = threading.Thread(target=release.wait, daemon=True)
+            thread.start()
+            service._threads["tune_pause"] = thread
+
+            try:
+                paused = service.pause("tune_pause")
+            finally:
+                release.set()
+                thread.join(timeout=1)
+
+            self.assertEqual(paused["status"], "pausing")
+            self.assertTrue(paused["pauseRequested"])
+            self.assertNotIn("finishedAt", paused)
+            self.assertEqual(paused["message"], "tuning pause requested")
+            self.assertEqual(paused["events"][-1]["stage"], "pause_requested")
+
+    def test_resume_restarts_paused_job_with_same_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            service._write_state(
+                "tune_resume",
+                {
+                    "id": "tune_resume",
+                    "status": "paused",
+                    "progress": 40,
+                    "message": "tuning paused",
+                    "events": [],
+                    "request": {"tuneWatermarks": False, "tuneAttacks": False, "tuneQuality": False},
+                },
+            )
+            finished = threading.Event()
+
+            def finish_immediately(job_id: str, request: TuningRequest) -> None:
+                service._mutate_state(job_id, status="succeeded", progress=100, message="resumed")
+                finished.set()
+
+            service._run_job = finish_immediately  # type: ignore[method-assign]
+
+            resumed = service.resume("tune_resume")
+            self.assertEqual(resumed["id"], "tune_resume")
+            self.assertEqual(resumed["status"], "running")
+            self.assertFalse(resumed.get("pauseRequested", False))
+            self.assertTrue(finished.wait(timeout=1))
+            self.assertEqual(service.get("tune_resume")["status"], "succeeded")
+
     def test_start_is_blocked_while_job_is_cancelling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

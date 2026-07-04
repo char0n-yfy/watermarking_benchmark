@@ -151,7 +151,7 @@ def create_app() -> FastAPI:
         return collect_system_metrics(data_root=settings.data_root, device=settings.device)
 
     @app.post("/system/parallel-tuning")
-    def start_parallel_tuning(payload: dict[str, object] | None = Body(default=None)) -> dict[str, object]:
+    def start_parallel_tuning(payload: Optional[dict[str, object]] = Body(default=None)) -> dict[str, object]:
         try:
             return tuning_service.start(dict(payload or {}))
         except ValueError as exc:
@@ -179,6 +179,22 @@ def create_app() -> FastAPI:
     def save_parallel_tuning_job(job_id: str) -> dict[str, object]:
         try:
             return tuning_service.save_parameters(job_id, tuning_env_path())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/system/parallel-tuning/{job_id}/pause")
+    def pause_parallel_tuning_job(job_id: str) -> dict[str, object]:
+        try:
+            return tuning_service.pause(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/system/parallel-tuning/{job_id}/resume")
+    def resume_parallel_tuning_job(job_id: str) -> dict[str, object]:
+        try:
+            return tuning_service.resume(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

@@ -13,7 +13,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from PIL import Image
 
@@ -80,7 +80,7 @@ from app.services.scoring import compute_image_quality_pairs_with_profile
 
 JsonDict = dict[str, Any]
 RunStateCallback = Callable[[JsonDict], None]
-StopIntentCallback = Callable[[], str | bool | None]
+StopIntentCallback = Callable[[], Union[str, bool, None]]
 
 
 @dataclass(frozen=True)

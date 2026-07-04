@@ -331,6 +331,20 @@ export function saveParallelTuning(jobId: string): Promise<ParallelTuningSaveRes
   });
 }
 
+export function pauseParallelTuning(jobId: string): Promise<ParallelTuningJob> {
+  return requestJson<ParallelTuningJob>(`/system/parallel-tuning/${encodeURIComponent(jobId)}/pause`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function resumeParallelTuning(jobId: string): Promise<ParallelTuningJob> {
+  return requestJson<ParallelTuningJob>(`/system/parallel-tuning/${encodeURIComponent(jobId)}/resume`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
 export function cancelParallelTuning(jobId: string): Promise<ParallelTuningJob> {
   return requestJson<ParallelTuningJob>(`/system/parallel-tuning/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",
