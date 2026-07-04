@@ -381,7 +381,7 @@ function isViewpointTuningMethod(method: string) {
 const VIEWPOINT_RERENDERING_PRIMARY_METHOD = "3d_viewpoint_rerendering_rotate_point";
 const DIFFUSION_REGENERATION_PRIMARY_METHOD = "regen_diffusion";
 const DIFFUSION_REGENERATION_METHODS = new Set(["regen_diffusion", "2x_regen", "4x_regen"]);
-const NON_TUNABLE_ATTACK_METHODS = new Set(["identity"]);
+const NON_TUNABLE_ATTACK_METHODS = new Set(["identity", "atk-identity"]);
 
 const ATTACK_DISPLAY_NAMES: Record<string, { en: string; zh: string }> = {
   brightness: { en: "Brightness", zh: "亮度调整" },
@@ -530,6 +530,9 @@ function buildAttackTuningOptions(attacks: AttackPreset[]): TuningMethodOption[]
   const groups = new Map<string, AttackPreset[]>();
   for (const attack of attacks) {
     const method = attackTuningRepresentativeMethod(attackMethod(attack));
+    if (NON_TUNABLE_ATTACK_METHODS.has(method) || NON_TUNABLE_ATTACK_METHODS.has(attack.id)) {
+      continue;
+    }
     groups.set(method, [...(groups.get(method) ?? []), attack]);
   }
   return [...groups.entries()]
@@ -643,7 +646,9 @@ function buildTuningCatalogStats(
 ): TuningCatalogStats {
   const watermarkMethods = new Set(algorithms.map((algorithm) => algorithm.method || algorithm.id).filter(Boolean));
   const attackMethods = new Set(
-    attacks.map((attack) => attackTuningRepresentativeMethod(attack.executionMethod || attack.method)).filter(Boolean)
+    attacks
+      .map((attack) => attackTuningRepresentativeMethod(attack.executionMethod || attack.method))
+      .filter((method) => method && !NON_TUNABLE_ATTACK_METHODS.has(method))
   );
   const weightedAttackVariants = attacks.filter((attack) => attack.weightsPackId || attack.weightsDir || attack.weightsPath).length;
   return {

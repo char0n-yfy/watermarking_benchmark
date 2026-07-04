@@ -1862,11 +1862,11 @@ function viewpointMotionLabel(motion: string, language: "zh" | "en") {
 }
 
 function attackResourceMethod(attack: AttackPreset) {
-  if (attack.displayMethod) {
-    return attack.displayMethod;
-  }
   const parsed = parseViewpointMethod(attack.method);
-  return parsed ? parsed.motion : attack.method;
+  if (parsed) {
+    return parsed.motion;
+  }
+  return attack.method;
 }
 
 function attackResourceGroup(attack: AttackPreset) {

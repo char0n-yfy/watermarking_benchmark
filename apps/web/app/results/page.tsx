@@ -32,7 +32,20 @@ import {
   buildMainOverviewRadarTemplate,
   buildOverviewDetailRadars
 } from "@/lib/overview-radar";
-import { fetchAlgorithms, fetchAttacks, fetchRunResults, fetchRunScore, fetchRuns } from "@/lib/api";
+import {
+  fetchAlgorithms,
+  fetchAttacks,
+  fetchDatasetCatalog,
+  fetchRunResults,
+  fetchRunScore,
+  fetchRuns
+} from "@/lib/api";
+import {
+  countBenchmarkAttackTypes,
+  countBenchmarkAttackTypesFromMethods,
+  countSelectedBenchmarkAttackTypes,
+  isHiddenBenchmarkAttack
+} from "@/lib/benchmark-attack-catalog";
 import { formatMetric, rankAggregates, statusBadgeClass } from "@/lib/insights";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
@@ -198,6 +211,12 @@ export default function ResultsPage() {
   const [score, setScore] = useState<BenchmarkScore | null>(null);
   const [resourceAlgorithmNames, setResourceAlgorithmNames] = useState<Record<string, string>>({});
   const [resourceAttackNames, setResourceAttackNames] = useState<Record<string, string>>({});
+  const [resourceAttacks, setResourceAttacks] = useState<AttackPreset[]>([]);
+  const [resourceCatalogCounts, setResourceCatalogCounts] = useState({
+    datasets: 0,
+    algorithms: 0,
+    attacks: 0
+  });
   const [activeInsight, setActiveInsight] = useState<ChartInsight | null>(null);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -267,9 +286,10 @@ export default function ResultsPage() {
   useEffect(() => {
     let cancelled = false;
     const loadResourceNames = async () => {
-      const [algorithms, attacks] = await Promise.all([
+      const [algorithms, attacks, datasetCatalog] = await Promise.all([
         fetchAlgorithms().catch(() => [] as AlgorithmVersion[]),
-        fetchAttacks().catch(() => [] as AttackPreset[])
+        fetchAttacks().catch(() => [] as AttackPreset[]),
+        fetchDatasetCatalog().catch(() => ({ items: [] }))
       ]);
       if (cancelled) {
         return;
@@ -290,6 +310,12 @@ export default function ResultsPage() {
       }
       setResourceAlgorithmNames(nextAlgorithmNames);
       setResourceAttackNames(nextAttackNames);
+      setResourceAttacks(attacks);
+      setResourceCatalogCounts({
+        datasets: datasetCatalog.items?.length ?? 0,
+        algorithms: algorithms.length,
+        attacks: countBenchmarkAttackTypes(attacks)
+      });
     };
     void loadResourceNames();
     return () => {
@@ -450,7 +476,10 @@ export default function ResultsPage() {
     () => legacyRanking.filter((row) => selectedSet.size === 0 || selectedSet.has(row.algorithmId)),
     [legacyRanking, selectedSet]
   );
-  const summary = useMemo(() => buildRunSummary(results, score), [results, score]);
+  const summary = useMemo(
+    () => buildRunSummary(results, resourceCatalogCounts, resourceAttacks, t.common.status as Record<string, string>, language),
+    [language, resourceAttacks, resourceCatalogCounts, results, t.common.status]
+  );
   const aggregateRows = useMemo(
     () =>
       (results?.aggregates ?? [])
@@ -629,12 +658,31 @@ export default function ResultsPage() {
       ) : (
         <>
       <section className="results-summary-grid">
-        <SummaryCard label={t.runs.run} value={summary.runId} meta={summary.configName} />
-        <SummaryCard label={t.runs.status} value={summary.statusLabel} meta={`${summary.progress}% ${t.common.progress}`} />
-        <SummaryCard label={t.common.wrs} value={summary.wrs} meta={summary.protocolStatus} />
-        <SummaryCard label={t.common.coverage} value={summary.coverage} meta={summary.coverageMeta} />
-        <SummaryCard label={language === "zh" ? "完成结果单元" : "Completed result units"} value={summary.completedResultUnits} meta={`${summary.totalResultUnits} ${language === "zh" ? "结果单元" : "result units"}`} />
-        <SummaryCard label={t.common.samples} value={summary.sampleCount} meta={`${summary.algorithmCount} ${t.console.algorithms} / ${summary.attackCount} ${t.console.attacks}`} />
+        <SummaryCard
+          label={language === "zh" ? "实验名称" : "Experiment"}
+          meta={summary.experimentMeta}
+          value={summary.experimentName}
+        />
+        <SummaryCard
+          label={language === "zh" ? "实验状态" : "Status"}
+          meta={summary.statusMeta}
+          value={summary.statusLabel}
+        />
+        <SummaryCard
+          label={language === "zh" ? "数据集" : "Datasets"}
+          meta={summary.datasetMeta}
+          value={summary.datasetValue}
+        />
+        <SummaryCard
+          label={language === "zh" ? "水印算法" : "Watermarks"}
+          meta={summary.watermarkMeta}
+          value={summary.watermarkValue}
+        />
+        <SummaryCard
+          label={language === "zh" ? "攻击算法" : "Attacks"}
+          meta={summary.attackMeta}
+          value={summary.attackValue}
+        />
       </section>
 
       <section className="result-confidence-card">
@@ -3323,27 +3371,124 @@ function makeRunResultsShell(run: DemoRunRecord): RunResults {
   };
 }
 
-function buildRunSummary(results: RunResults | null, score: BenchmarkScore | null) {
+type ResourceCatalogCounts = {
+  datasets: number;
+  algorithms: number;
+  attacks: number;
+};
+
+function selectionIdList(selection: Record<string, unknown> | null | undefined, field: string) {
+  return Array.isArray(selection?.[field]) ? selection[field].map((item) => String(item)) : [];
+}
+
+function formatCatalogRatio(used: number, total: number) {
+  const safeUsed = Math.max(0, used);
+  const safeTotal = Math.max(safeUsed, total);
+  return `${safeUsed}/${safeTotal}`;
+}
+
+function isBaselineAttackId(attackId: string) {
+  return isHiddenBenchmarkAttack({ id: attackId, method: attackId.replace(/^atk-/, "").replace(/-/g, "_") });
+}
+
+function selectionAttackPresetIds(selection: Record<string, unknown> | null | undefined) {
+  if (!Array.isArray(selection?.attackPresetIds)) {
+    return [];
+  }
+  return selection.attackPresetIds.map((item) => String(item)).filter((attackId) => !isBaselineAttackId(attackId));
+}
+
+function countUsedBenchmarkAttacks(
+  results: RunResults | null,
+  selection: Record<string, unknown> | null,
+  attacks: AttackPreset[]
+) {
+  const presetIdsFromSelection = selectionAttackPresetIds(selection);
+  if (presetIdsFromSelection.length > 0) {
+    return countSelectedBenchmarkAttackTypes(attacks, presetIdsFromSelection);
+  }
+
   const units = results?.resultUnits ?? [];
-  const algorithmCount = new Set(units.map((unit) => unit.algorithmId)).size;
-  const attackCount = new Set(units.map((unit) => unit.attackPresetId)).size;
-  const sampleCount = units.reduce((total, unit) => total + unit.sampleCount, 0);
-  const succeededUnits = units.filter((unit) => unit.status === "succeeded").length;
-  const totalUnits = units.length || results?.run.cells || 0;
+  const methods = Array.from(
+    new Set(
+      units
+        .map((unit) => unit.attackMethod || unit.attackPresetId)
+        .filter((method) => method && !isBaselineAttackId(method))
+    )
+  );
+  if (methods.length > 0) {
+    return countBenchmarkAttackTypesFromMethods(methods);
+  }
+
+  const presetIdsFromUnits = Array.from(
+    new Set(units.map((unit) => unit.attackPresetId).filter((attackId) => attackId && !isBaselineAttackId(attackId)))
+  );
+  return countSelectedBenchmarkAttackTypes(attacks, presetIdsFromUnits);
+}
+
+function buildRunSummary(
+  results: RunResults | null,
+  catalog: ResourceCatalogCounts,
+  attacks: AttackPreset[],
+  statusLabels: Record<string, string>,
+  language: "zh" | "en"
+) {
+  const units = results?.resultUnits ?? [];
+  const selection =
+    results?.summary && typeof results.summary.selection === "object" && results.summary.selection !== null
+      ? (results.summary.selection as Record<string, unknown>)
+      : null;
+
+  const datasetIdsFromSelection = selectionIdList(selection, "datasetIds");
+  const datasetIdsFromUnits = Array.from(new Set(units.map((unit) => unit.datasetId).filter(Boolean)));
+  const usedDatasetIds = datasetIdsFromSelection.length ? datasetIdsFromSelection : datasetIdsFromUnits;
+  const usedDatasetCount = usedDatasetIds.length;
+
+  const algorithmIdsFromSelection = selectionIdList(selection, "algorithmIds");
+  const algorithmIdsFromUnits = Array.from(new Set(units.map((unit) => unit.algorithmId).filter(Boolean)));
+  const usedAlgorithmIds = algorithmIdsFromSelection.length ? algorithmIdsFromSelection : algorithmIdsFromUnits;
+  const usedAlgorithmCount = usedAlgorithmIds.length;
+
+  const usedAttackCount = countUsedBenchmarkAttacks(results, selection, attacks);
+  const totalAttackCount = catalog.attacks || countBenchmarkAttackTypes(attacks);
+
+  const maxSamplesFromSelection =
+    typeof selection?.maxSamples === "number" ? selection.maxSamples : Number(selection?.maxSamples ?? 0);
+  const maxSamplesFromUnits = units.length ? Math.max(...units.map((unit) => unit.sampleCount)) : 0;
+  const maxSamples = maxSamplesFromSelection > 0 ? maxSamplesFromSelection : maxSamplesFromUnits;
+
+  const experimentName =
+    results?.run.taskName?.trim() || results?.run.configName?.trim() || results?.run.id || "n/a";
+  const statusKey = results?.run.status ?? "n/a";
+  const statusLabel = statusLabels[statusKey] ?? statusKey;
+  const progress = Math.round(results?.run.progress ?? 0);
+
+  const datasetLabel =
+    usedDatasetIds.length === 1
+      ? usedDatasetIds[0]
+      : usedDatasetIds.length > 1
+        ? usedDatasetIds.join(", ")
+        : language === "zh"
+          ? "未指定"
+          : "n/a";
+
   return {
-    algorithmCount,
-    attackCount,
-    completedResultUnits: `${succeededUnits}/${totalUnits}`,
-    configName: results?.run.configName ?? "n/a",
-    coverage: score ? `${score.coverage.coveredCategoryCount}/${score.coverage.requiredCategoryCount}` : "n/a",
-    coverageMeta: score ? `${Math.round(score.coverage.coverageRatio * 100)}%` : "n/a",
-    progress: Math.round(results?.run.progress ?? 0).toString(),
-    protocolStatus: score?.status ?? "n/a",
-    runId: results?.run.id ?? "n/a",
-    sampleCount: sampleCount.toLocaleString(),
-    statusLabel: results?.run.status ?? "n/a",
-    totalResultUnits: totalUnits.toString(),
-    wrs: score?.wrs == null ? "n/a" : score.wrs.toFixed(1)
+    experimentName,
+    experimentMeta: results?.run.id ?? "n/a",
+    statusLabel,
+    statusMeta: `${progress}% ${language === "zh" ? "进度" : "progress"}`,
+    datasetValue: formatCatalogRatio(usedDatasetCount, catalog.datasets),
+    datasetMeta:
+      maxSamples > 0
+        ? language === "zh"
+          ? `${datasetLabel} · ${maxSamples.toLocaleString()} 张/数据集`
+          : `${datasetLabel} · ${maxSamples.toLocaleString()} samples/dataset`
+        : datasetLabel,
+    watermarkValue: formatCatalogRatio(usedAlgorithmCount, catalog.algorithms),
+    watermarkMeta:
+      language === "zh" ? "本实验选用的水印算法数" : "Watermark algorithms selected in this run",
+    attackValue: formatCatalogRatio(usedAttackCount, totalAttackCount),
+    attackMeta: language === "zh" ? "本实验选用的攻击算法数" : "Attack algorithms selected in this run"
   };
 }
 
