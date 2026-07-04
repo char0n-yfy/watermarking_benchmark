@@ -453,11 +453,11 @@ export default function ResultsPage() {
 
   const selectedSet = useMemo(() => new Set(selectedAlgorithmIds), [selectedAlgorithmIds]);
   const selectedScoreRows = useMemo(
-    () => scoreRows.filter((row) => selectedSet.size === 0 || selectedSet.has(row.algorithmId)),
+    () => scoreRows.filter((row) => selectedSet.has(row.algorithmId)),
     [scoreRows, selectedSet]
   );
   const selectedLegacyRows = useMemo(
-    () => legacyRanking.filter((row) => selectedSet.size === 0 || selectedSet.has(row.algorithmId)),
+    () => legacyRanking.filter((row) => selectedSet.has(row.algorithmId)),
     [legacyRanking, selectedSet]
   );
   const summary = useMemo(
@@ -559,7 +559,6 @@ export default function ResultsPage() {
       <div className="topbar">
         <div className="title-block">
           <h1>{t.results.title}</h1>
-          <p>{t.results.subtitle}</p>
         </div>
         <div className="toolbar">
           <select
@@ -572,7 +571,7 @@ export default function ResultsPage() {
             {runs.length === 0 ? <option value="">No runs</option> : null}
             {runs.map((run) => (
               <option key={run.id} value={run.id}>
-                {(run.taskName || run.configName || run.id).slice(0, 72)} / {run.status}
+                {friendlyRunRecordName(run, language).slice(0, 72)} / {run.status}
               </option>
             ))}
           </select>
@@ -628,6 +627,7 @@ export default function ResultsPage() {
           iconTitle={uiText("标准化图像样本集合", "Standardized image sample collection")}
           label={language === "zh" ? "数据集" : "Datasets"}
           meta={summary.datasetMeta}
+          showMeta={false}
           value={summary.datasetValue}
         />
         <SummaryCard
@@ -635,6 +635,7 @@ export default function ResultsPage() {
           iconTitle={uiText("隐藏嵌入与可检测标识", "Hidden embedding and detectable mark")}
           label={language === "zh" ? "水印算法" : "Watermarks"}
           meta={summary.watermarkMeta}
+          showMeta={false}
           value={summary.watermarkValue}
         />
         <SummaryCard
@@ -642,13 +643,10 @@ export default function ResultsPage() {
           iconTitle={uiText("鲁棒性压力测试与失真模拟", "Robustness stress tests and distortion simulation")}
           label={language === "zh" ? "攻击算法" : "Attacks"}
           meta={summary.attackMeta}
+          showMeta={false}
           value={summary.attackValue}
         />
       </section>
-
-      {activeInsight?.kind === "run" && activeInsight.key?.startsWith("summary-card:") ? (
-        <InsightStrip insight={activeInsight} />
-      ) : null}
 
       <section className="result-tabs" aria-label={t.results.resultViews}>
         {RESULT_TABS.map((tab) => (
@@ -845,7 +843,6 @@ export default function ResultsPage() {
                     />
                     <span>
                       <strong>{item.label}</strong>
-                      <em>{item.meta}</em>
                     </span>
                     <b>{item.count}</b>
                   </label>
@@ -869,7 +866,7 @@ export default function ResultsPage() {
           <div className="panel-body overview-radar-body">
             <BenchmarkRadar
               categories={overviewMainRadarCategories}
-              emptyText={t.common.noData}
+              emptyText="暂无数据"
               onSelectCategory={(category) =>
                 setActiveInsight({
                   kind: "category",
@@ -893,7 +890,6 @@ export default function ResultsPage() {
               <div className="panel-header">
                 <div className="overview-radar-detail-heading">
                   <h2>{detail.title}</h2>
-                  <p>{detail.subtitle}</p>
                 </div>
                 <BarChart3 size={16} />
               </div>
@@ -902,7 +898,7 @@ export default function ResultsPage() {
                   <BenchmarkRadar
                     categories={detail.categories}
                     colorDomain={algorithmColorDomain}
-                    emptyText={t.common.noData}
+                    emptyText="暂无数据"
                     onSelectCategory={(category) =>
                       setActiveInsight({
                         kind: "category",
@@ -1076,7 +1072,6 @@ export default function ResultsPage() {
                       />
                       <span>
                         <strong>{item.label}</strong>
-                        <em>{item.meta}</em>
                       </span>
                       <b>{item.count}</b>
                     </label>
@@ -1334,7 +1329,6 @@ export default function ResultsPage() {
                     />
                     <span>
                       <strong>{item.label}</strong>
-                      <em>{item.meta}</em>
                     </span>
                     <b>{item.count}</b>
                   </label>
@@ -1841,12 +1835,14 @@ export default function ResultsPage() {
     iconTitle,
     label,
     meta,
+    showMeta = true,
     value
   }: {
     iconKind?: SummaryIconKind;
     iconTitle?: string;
     label: string;
     meta: string;
+    showMeta?: boolean;
     value: string;
   }) {
     const summaryInsight = iconKind
@@ -1867,22 +1863,32 @@ export default function ResultsPage() {
       <div
         className={iconKind ? `result-summary-card has-summary-icon ${iconKind}` : "result-summary-card"}
         data-active={activeInsight?.key === summaryInsight?.key ? "true" : undefined}
+        onClick={() => summaryInsight && setActiveInsight(summaryInsight)}
+        onKeyDown={(event) => {
+          if (!summaryInsight) {
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setActiveInsight(summaryInsight);
+          }
+        }}
+        role={summaryInsight ? "button" : undefined}
+        tabIndex={summaryInsight ? 0 : undefined}
+        title={iconTitle ?? label}
       >
         {iconKind ? (
-          <button
-            aria-label={`${label}: ${iconTitle ?? value}`}
+          <span
+            aria-hidden="true"
             className="result-summary-icon-button"
-            onClick={() => summaryInsight && setActiveInsight(summaryInsight)}
-            title={iconTitle ?? label}
-            type="button"
           >
             <img alt="" draggable={false} src={`/result-icons/${iconKind}.png`} />
-          </button>
+          </span>
         ) : null}
         <div className="result-summary-copy">
           <span>{label}</span>
           <strong title={value}>{value}</strong>
-          <small title={meta}>{meta}</small>
+          {showMeta ? <small title={meta}>{meta}</small> : null}
         </div>
       </div>
     );
@@ -2995,6 +3001,41 @@ function formatCatalogRatio(used: number, total: number) {
   return `${safeUsed}/${safeTotal}`;
 }
 
+function friendlyDatasetName(datasetLabel: string): string {
+  return datasetLabel
+    .split(",")
+    .map((item) => {
+      const trimmed = item.trim();
+      return trimmed.toLowerCase() === "imagenet" ? "ImageNet" : trimmed;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function friendlyExperimentName(rawName: string, datasetLabel: string, maxSamples: number, language: string): string {
+  const isImportedPlaceholder = /^Imported run\b/i.test(rawName);
+  if (!isImportedPlaceholder || maxSamples <= 0) {
+    return rawName;
+  }
+  const datasetName = friendlyDatasetName(datasetLabel);
+  if (language === "zh") {
+    return `${datasetName} ${maxSamples.toLocaleString()} 张图片实验`;
+  }
+  return `${datasetName} ${maxSamples.toLocaleString()}-image experiment`;
+}
+
+function friendlyRunRecordName(run: DemoRunRecord, language: string): string {
+  const rawName = run.taskName?.trim() || run.configName?.trim() || run.id;
+  if (!/^Imported run\b/i.test(rawName)) {
+    return rawName;
+  }
+  const canonicalPhase = run.phases?.find((phase) => phase.key === "canonical");
+  const currentItem = canonicalPhase?.currentItem;
+  const datasetId = typeof currentItem?.datasetId === "string" ? currentItem.datasetId : "dataset";
+  const sampleCount = Number(currentItem?.sampleCount ?? canonicalPhase?.total ?? 0);
+  return friendlyExperimentName(rawName, datasetId, sampleCount, language);
+}
+
 function isBaselineAttackId(attackId: string) {
   return isHiddenBenchmarkAttack({ id: attackId, method: attackId.replace(/^atk-/, "").replace(/-/g, "_") });
 }
@@ -3065,8 +3106,6 @@ function buildRunSummary(
   const maxSamplesFromUnits = units.length ? Math.max(...units.map((unit) => unit.sampleCount)) : 0;
   const maxSamples = maxSamplesFromSelection > 0 ? maxSamplesFromSelection : maxSamplesFromUnits;
 
-  const experimentName =
-    results?.run.taskName?.trim() || results?.run.configName?.trim() || results?.run.id || "n/a";
   const statusKey = results?.run.status ?? "n/a";
   const statusLabel = statusLabels[statusKey] ?? statusKey;
   const progress = Math.round(results?.run.progress ?? 0);
@@ -3079,6 +3118,10 @@ function buildRunSummary(
         : language === "zh"
           ? "未指定"
           : "n/a";
+
+  const rawExperimentName =
+    results?.run.taskName?.trim() || results?.run.configName?.trim() || results?.run.id || "n/a";
+  const experimentName = friendlyExperimentName(rawExperimentName, datasetLabel, maxSamples, language);
 
   return {
     experimentName,

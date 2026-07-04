@@ -375,7 +375,7 @@ function buildRadarTooltip({
 }
 
 function formatRadarScore(score: number | null | undefined): string {
-  return score == null || !Number.isFinite(score) ? "no data" : `Score ${score.toFixed(3)}`;
+  return score == null || !Number.isFinite(score) ? "暂无数据" : `得分 ${score.toFixed(3)}`;
 }
 
 function buildRadarAreaPath(points: RadarPlotPoint[]): string | null {
