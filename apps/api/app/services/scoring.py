@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
@@ -11,7 +12,14 @@ from typing import Any, Iterable, Mapping
 
 from PIL import Image
 
-from evaluator.execution import ExecutionProfile, resolve_cpu_workers, resolve_named_batch_size
+from evaluator.execution import (
+    ExecutionProfile,
+    parse_named_int_overrides,
+    resolve_cpu_workers,
+    resolve_named_batch_size,
+    resolve_named_cpu_workers,
+)
+from evaluator.image_batch_io import load_rgb_batch
 
 
 JsonDict = dict[str, Any]
@@ -82,6 +90,25 @@ QUALITY_BOUNDS = {
     "ssim_degradation": (0.001, 0.25),
     "ms_ssim_degradation": (0.001, 0.25),
     "nmi_degradation": (0.05, 0.55),
+}
+CPU_QUALITY_METRICS = ("psnr", "ssim", "ms_ssim", "nmi")
+PERCEPTUAL_QUALITY_METRICS = ("lpips", "dists")
+TUNABLE_QUALITY_METRICS = CPU_QUALITY_METRICS + PERCEPTUAL_QUALITY_METRICS
+CPU_QUALITY_OUTPUT_KEYS = {
+    "psnr": "psnr",
+    "ssim": "ssim",
+    "ms_ssim": "msSsim",
+    "msssim": "msSsim",
+    "msSsim": "msSsim",
+    "nmi": "nmi",
+}
+CPU_QUALITY_CANONICAL_KEYS = {
+    "psnr": "psnr",
+    "ssim": "ssim",
+    "ms_ssim": "ms_ssim",
+    "msssim": "ms_ssim",
+    "msSsim": "ms_ssim",
+    "nmi": "nmi",
 }
 
 
@@ -881,7 +908,79 @@ def _compute_cpu_quality_metrics_batch(pairs: list[tuple[Path, Path]]) -> list[J
     return metrics
 
 
-def _compute_cpu_quality_metrics_batch_with_profile(pairs: list[tuple[Path, Path]]) -> tuple[list[JsonDict], JsonDict]:
+def _normalize_cpu_quality_metrics(metrics: Iterable[str] | None = None) -> tuple[str, ...]:
+    if metrics is None:
+        return CPU_QUALITY_METRICS
+    selected: list[str] = []
+    for metric in metrics:
+        canonical = CPU_QUALITY_CANONICAL_KEYS.get(str(metric).strip())
+        if canonical and canonical not in selected:
+            selected.append(canonical)
+    return tuple(selected or CPU_QUALITY_METRICS)
+
+
+def _cpu_quality_metric_overrides_configured() -> bool:
+    return bool(parse_named_int_overrides(os.getenv("WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC")))
+
+
+def _cpu_quality_worker_config(metric: str, job_count: int):
+    return resolve_named_cpu_workers(
+        metric,
+        overrides_env="WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC",
+        global_env="WM_BENCH_QUALITY_CPU_WORKERS",
+        job_count=job_count,
+        enabled=True,
+        default_cap=32,
+    )
+
+
+def _compute_cpu_quality_metrics_batch_with_profile(
+    pairs: list[tuple[Path, Path]],
+    *,
+    metrics: Iterable[str] | None = None,
+) -> tuple[list[JsonDict], JsonDict]:
+    selected_metrics = _normalize_cpu_quality_metrics(metrics)
+    split_by_metric = metrics is not None or _cpu_quality_metric_overrides_configured()
+    if split_by_metric:
+        results: list[JsonDict] = [{} for _pair in pairs]
+        worker_profiles: dict[str, JsonDict] = {}
+        actual_workers: list[int] = []
+        metric_errors: dict[str, str] = {}
+        for metric in selected_metrics:
+            worker_config = _cpu_quality_worker_config(metric, len(pairs))
+            workers = worker_config.value
+            actual_workers.append(workers)
+            worker_profiles[metric] = worker_config.to_json()
+            output_key = CPU_QUALITY_OUTPUT_KEYS[metric]
+
+            def run_one(pair: tuple[Path, Path]) -> float:
+                return _compute_cpu_quality_metric_pair(pair[0], pair[1], metric)
+
+            try:
+                if workers <= 1 or len(pairs) <= 1:
+                    values = [run_one(pair) for pair in pairs]
+                else:
+                    with ThreadPoolExecutor(max_workers=workers) as executor:
+                        values = list(executor.map(run_one, pairs))
+                for result, value in zip(results, values):
+                    result[output_key] = value
+            except Exception as exc:
+                metric_errors[metric] = f"{type(exc).__name__}: {exc}"
+        profile = ExecutionProfile(
+            stage="quality_cpu",
+            method="_".join(selected_metrics),
+            mode="split_threadpool" if max(actual_workers or [1]) > 1 else "split_serial",
+            job_count=len(pairs),
+            cpu_workers=max(actual_workers or [1]),
+            batch_stage="quality_cpu",
+            config={
+                "metrics": list(selected_metrics),
+                "metricWorkers": worker_profiles,
+            },
+            details={"errors": metric_errors} if metric_errors else {},
+        ).to_json()
+        return results, profile
+
     worker_config = resolve_cpu_workers(
         "WM_BENCH_QUALITY_CPU_WORKERS",
         len(pairs),
@@ -896,22 +995,47 @@ def _compute_cpu_quality_metrics_batch_with_profile(pairs: list[tuple[Path, Path
         job_count=len(pairs),
         cpu_workers=workers,
         batch_stage="quality_cpu",
-        config={"cpuWorkers": worker_config.to_json()},
+        config={"cpuWorkers": worker_config.to_json(), "metrics": list(selected_metrics)},
     ).to_json()
     if workers <= 1 or len(pairs) <= 1:
-        return [_compute_cpu_quality_metrics(reference, target) for reference, target in pairs], profile
+        return [_compute_cpu_quality_metrics(reference, target, metrics=selected_metrics) for reference, target in pairs], profile
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        return list(executor.map(lambda pair: _compute_cpu_quality_metrics(*pair), pairs)), profile
+        return list(
+            executor.map(lambda pair: _compute_cpu_quality_metrics(*pair, metrics=selected_metrics), pairs)
+        ), profile
 
 
-def _compute_cpu_quality_metrics(reference_path: Path, target_path: Path) -> JsonDict:
+def _compute_cpu_quality_metric_pair(reference_path: Path, target_path: Path, metric: str) -> float:
     ref, target = _load_pair(reference_path, target_path)
-    return {
-        "psnr": _psnr(ref, target),
-        "ssim": _ssim(ref, target),
-        "msSsim": _ms_ssim(ref, target),
-        "nmi": _nmi(ref, target),
-    }
+    if metric == "psnr":
+        return _psnr(ref, target)
+    if metric == "ssim":
+        return _ssim(ref, target)
+    if metric == "ms_ssim":
+        return _ms_ssim(ref, target)
+    if metric == "nmi":
+        return _nmi(ref, target)
+    raise ValueError(f"Unknown CPU quality metric: {metric}")
+
+
+def _compute_cpu_quality_metrics(
+    reference_path: Path,
+    target_path: Path,
+    *,
+    metrics: Iterable[str] | None = None,
+) -> JsonDict:
+    selected_metrics = _normalize_cpu_quality_metrics(metrics)
+    ref, target = _load_pair(reference_path, target_path)
+    result: JsonDict = {}
+    if "psnr" in selected_metrics:
+        result["psnr"] = _psnr(ref, target)
+    if "ssim" in selected_metrics:
+        result["ssim"] = _ssim(ref, target)
+    if "ms_ssim" in selected_metrics:
+        result["msSsim"] = _ms_ssim(ref, target)
+    if "nmi" in selected_metrics:
+        result["nmi"] = _nmi(ref, target)
+    return result
 
 
 def _torch_home_checkpoints() -> list[Path]:
@@ -1038,6 +1162,31 @@ def _load_perceptual_pair(reference_path: Path, target_path: Path) -> tuple[Any,
     return ref_tensor, target_tensor
 
 
+def _load_perceptual_pairs_batch(pairs: list[tuple[Path, Path]]) -> list[tuple[Any, Any]]:
+    from torchvision.transforms import functional as TF
+
+    unique_paths: dict[Path, int] = {}
+    for reference_path, target_path in pairs:
+        unique_paths.setdefault(reference_path, len(unique_paths))
+        unique_paths.setdefault(target_path, len(unique_paths))
+    ordered_paths = sorted(unique_paths, key=lambda path: unique_paths[path])
+    loaded = load_rgb_batch(ordered_paths, workers_env="WM_BENCH_PERCEPTUAL_PRELOAD_WORKERS", default_cap=8)
+    images = {path: image for path, image in zip(ordered_paths, loaded)}
+    loaded_pairs: list[tuple[Any, Any]] = []
+    for reference_path, target_path in pairs:
+        reference = images[reference_path]
+        target = images[target_path].resize(reference.size, Image.Resampling.BICUBIC)
+        perceptual_reference = _resize_for_perceptual(reference)
+        perceptual_target = target.resize(perceptual_reference.size, Image.Resampling.BICUBIC)
+        loaded_pairs.append(
+            (
+                TF.to_tensor(perceptual_reference).unsqueeze(0),
+                TF.to_tensor(perceptual_target).unsqueeze(0),
+            )
+        )
+    return loaded_pairs
+
+
 def _move_perceptual_batch(batch: Any, device: Any) -> Any:
     import torch
 
@@ -1070,11 +1219,23 @@ def _compute_perceptual_metrics_batch(pairs: list[tuple[Path, Path]]) -> list[Js
     return metrics
 
 
-def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]]) -> tuple[list[JsonDict], JsonDict]:
+def _compute_perceptual_metrics_batch_with_profile(
+    pairs: list[tuple[Path, Path]],
+    *,
+    metrics: Iterable[str] | None = None,
+) -> tuple[list[JsonDict], JsonDict]:
     backend = _perceptual_backend()
     models = backend.get("models") or {}
+    selected_metrics = tuple(
+        metric
+        for metric in (str(item).strip().lower() for item in (metrics or ("lpips", "dists")))
+        if metric in {"lpips", "dists"}
+    )
+    if not selected_metrics:
+        selected_metrics = ("lpips", "dists")
     results: list[JsonDict] = [{"lpips": None, "dists": None} for _pair in pairs]
     base_details = {
+        "selectedMetrics": list(selected_metrics),
         "models": sorted(str(name) for name in models.keys()),
         "errors": dict(backend.get("errors") or {}),
     }
@@ -1104,13 +1265,21 @@ def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]
 
         device = backend.get("device", "cpu")
         grouped: dict[tuple[int, int], list[tuple[int, Any, Any]]] = {}
-        for index, (reference_path, target_path) in enumerate(pairs):
-            ref_tensor, target_tensor = _load_perceptual_pair(reference_path, target_path)
+        preload_config = resolve_cpu_workers(
+            "WM_BENCH_PERCEPTUAL_PRELOAD_WORKERS",
+            len({path for pair in pairs for path in pair}),
+            enabled=True,
+            default_cap=8,
+        )
+        preload_started = time.perf_counter()
+        loaded_pairs = _load_perceptual_pairs_batch(pairs)
+        preload_elapsed_ms = (time.perf_counter() - preload_started) * 1000
+        for index, (ref_tensor, target_tensor) in enumerate(loaded_pairs):
             shape = tuple(ref_tensor.shape[-2:])
             grouped.setdefault(shape, []).append((index, ref_tensor, target_tensor))
 
-        lpips_model = models.get("lpips")
-        dists_model = models.get("dists")
+        lpips_model = models.get("lpips") if "lpips" in selected_metrics else None
+        dists_model = models.get("dists") if "dists" in selected_metrics else None
         batch_configs: dict[str, JsonDict] = {}
         actual_batches: dict[str, list[int]] = {"lpips": [], "dists": []}
         with torch.no_grad():
@@ -1163,6 +1332,13 @@ def _compute_perceptual_metrics_batch_with_profile(pairs: list[tuple[Path, Path]
                 "batchConfigs": batch_configs,
                 "actualBatches": {key: value for key, value in actual_batches.items() if value},
                 "transferPolicy": "cpu_stack_then_batch_to_device",
+                "preload": {
+                    "mode": "threadpool" if preload_config.value > 1 else "serial",
+                    "cpuWorkers": preload_config.value,
+                    "config": preload_config.to_json(),
+                    "elapsedMs": preload_elapsed_ms,
+                    "uniqueImageCount": len({path for pair in pairs for path in pair}),
+                },
             },
         ).to_json()
     except Exception as exc:

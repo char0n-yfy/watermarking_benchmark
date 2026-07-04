@@ -23,7 +23,8 @@ import {
   CurveLegendGlyph,
   RobustnessCurve,
   curveDomainColor,
-  curveDomainShape
+  curveDomainShape,
+  curveSeriesColor
 } from "@/components/RobustnessCurve";
 import { chartBarFill } from "@/lib/chart-colors";
 import {
@@ -36,6 +37,7 @@ import { formatMetric, rankAggregates, statusBadgeClass } from "@/lib/insights";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
   BenchmarkCategoryScore,
+  BenchmarkAttackLeaderboardRow,
   BenchmarkCurvePoint,
   BenchmarkLeaderboardRow,
   BenchmarkScore,
@@ -58,9 +60,15 @@ const OVERVIEW_COMPOSITE_WEIGHTS = {
   fidelity: 0.3
 } as const;
 
+type AttackSelectorKey = "dataset" | "attack";
+type AttackHeatmapMetric = "tpr" | "nqd";
+type AttackHeatmapRowMode = "category" | "attack";
 type QualitySelectorKey = "dataset" | "algorithm" | "attack";
 type StatusFilter = RunStatus | "all";
 type StringArraySetter = (value: string[] | ((current: string[]) => string[])) => void;
+type AttackSelectorSetter = (
+  value: AttackSelectorKey | null | ((current: AttackSelectorKey | null) => AttackSelectorKey | null)
+) => void;
 type QualitySelectorSetter = (
   value: QualitySelectorKey | null | ((current: QualitySelectorKey | null) => QualitySelectorKey | null)
 ) => void;
@@ -121,6 +129,47 @@ type QualityComboSummary = {
   weakestPoint: BenchmarkCurvePoint | null;
 };
 
+type AttackVisualSummary = {
+  attackPresetId: string;
+  attackMethod: string;
+  attackCategory: string;
+  label: string;
+  pointCount: number;
+  algorithmCount: number;
+  avgTpr: number | null;
+  avgNqd: number | null;
+  minTpr: number | null;
+  qAtP95: number | "inf" | "-inf" | null;
+  qAtP70: number | "inf" | "-inf" | null;
+  avgP: number | null;
+  avgQ: number | null;
+  auc: number | null;
+  riskScore: number;
+  points: BenchmarkCurvePoint[];
+};
+
+type AttackCategoryDistribution = {
+  key: string;
+  label: string;
+  pointCount: number;
+  attackCount: number;
+  avgNqd: number | null;
+  avgTpr: number | null;
+  points: BenchmarkCurvePoint[];
+};
+
+type AttackHeatmapCell = {
+  rowKey: string;
+  rowLabel: string;
+  rowMode: AttackHeatmapRowMode;
+  algorithmId: string;
+  algorithmLabel: string;
+  attackPresetIds: string[];
+  avgTpr: number | null;
+  avgNqd: number | null;
+  pointCount: number;
+};
+
 interface ScoringSummary {
   attackCategory?: string;
   attackMethod?: string;
@@ -155,6 +204,12 @@ export default function ResultsPage() {
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
   const [overviewEvaluationMetric, setOverviewEvaluationMetric] = useState<OverviewEvaluationMetric>("composite");
   const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<string[]>([]);
+  const [attackDatasetIds, setAttackDatasetIds] = useState<string[]>([]);
+  const [attackAttackIds, setAttackAttackIds] = useState<string[]>([]);
+  const [activeAttackSelectorKey, setActiveAttackSelectorKey] = useState<AttackSelectorKey | null>("attack");
+  const [attackHeatmapMetric, setAttackHeatmapMetric] = useState<AttackHeatmapMetric>("tpr");
+  const [attackHeatmapRowMode, setAttackHeatmapRowMode] = useState<AttackHeatmapRowMode>("category");
+  const [selectedAttackHeatmapCell, setSelectedAttackHeatmapCell] = useState<AttackHeatmapCell | null>(null);
   const [qualityAttackFilter, setQualityAttackFilter] = useState("all");
   const [qualityDatasetIds, setQualityDatasetIds] = useState<string[]>([]);
   const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<string[]>([]);
@@ -189,6 +244,14 @@ export default function ResultsPage() {
     [qualityAvailableCurvePoints]
   );
   const qualityAttackOptionIds = useMemo(
+    () => buildQualityAttackOptions(qualityAvailableCurvePoints).map((item) => item.attackPresetId),
+    [qualityAvailableCurvePoints]
+  );
+  const attackDatasetOptionIds = useMemo(
+    () => buildQualityDatasetOptions(qualityAvailableCurvePoints).map((item) => item.id),
+    [qualityAvailableCurvePoints]
+  );
+  const attackAttackOptionIds = useMemo(
     () => buildQualityAttackOptions(qualityAvailableCurvePoints).map((item) => item.attackPresetId),
     [qualityAvailableCurvePoints]
   );
@@ -237,6 +300,14 @@ export default function ResultsPage() {
   useEffect(() => {
     setQualityDatasetIds((current) => reconcileQualitySelection(current, qualityDatasetOptionIds, qualityDatasetOptionIds));
   }, [qualityDatasetOptionIds]);
+
+  useEffect(() => {
+    setAttackDatasetIds((current) => reconcileQualitySelection(current, attackDatasetOptionIds, attackDatasetOptionIds));
+  }, [attackDatasetOptionIds]);
+
+  useEffect(() => {
+    setAttackAttackIds((current) => reconcileQualitySelection(current, attackAttackOptionIds, attackAttackOptionIds));
+  }, [attackAttackOptionIds]);
 
   useEffect(() => {
     const seeded = selectedAlgorithmIds.filter((id) => qualityAlgorithmOptionIds.includes(id));
@@ -627,7 +698,25 @@ export default function ResultsPage() {
         />
       ) : null}
 
-      {activeTab === "attack" ? <AttackAnalysisTab aggregateRows={aggregateRows} score={score} /> : null}
+      {activeTab === "attack" ? (
+        <AttackAnalysisTab
+          activeSelectorKey={activeAttackSelectorKey}
+          attackAttackIds={attackAttackIds}
+          attackDatasetIds={attackDatasetIds}
+          attackHeatmapMetric={attackHeatmapMetric}
+          attackHeatmapRowMode={attackHeatmapRowMode}
+          resourceAlgorithmNames={resourceAlgorithmNames}
+          resourceAttackNames={resourceAttackNames}
+          score={score}
+          selectedAttackHeatmapCell={selectedAttackHeatmapCell}
+          setActiveSelectorKey={setActiveAttackSelectorKey}
+          setAttackAttackIds={setAttackAttackIds}
+          setAttackDatasetIds={setAttackDatasetIds}
+          setAttackHeatmapMetric={setAttackHeatmapMetric}
+          setAttackHeatmapRowMode={setAttackHeatmapRowMode}
+          setSelectedAttackHeatmapCell={setSelectedAttackHeatmapCell}
+        />
+      ) : null}
 
       {activeTab === "quality" ? (
         <QualityWorkbenchTab
@@ -947,105 +1036,234 @@ export default function ResultsPage() {
   }
 
   function AttackAnalysisTab({
-    aggregateRows,
-    score
+    activeSelectorKey,
+    attackAttackIds,
+    attackDatasetIds,
+    attackHeatmapMetric,
+    attackHeatmapRowMode,
+    resourceAlgorithmNames,
+    resourceAttackNames,
+    score,
+    selectedAttackHeatmapCell,
+    setActiveSelectorKey,
+    setAttackAttackIds,
+    setAttackDatasetIds,
+    setAttackHeatmapMetric,
+    setAttackHeatmapRowMode,
+    setSelectedAttackHeatmapCell
   }: {
-    aggregateRows: Array<{ aggregate: RunAggregate; point: ReturnType<typeof findScorePoint> }>;
+    activeSelectorKey: AttackSelectorKey | null;
+    attackAttackIds: string[];
+    attackDatasetIds: string[];
+    attackHeatmapMetric: AttackHeatmapMetric;
+    attackHeatmapRowMode: AttackHeatmapRowMode;
+    resourceAlgorithmNames: Record<string, string>;
+    resourceAttackNames: Record<string, string>;
     score: BenchmarkScore | null;
+    selectedAttackHeatmapCell: AttackHeatmapCell | null;
+    setActiveSelectorKey: AttackSelectorSetter;
+    setAttackAttackIds: StringArraySetter;
+    setAttackDatasetIds: StringArraySetter;
+    setAttackHeatmapMetric: (value: AttackHeatmapMetric) => void;
+    setAttackHeatmapRowMode: (value: AttackHeatmapRowMode) => void;
+    setSelectedAttackHeatmapCell: (value: AttackHeatmapCell | null) => void;
   }) {
+    const allPoints = (score?.curvePoints ?? []).sort(qualityCurvePointSort);
+    const datasetOptions = buildQualityDatasetOptions(allPoints);
+    const attackOptions = buildQualityAttackOptions(allPoints);
+    const selectedDatasetSet = new Set(attackDatasetIds);
+    const selectedAttackSet = new Set(attackAttackIds);
+    const filteredPoints = allPoints.filter(
+      (point) =>
+        selectedDatasetSet.has(point.datasetId || "unknown") &&
+        selectedAttackSet.has(point.attackPresetId)
+    );
+    const categorySummaries = buildAttackCategoryDistributions(filteredPoints, resourceAttackNames);
+    const attackCount = new Set(filteredPoints.map((point) => point.attackPresetId)).size;
+    const selectorConfigs: Array<{
+      key: AttackSelectorKey;
+      options: QualitySelectorOption[];
+      selectedIds: string[];
+      setSelectedIds: StringArraySetter;
+      title: string;
+    }> = [
+      {
+        key: "dataset",
+        options: datasetOptions,
+        selectedIds: attackDatasetIds,
+        setSelectedIds: setAttackDatasetIds,
+        title: uiText("数据集", "Datasets")
+      },
+      {
+        key: "attack",
+        options: attackOptions.map((item) => ({
+          id: item.attackPresetId,
+          label: displayAttackByIds(item.attackPresetId, item.attackMethod, resourceAttackNames),
+          meta: `${displayAttackCategory(normalizeAttackCategory(item.attackCategory, item.attackPresetId, item.attackMethod))} / ${
+            item.variantCount
+          } ${uiText("个变体", "variants")}`,
+          count: item.pointCount
+        })),
+        selectedIds: attackAttackIds,
+        setSelectedIds: setAttackAttackIds,
+        title: uiText("攻击算法", "Attack algorithms")
+      }
+    ];
+    const activeSelector = activeSelectorKey ? selectorConfigs.find((item) => item.key === activeSelectorKey) ?? null : null;
+    const handlePickHeatmapCell = (cell: AttackHeatmapCell) => {
+      setSelectedAttackHeatmapCell(cell);
+      setActiveInsight({
+        kind: "curve",
+        key: `${cell.rowMode}:${cell.rowKey}:${cell.algorithmId}`,
+        title: `${cell.algorithmLabel} × ${cell.rowLabel}`,
+        body: `TPR ${formatMetric(cell.avgTpr)}, NQD ${formatMetric(cell.avgNqd)}`,
+        meta: `${cell.attackPresetIds.length} ${uiText("个攻击", "attacks")} / ${cell.pointCount} ${uiText("个点", "points")}`
+      });
+    };
+
     return (
       <>
-        <section className="panel results-detail-panel">
+        <section className="panel attack-selector-panel">
           <div className="panel-header">
-            <h2>WAVES-style attack leaderboard</h2>
-            <Trophy size={16} />
+            <h2>{uiText("攻击分析筛选", "Attack analysis filters")}</h2>
+            <Filter size={16} />
           </div>
-          <div className="panel-body table-scroll">
-            <table className="table compact-table">
-              <thead>
-                <tr>
-                  <th>{t.common.rank}</th>
-                  <th>{t.common.algorithm}</th>
-                  <th>{t.common.attackPreset}</th>
-                  <th>{t.results.category}</th>
-                  <th>Q@0.95P</th>
-                  <th>Q@0.7P</th>
-                  <th>Avg P</th>
-                  <th>Avg Q</th>
-                  <th>AUC</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(score?.attackLeaderboard ?? []).map((row) => (
-                  <tr
-                    className="clickable-row"
-                    key={`${row.algorithmId}-${row.attackPresetId}`}
-                    onClick={() =>
-                      setActiveInsight({
-                        kind: "attack",
-                        key: `${row.algorithmId}-${row.attackPresetId}`,
-                        title: `${row.algorithmId} / ${row.attackPresetId}`,
-                        body: `Q@0.95P ${formatThreshold(row.qAtP95)}, Q@0.7P ${formatThreshold(row.qAtP70)}`,
-                        meta: `${row.attackCategory}, AvgP ${formatMetric(row.avgPerformance)}, AvgQ ${formatMetric(row.avgNqd)}`
-                      })
-                    }
-                  >
-                    <td>{row.rank}</td>
-                    <td>{row.algorithmId}</td>
-                    <td>{row.attackPresetId}</td>
-                    <td>{row.attackCategory}</td>
-                    <td>{formatThreshold(row.qAtP95)}</td>
-                    <td>{formatThreshold(row.qAtP70)}</td>
-                    <td>{formatMetric(row.avgPerformance)}</td>
-                    <td>{formatMetric(row.avgNqd)}</td>
-                    <td>{formatMetric(row.auc)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!score?.attackLeaderboard?.length ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+          <div className="panel-body">
+            <div className="quality-selector-grid attack-selector-grid">
+              {selectorConfigs.map((config) => (
+                <button
+                  aria-expanded={activeSelectorKey === config.key}
+                  className={activeSelectorKey === config.key ? "quality-selector-trigger active" : "quality-selector-trigger"}
+                  key={config.key}
+                  onClick={() => setActiveSelectorKey((current) => (current === config.key ? null : config.key))}
+                  type="button"
+                >
+                  <span>{config.title}</span>
+                  <strong>
+                    {config.selectedIds.length}/{config.options.length}
+                  </strong>
+                </button>
+              ))}
+            </div>
+            {activeSelector ? (
+              <div className="quality-selector-drawer">
+                <div className="quality-selector-actions">
+                  <button onClick={() => activeSelector.setSelectedIds(activeSelector.options.map((item) => item.id))} type="button">
+                    {uiText("全选", "All")}
+                  </button>
+                  <button onClick={() => activeSelector.setSelectedIds([])} type="button">
+                    {uiText("清空", "Clear")}
+                  </button>
+                </div>
+                <div className="quality-selector-list attack-selector-list">
+                  {activeSelector.options.map((item) => (
+                    <label className="quality-selector-option" key={item.id}>
+                      <input
+                        checked={activeSelector.selectedIds.includes(item.id)}
+                        onChange={() =>
+                          activeSelector.setSelectedIds((current) =>
+                            current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+                          )
+                        }
+                        type="checkbox"
+                      />
+                      <span>
+                        <strong>{item.label}</strong>
+                        <em>{item.meta}</em>
+                      </span>
+                      <b>{item.count}</b>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="quality-selection-summary">
+              <span>
+                {filteredPoints.length} {uiText("个曲线点", "curve points")} / {attackCount}{" "}
+                {uiText("种攻击", "attacks")}
+              </span>
+              <span>
+                {new Set(filteredPoints.map((point) => point.algorithmId)).size} {uiText("个水印算法全部纳入", "watermark algorithms included")}
+              </span>
+              <span>
+                {categorySummaries.length} {uiText("个攻击类别", "attack categories")}
+              </span>
+            </div>
           </div>
         </section>
 
-        <section className="panel results-detail-panel">
+        <section className="panel attack-visual-panel">
           <div className="panel-header">
-            <h2>{t.results.attackAnalysis}</h2>
+            <h2>{uiText("攻击类别分布", "Attack category distribution")}</h2>
             <Gauge size={16} />
           </div>
-          <div className="panel-body table-scroll">
-            <table className="table">
-            <thead>
-              <tr>
-                <th>{t.common.algorithm}</th>
-                <th>{t.common.attackPreset}</th>
-                <th>{t.results.category}</th>
-                <th>{t.results.strength}</th>
-                <th>Bit Acc.</th>
-                <th>BER</th>
-                <th>{t.results.tprAtFpr}</th>
-                <th>{t.results.nqd}</th>
-                <th>{t.runs.cells}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {aggregateRows.map(({ aggregate, point }) => (
-                <tr key={`${aggregate.algorithmId}-${aggregate.attackPresetId}-${aggregate.attackStrength}`}>
-                  <td>{aggregate.algorithmId}</td>
-                  <td>{aggregate.attackPresetId}</td>
-                  <td>{point?.attackCategory ?? categoryForScore(score, aggregate.attackPresetId) ?? "n/a"}</td>
-                  <td>{aggregate.attackStrength}</td>
-                  <td>{formatMetric(aggregate.meanBitAccuracy)}</td>
-                  <td>{formatMetric(aggregate.meanBitErrorRate)}</td>
-                  <td>{formatMetric(point?.yTprAtFpr)}</td>
-                  <td>{formatMetric(point?.xNqd)}</td>
-                  <td>
-                    {aggregate.succeededCells}/{aggregate.cellCount}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {aggregateRows.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+          <div className="panel-body">
+            <AttackViolinPlot
+              categories={categorySummaries}
+              onPickPoint={(point) => {
+                setSelectedAttackHeatmapCell(null);
+                setActiveInsight(makeCurvePointInsight(point));
+              }}
+            />
+            <div className="attack-heatmap-section">
+              <div className="attack-subheading">
+                <div>
+                  <strong>{uiText("水印弱点热力图", "Watermark weakness heatmap")}</strong>
+                  <span>
+                    {uiText(
+                      "行是水印算法，列是攻击类别或攻击方法；点击格子查看该组合摘要。",
+                      "Rows are watermark algorithms, columns are attack categories or methods; click a cell for a summary."
+                    )}
+                  </span>
+                </div>
+                <div className="attack-heatmap-controls">
+                  <button
+                    className={attackHeatmapRowMode === "category" ? "active" : ""}
+                    onClick={() => {
+                      setAttackHeatmapRowMode("category");
+                      setSelectedAttackHeatmapCell(null);
+                    }}
+                    type="button"
+                  >
+                    {uiText("按类别", "Categories")}
+                  </button>
+                  <button
+                    className={attackHeatmapRowMode === "attack" ? "active" : ""}
+                    onClick={() => {
+                      setAttackHeatmapRowMode("attack");
+                      setSelectedAttackHeatmapCell(null);
+                    }}
+                    type="button"
+                  >
+                    {uiText("按攻击", "Attacks")}
+                  </button>
+                  <button
+                    className={attackHeatmapMetric === "tpr" ? "active" : ""}
+                    onClick={() => setAttackHeatmapMetric("tpr")}
+                    type="button"
+                  >
+                    TPR
+                  </button>
+                  <button
+                    className={attackHeatmapMetric === "nqd" ? "active" : ""}
+                    onClick={() => setAttackHeatmapMetric("nqd")}
+                    type="button"
+                  >
+                    NQD
+                  </button>
+                </div>
+              </div>
+              <AttackHeatmapMatrix
+                algorithmNames={resourceAlgorithmNames}
+                attackNames={resourceAttackNames}
+                metric={attackHeatmapMetric}
+                onPickCell={handlePickHeatmapCell}
+                points={filteredPoints}
+                rowMode={attackHeatmapRowMode}
+                selectedCell={selectedAttackHeatmapCell}
+                uiText={uiText}
+              />
+            </div>
           </div>
         </section>
       </>
@@ -2036,10 +2254,613 @@ function buildQualityAttackOptions(points: BenchmarkCurvePoint[]): QualityAttack
     }))
     .sort(
       (left, right) =>
-        left.attackCategory.localeCompare(right.attackCategory) ||
+        attackCategoryRank(normalizeAttackCategory(left.attackCategory, left.attackPresetId, left.attackMethod)) -
+          attackCategoryRank(normalizeAttackCategory(right.attackCategory, right.attackPresetId, right.attackMethod)) ||
         left.attackMethod.localeCompare(right.attackMethod) ||
         left.attackPresetId.localeCompare(right.attackPresetId)
     );
+}
+
+function buildAttackVisualSummaries(
+  points: BenchmarkCurvePoint[],
+  leaderboardRows: BenchmarkAttackLeaderboardRow[],
+  attackNames: Record<string, string> = {}
+): AttackVisualSummary[] {
+  const pointsByAttack = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    pointsByAttack.set(point.attackPresetId, [...(pointsByAttack.get(point.attackPresetId) ?? []), point]);
+  }
+  const rowsByAttack = new Map<string, BenchmarkAttackLeaderboardRow[]>();
+  for (const row of leaderboardRows) {
+    rowsByAttack.set(row.attackPresetId, [...(rowsByAttack.get(row.attackPresetId) ?? []), row]);
+  }
+  const rawSummaries = Array.from(pointsByAttack.entries()).map(([attackPresetId, attackPoints]) => {
+    const rows = rowsByAttack.get(attackPresetId) ?? [];
+    const first = attackPoints[0];
+    const avgTpr = meanNumber(attackPoints.map((point) => point.yTprAtFpr));
+    const avgNqd = meanNumber(attackPoints.map((point) => point.xNqd));
+    const minTpr = finiteMin(attackPoints.map((point) => point.yTprAtFpr));
+    const attackMethod = first?.attackMethod ?? rows[0]?.attackMethod ?? attackPresetId;
+    const attackCategory = normalizeAttackCategory(
+      first?.attackCategory ?? rows[0]?.attackCategory ?? "unknown",
+      attackPresetId,
+      attackMethod
+    );
+    return {
+      attackPresetId,
+      attackMethod,
+      attackCategory,
+      label: displayAttackByIds(attackPresetId, attackMethod, attackNames),
+      pointCount: attackPoints.length,
+      algorithmCount: new Set(attackPoints.map((point) => point.algorithmId)).size,
+      avgTpr,
+      avgNqd,
+      minTpr,
+      qAtP95: aggregateThreshold(rows.map((row) => row.qAtP95)),
+      qAtP70: aggregateThreshold(rows.map((row) => row.qAtP70)),
+      avgP: meanNumber(rows.map((row) => row.avgPerformance)),
+      avgQ: meanNumber(rows.map((row) => row.avgNqd)),
+      auc: meanNumber(rows.map((row) => row.auc)),
+      riskScore: 0,
+      points: attackPoints
+    };
+  });
+  const maxNqd = Math.max(0.001, ...rawSummaries.map((summary) => summary.avgNqd ?? 0));
+  return rawSummaries
+    .map((summary) => ({
+      ...summary,
+      riskScore: clamp01((1 - (summary.avgTpr ?? 1)) * 0.72 + ((summary.avgNqd ?? 0) / maxNqd) * 0.28)
+    }))
+    .sort(
+      (left, right) =>
+        right.riskScore - left.riskScore ||
+        (left.avgTpr ?? 1) - (right.avgTpr ?? 1) ||
+        (right.avgNqd ?? 0) - (left.avgNqd ?? 0) ||
+        left.label.localeCompare(right.label)
+    );
+}
+
+function buildAttackCategoryDistributions(
+  points: BenchmarkCurvePoint[],
+  attackNames: Record<string, string> = {}
+): AttackCategoryDistribution[] {
+  const grouped = new Map<string, BenchmarkCurvePoint[]>();
+  for (const point of points) {
+    const key = normalizeAttackCategory(point.attackCategory, point.attackPresetId, point.attackMethod);
+    grouped.set(key, [...(grouped.get(key) ?? []), point]);
+  }
+  return Array.from(grouped.entries())
+    .map(([key, items]) => ({
+      key,
+      label: displayAttackCategory(key),
+      pointCount: items.length,
+      attackCount: new Set(items.map((point) => displayAttackByIds(point.attackPresetId, point.attackMethod, attackNames))).size,
+      avgNqd: meanNumber(items.map((point) => point.xNqd)),
+      avgTpr: meanNumber(items.map((point) => point.yTprAtFpr)),
+      points: items
+    }))
+    .sort((left, right) => attackCategoryRank(left.key) - attackCategoryRank(right.key) || left.label.localeCompare(right.label));
+}
+
+function AttackViolinPlot({
+  categories,
+  onPickPoint
+}: {
+  categories: AttackCategoryDistribution[];
+  onPickPoint: (point: BenchmarkCurvePoint) => void;
+}) {
+  if (!categories.length) {
+    return <div className="empty compact-empty">No attack distribution data</div>;
+  }
+  const width = 760;
+  const rowHeight = 70;
+  const leftPad = 176;
+  const rightPad = 42;
+  const topPad = 28;
+  const bottomPad = 44;
+  const height = topPad + bottomPad + categories.length * rowHeight;
+  const plotWidth = width - leftPad - rightPad;
+  const values = categories.flatMap((category) => category.points.map((point) => point.xNqd)).filter(Number.isFinite);
+  const domain = numericDomain(values, 0.1);
+  const ticks = visualAxisTicks(domain.min, domain.max, 6);
+  const xFor = (value: number) =>
+    leftPad + ((Math.max(domain.min, Math.min(domain.max, value)) - domain.min) / Math.max(0.0001, domain.max - domain.min)) * plotWidth;
+  return (
+    <div className="attack-violin-wrap">
+      <svg className="attack-violin-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
+        {ticks.map((tick) => (
+          <g key={tick}>
+            <line className="attack-chart-grid" x1={xFor(tick)} x2={xFor(tick)} y1={topPad - 10} y2={height - bottomPad} />
+            <text className="chart-label" textAnchor="middle" x={xFor(tick)} y={height - 14}>
+              {formatVisualTick(tick, ticks)}
+            </text>
+          </g>
+        ))}
+        {categories.map((category, index) => {
+          const color = curveSeriesColor(index);
+          const centerY = topPad + index * rowHeight + rowHeight / 2;
+          const density = violinDensity(category.points.map((point) => point.xNqd), domain.min, domain.max);
+          const maxDensity = Math.max(1, ...density.map((item) => item.value));
+          const halfHeight = 19;
+          const upper = density.map((item) => `${xFor(item.x)},${centerY - (item.value / maxDensity) * halfHeight}`).join(" ");
+          const lower = density
+            .slice()
+            .reverse()
+            .map((item) => `${xFor(item.x)},${centerY + (item.value / maxDensity) * halfHeight}`)
+            .join(" ");
+          const nqds = category.points.map((point) => point.xNqd).filter(Number.isFinite).sort((a, b) => a - b);
+          const q1 = quantile(nqds, 0.25);
+          const median = quantile(nqds, 0.5);
+          const q3 = quantile(nqds, 0.75);
+          const dots = sampledPoints(category.points, 90);
+          return (
+            <g key={category.key}>
+              <text className="attack-row-label" textAnchor="end" x={leftPad - 14} y={centerY + 5}>
+                {category.label}
+              </text>
+              <path className="attack-violin-shape" d={`M ${upper} L ${lower} Z`} fill={color} />
+              {q1 != null && q3 != null ? (
+                <line className="attack-violin-box" x1={xFor(q1)} x2={xFor(q3)} y1={centerY} y2={centerY} />
+              ) : null}
+              {median != null ? <circle className="attack-violin-median" cx={xFor(median)} cy={centerY} r={2.4} /> : null}
+              {dots.map((point, dotIndex) => (
+                <circle
+                  className="attack-violin-dot"
+                  cx={xFor(point.xNqd)}
+                  cy={centerY + deterministicJitter(`${point.algorithmId}:${point.attackPresetId}:${dotIndex}`, halfHeight - 3)}
+                  fill={color}
+                  key={`${category.key}-${point.algorithmId}-${point.attackPresetId}-${dotIndex}`}
+                  onClick={() => onPickPoint(point)}
+                  r={2.5}
+                >
+                  <title>{`${point.algorithmId} / ${point.attackPresetId}\nNQD ${formatMetric(point.xNqd)} / TPR ${formatMetric(point.yTprAtFpr)}`}</title>
+                </circle>
+              ))}
+              <text className="attack-row-meta" x={width - rightPad} y={centerY + 5} textAnchor="end">
+                {category.attackCount} attacks / {category.pointCount} pts
+              </text>
+            </g>
+          );
+        })}
+        <text className="chart-axis-title" textAnchor="middle" x={leftPad + plotWidth / 2} y={height - 4}>
+          Normalized Quality Degradation
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function AttackHeatmapMatrix({
+  algorithmNames,
+  attackNames,
+  metric,
+  onPickCell,
+  points,
+  rowMode,
+  selectedCell,
+  uiText
+}: {
+  algorithmNames: Record<string, string>;
+  attackNames: Record<string, string>;
+  metric: AttackHeatmapMetric;
+  onPickCell: (cell: AttackHeatmapCell) => void;
+  points: BenchmarkCurvePoint[];
+  rowMode: AttackHeatmapRowMode;
+  selectedCell: AttackHeatmapCell | null;
+  uiText: (zh: string, en: string) => string;
+}) {
+  const algorithmRows = Array.from(new Set(points.map((point) => point.algorithmId)))
+    .map((algorithmId) => ({
+      id: algorithmId,
+      label: displayAlgorithm(algorithmId, algorithmNames)
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const attackColumnMap = new Map<string, { key: string; label: string; sortKey: string; points: BenchmarkCurvePoint[] }>();
+  for (const point of points) {
+    const key = heatmapRowKeyForPoint(point, rowMode);
+    const label = heatmapRowLabelForPoint(point, rowMode, attackNames);
+    const categoryRank = attackCategoryRank(normalizeAttackCategory(point.attackCategory, point.attackPresetId, point.attackMethod));
+    const sortKey = rowMode === "category" ? String(categoryRank).padStart(2, "0") : `${String(categoryRank).padStart(2, "0")}:${label}`;
+    const current = attackColumnMap.get(key) ?? { key, label, sortKey, points: [] };
+    current.points.push(point);
+    attackColumnMap.set(key, current);
+  }
+  const attackColumns = Array.from(attackColumnMap.values()).sort((left, right) => left.sortKey.localeCompare(right.sortKey));
+  if (!algorithmRows.length || !attackColumns.length) {
+    return <div className="empty compact-empty">No heatmap data</div>;
+  }
+  const cellMap = new Map<string, AttackHeatmapCell>();
+  for (const algorithm of algorithmRows) {
+    for (const attackColumn of attackColumns) {
+      const cellPoints = attackColumn.points.filter((point) => point.algorithmId === algorithm.id);
+      if (!cellPoints.length) {
+        continue;
+      }
+      cellMap.set(`${algorithm.id}:${attackColumn.key}`, {
+        rowKey: attackColumn.key,
+        rowLabel: attackColumn.label,
+        rowMode,
+        algorithmId: algorithm.id,
+        algorithmLabel: algorithm.label,
+        attackPresetIds: Array.from(new Set(cellPoints.map((point) => point.attackPresetId))),
+        avgTpr: meanNumber(cellPoints.map((point) => point.yTprAtFpr)),
+        avgNqd: meanNumber(cellPoints.map((point) => point.xNqd)),
+        pointCount: cellPoints.length
+      });
+    }
+  }
+  const nqdValues = Array.from(cellMap.values())
+    .map((cell) => cell.avgNqd)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  const nqdDomain = numericDomain(nqdValues, 0.05);
+  const gridTemplateColumns = `minmax(180px, 220px) repeat(${attackColumns.length}, minmax(118px, 1fr))`;
+  return (
+    <div className="attack-heatmap-scroll">
+      <div className="attack-heatmap-grid" style={{ gridTemplateColumns }}>
+        <div className="attack-heatmap-corner">
+          <strong>{uiText("水印算法", "Watermark algorithm")}</strong>
+          <span>{metric === "tpr" ? uiText("颜色: 平均 TPR", "Color: Avg TPR") : uiText("颜色: NQD 损失", "Color: NQD loss")}</span>
+        </div>
+        {attackColumns.map((column) => (
+          <div className="attack-heatmap-column" key={column.key} title={column.key}>
+            {column.label}
+          </div>
+        ))}
+        {algorithmRows.map((algorithm) => {
+          const algorithmPoints = points.filter((point) => point.algorithmId === algorithm.id);
+          const algorithmAttackCount = new Set(algorithmPoints.map((point) => point.attackPresetId)).size;
+          return (
+            <div className="attack-heatmap-row-fragment" key={algorithm.id} style={{ display: "contents" }}>
+              <div className="attack-heatmap-row-label">
+                <strong>{algorithm.label}</strong>
+                <span>
+                  {algorithmAttackCount} {uiText("个攻击", "attacks")} / {algorithmPoints.length} {uiText("点", "pts")}
+                </span>
+              </div>
+              {attackColumns.map((column) => {
+                const cell = cellMap.get(`${algorithm.id}:${column.key}`) ?? null;
+                const active =
+                  selectedCell?.rowKey === column.key &&
+                  selectedCell.algorithmId === algorithm.id &&
+                  selectedCell.rowMode === rowMode;
+                if (!cell) {
+                  return <div className="attack-heatmap-cell empty-cell" key={`${algorithm.id}:${column.key}`}>-</div>;
+                }
+                const value = metric === "tpr" ? cell.avgTpr : cell.avgNqd;
+                return (
+                  <button
+                    className={active ? "attack-heatmap-cell active" : "attack-heatmap-cell"}
+                    key={`${algorithm.id}:${column.key}`}
+                    onClick={() => onPickCell(cell)}
+                    style={heatmapCellStyle(value, metric, nqdDomain)}
+                    title={`${cell.algorithmLabel} × ${cell.rowLabel}\nTPR ${formatMetric(cell.avgTpr)} / NQD ${formatMetric(cell.avgNqd)}\n${cell.attackPresetIds.length} attacks / ${cell.pointCount} points`}
+                    type="button"
+                  >
+                    <strong>{metric === "tpr" ? `TPR ${formatMetric(cell.avgTpr)}` : `NQD ${formatMetric(cell.avgNqd)}`}</strong>
+                    <span>{cell.attackPresetIds.length} atk / {cell.pointCount} pts</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AttackDumbbellPlot({
+  onPickAttack,
+  rows
+}: {
+  onPickAttack: (summary: AttackVisualSummary) => void;
+  rows: AttackVisualSummary[];
+}) {
+  const visibleRows = rows.filter((row) => row.qAtP95 != null || row.qAtP70 != null || row.avgNqd != null);
+  if (!visibleRows.length) {
+    return <div className="empty compact-empty">No Q@P data</div>;
+  }
+  const width = 760;
+  const rowHeight = 38;
+  const leftPad = 188;
+  const rightPad = 44;
+  const topPad = 26;
+  const bottomPad = 42;
+  const height = topPad + bottomPad + visibleRows.length * rowHeight;
+  const values = visibleRows.flatMap((row) => [
+    finiteThresholdNumber(row.qAtP95),
+    finiteThresholdNumber(row.qAtP70),
+    row.avgNqd
+  ]).filter((value): value is number => value != null && Number.isFinite(value));
+  const domain = numericDomain(values, 0.12);
+  const ticks = visualAxisTicks(domain.min, domain.max, 6);
+  const plotWidth = width - leftPad - rightPad;
+  const xFor = (value: number) =>
+    leftPad + ((Math.max(domain.min, Math.min(domain.max, value)) - domain.min) / Math.max(0.0001, domain.max - domain.min)) * plotWidth;
+  return (
+    <div className="attack-dumbbell-scroll">
+      <svg className="attack-dumbbell-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
+        {ticks.map((tick) => (
+          <g key={tick}>
+            <line className="attack-chart-grid" x1={xFor(tick)} x2={xFor(tick)} y1={topPad - 8} y2={height - bottomPad} />
+            <text className="chart-label" textAnchor="middle" x={xFor(tick)} y={height - 12}>
+              {formatVisualTick(tick, ticks)}
+            </text>
+          </g>
+        ))}
+        {visibleRows.map((row, index) => {
+          const y = topPad + index * rowHeight + rowHeight / 2;
+          const q95 = finiteThresholdNumber(row.qAtP95);
+          const q70 = finiteThresholdNumber(row.qAtP70);
+          const color = curveSeriesColor(index);
+          const left = q95 == null || q70 == null ? null : Math.min(xFor(q95), xFor(q70));
+          const right = q95 == null || q70 == null ? null : Math.max(xFor(q95), xFor(q70));
+          return (
+            <g className="attack-dumbbell-row" key={row.attackPresetId} onClick={() => onPickAttack(row)}>
+              <text className="attack-row-label" textAnchor="end" x={leftPad - 12} y={y + 5}>
+                {row.label}
+              </text>
+              {left != null && right != null ? <line className="attack-dumbbell-link" x1={left} x2={right} y1={y} y2={y} /> : null}
+              {q95 != null ? <circle className="attack-dumbbell-dot q95" cx={xFor(q95)} cy={y} fill={color} r={5.5} /> : null}
+              {q70 != null ? <rect className="attack-dumbbell-dot q70" fill={color} height={10} width={10} x={xFor(q70) - 5} y={y - 5} /> : null}
+              {row.avgNqd != null ? <circle className="attack-dumbbell-avg" cx={xFor(row.avgNqd)} cy={y} r={3.2} /> : null}
+              <title>{`${row.label}\nQ@P95 ${formatThreshold(row.qAtP95)} / Q@P70 ${formatThreshold(row.qAtP70)}\nAvg NQD ${formatMetric(row.avgNqd)}`}</title>
+            </g>
+          );
+        })}
+        <text className="chart-axis-title" textAnchor="middle" x={leftPad + plotWidth / 2} y={height - 3}>
+          Normalized Quality Degradation
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function heatmapRowKeyForPoint(point: BenchmarkCurvePoint, rowMode: AttackHeatmapRowMode): string {
+  if (rowMode === "attack") {
+    return point.attackPresetId;
+  }
+  return normalizeAttackCategory(point.attackCategory, point.attackPresetId, point.attackMethod);
+}
+
+function heatmapRowLabelForPoint(
+  point: BenchmarkCurvePoint,
+  rowMode: AttackHeatmapRowMode,
+  attackNames: Record<string, string> = {}
+): string {
+  if (rowMode === "attack") {
+    return displayAttackByIds(point.attackPresetId, point.attackMethod, attackNames);
+  }
+  return displayAttackCategory(normalizeAttackCategory(point.attackCategory, point.attackPresetId, point.attackMethod));
+}
+
+function heatmapCellStyle(
+  value: number | null,
+  metric: AttackHeatmapMetric,
+  nqdDomain: { min: number; max: number }
+): { background: string; borderColor: string; color: string } {
+  if (value == null || !Number.isFinite(value)) {
+    return {
+      background: "rgb(248 250 247)",
+      borderColor: "rgb(217 226 218)",
+      color: "rgb(99 111 125)"
+    };
+  }
+  const intensity =
+    metric === "tpr"
+      ? 1 - clamp01(value)
+      : clamp01((value - nqdDomain.min) / Math.max(0.0001, nqdDomain.max - nqdDomain.min));
+  const hue = 154 - intensity * 145;
+  const saturation = 48 + intensity * 14;
+  const lightness = 93 - intensity * 30;
+  return {
+    background: `hsl(${hue} ${saturation}% ${lightness}%)`,
+    borderColor: `hsl(${hue} ${Math.min(72, saturation + 8)}% ${Math.max(35, lightness - 18)}%)`,
+    color: intensity > 0.72 ? "rgb(255 255 255)" : "rgb(23 31 28)"
+  };
+}
+
+function aggregateThreshold(values: Array<number | "inf" | "-inf" | null | undefined>): number | "inf" | "-inf" | null {
+  const finite = values
+    .map(finiteThresholdNumber)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  if (finite.length) {
+    return finite.reduce((total, value) => total + value, 0) / finite.length;
+  }
+  if (values.includes("inf")) {
+    return "inf";
+  }
+  if (values.includes("-inf")) {
+    return "-inf";
+  }
+  return null;
+}
+
+function finiteThresholdNumber(value: number | "inf" | "-inf" | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function finiteMin(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => value != null && Number.isFinite(value));
+  return finite.length ? Math.min(...finite) : null;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function numericDomain(values: number[], padRatio: number) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) {
+    return { min: 0, max: 1 };
+  }
+  let min = Math.min(...finite);
+  let max = Math.max(...finite);
+  if (max <= min) {
+    min -= 0.05;
+    max += 0.05;
+  }
+  const padding = Math.max((max - min) * padRatio, 0.04);
+  return { min: Math.max(0, min - padding), max: max + padding };
+}
+
+function visualAxisTicks(min: number, max: number, targetCount: number): number[] {
+  const span = Math.max(0.0001, max - min);
+  const step = visualTickStep(span / Math.max(1, targetCount));
+  const first = Math.ceil(min / step) * step;
+  const ticks: number[] = [];
+  for (let value = first; value <= max + step * 0.5; value += step) {
+    const rounded = Number(value.toFixed(6));
+    if (rounded >= min - 0.000001 && rounded <= max + 0.000001) {
+      ticks.push(rounded);
+    }
+  }
+  return ticks.length ? ticks : [Number(min.toFixed(3)), Number(max.toFixed(3))];
+}
+
+function visualTickStep(rawStep: number): number {
+  const exponent = Math.floor(Math.log10(Math.max(rawStep, 0.000001)));
+  const base = 10 ** exponent;
+  const fraction = rawStep / base;
+  if (fraction <= 1) {
+    return base;
+  }
+  if (fraction <= 2) {
+    return base * 2;
+  }
+  if (fraction <= 2.5) {
+    return base * 2.5;
+  }
+  if (fraction <= 5) {
+    return base * 5;
+  }
+  return base * 10;
+}
+
+function formatVisualTick(value: number, ticks: number[]): string {
+  const intervals = ticks.slice(1).map((tick, index) => Math.abs(tick - ticks[index]));
+  const smallest = intervals.length ? Math.min(...intervals) : 1;
+  return value.toFixed(smallest < 0.1 ? 2 : 1);
+}
+
+function violinDensity(values: number[], min: number, max: number) {
+  const binCount = 24;
+  const span = Math.max(0.0001, max - min);
+  const bins = Array.from({ length: binCount }, (_, index) => ({
+    x: min + (span * index) / Math.max(1, binCount - 1),
+    value: 0
+  }));
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    const position = clamp01((value - min) / span) * (binCount - 1);
+    const center = Math.round(position);
+    for (let offset = -2; offset <= 2; offset += 1) {
+      const index = center + offset;
+      if (index >= 0 && index < bins.length) {
+        bins[index].value += Math.exp(-(offset * offset) / 2.2);
+      }
+    }
+  }
+  return bins;
+}
+
+function quantile(sortedValues: number[], q: number): number | null {
+  if (!sortedValues.length) {
+    return null;
+  }
+  const position = (sortedValues.length - 1) * q;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) {
+    return sortedValues[lower];
+  }
+  const ratio = position - lower;
+  return sortedValues[lower] * (1 - ratio) + sortedValues[upper] * ratio;
+}
+
+function sampledPoints(points: BenchmarkCurvePoint[], limit: number): BenchmarkCurvePoint[] {
+  if (points.length <= limit) {
+    return points;
+  }
+  const step = Math.ceil(points.length / limit);
+  return points.filter((_, index) => index % step === 0).slice(0, limit);
+}
+
+function deterministicJitter(seed: string, radius: number): number {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) % 9973;
+  }
+  return ((hash / 9973) * 2 - 1) * radius;
+}
+
+function trimSvgLabel(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, Math.max(1, maxLength - 1))}…` : value;
+}
+
+const ATTACK_CATEGORY_ORDER = [
+  "classical-distortion",
+  "physical-channel",
+  "3d-viewpoint-rerendering",
+  "regeneration",
+  "consumer-enhancement"
+] as const;
+
+const ATTACK_CATEGORY_LABELS: Record<string, string> = {
+  "classical-distortion": "经典失真",
+  "physical-channel": "物理信道",
+  "3d-viewpoint-rerendering": "3D 视角重渲染",
+  regeneration: "再生成",
+  "consumer-enhancement": "消费级增强"
+};
+
+function normalizeAttackCategory(category: string, attackPresetId = "", attackMethod = ""): string {
+  const text = `${category} ${attackPresetId} ${attackMethod}`.toLowerCase();
+  if (text.includes("3d") || text.includes("viewpoint") || text.includes("rerender")) {
+    return "3d-viewpoint-rerendering";
+  }
+  if (
+    text.includes("physical") ||
+    text.includes("screen_shoot") ||
+    text.includes("screen-shoot") ||
+    text.includes("print_camera") ||
+    text.includes("print-camera") ||
+    text.includes("combined_physical") ||
+    text.includes("combined-physical")
+  ) {
+    return "physical-channel";
+  }
+  if (text.includes("consumer-enhancement") || text.includes("cew_") || text.includes("atk-cew")) {
+    return "consumer-enhancement";
+  }
+  if (
+    text.includes("regeneration") ||
+    text.includes("regen") ||
+    text.includes("diffusion") ||
+    text.includes("vae") ||
+    text.includes("noise_to_image") ||
+    text.includes("noise-to-image") ||
+    text.includes("image_to_vedio") ||
+    text.includes("image-to-vedio") ||
+    text.includes("image_to_video") ||
+    text.includes("image-to-video")
+  ) {
+    return "regeneration";
+  }
+  return "classical-distortion";
+}
+
+function attackCategoryRank(category: string): number {
+  const normalized = normalizeAttackCategory(category);
+  const index = ATTACK_CATEGORY_ORDER.indexOf(normalized as (typeof ATTACK_CATEGORY_ORDER)[number]);
+  return index === -1 ? ATTACK_CATEGORY_ORDER.length : index;
+}
+
+function displayAttackCategory(category: string): string {
+  const normalized = normalizeAttackCategory(category);
+  return ATTACK_CATEGORY_LABELS[normalized] ?? displayTokenLabel(category);
 }
 
 const RESULT_ALGORITHM_LABELS: Record<string, string> = {

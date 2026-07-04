@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_batch_io import load_rgb_batch, save_image_batch, to_tensor_batch
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
@@ -35,6 +36,7 @@ HIDDEN_MODULES = [
 class HiDDeNWatermark(BaseWatermark):
     name = "hidden"
     description = "HiDDeN image watermark wrapper using packaged weights."
+    uses_batch_image_io = True
 
     def __init__(
         self,
@@ -131,9 +133,18 @@ class HiDDeNWatermark(BaseWatermark):
         assert self._model is not None
         assert self._hidden_config is not None
 
-        prepared = [self._prepare_tensor(input_path) for input_path, _output_path, _context in jobs]
-        image_batch = self._torch.cat([item[0] for item in prepared], dim=0)
-        original_sizes = [item[1] for item in prepared]
+        loaded_images = load_rgb_batch([input_path for input_path, _output_path, _context in jobs])
+        original_sizes = [image.size for image in loaded_images]
+        width = int(self._hidden_config.W)
+        height = int(self._hidden_config.H)
+        resized_images = [image.resize((width, height), Image.Resampling.BICUBIC) for image in loaded_images]
+        image_batch = to_tensor_batch(
+            resized_images,
+            transform=self._tf.to_tensor,
+            torch_module=self._torch,
+            device=self._model.device,
+        )
+        image_batch = image_batch * 2 - 1
         nbits = int(self._hidden_config.message_length)
         bits_list = [bits_from_message(context.message, nbits, seed=context.seed) for _input_path, _output_path, context in jobs]
         message_batch = self._torch.tensor(bits_list, dtype=self._torch.float32, device=self._model.device)
@@ -144,12 +155,17 @@ class HiDDeNWatermark(BaseWatermark):
 
         decoded_batch = decoded.detach().cpu().numpy().round().clip(0, 1).astype(int).tolist()
         encoded_np = self._hidden_utils.tensor_to_image(encoded.detach().cpu())
+        save_image_batch(
+            (
+                (Image.fromarray(encoded_np[index]), output_path)
+                for index, (_input_path, output_path, _context) in enumerate(jobs)
+            ),
+            save_fn=lambda image, path: image.save(path, format="PNG"),
+        )
         results: list[Mapping[str, Any]] = []
         for index, ((_input_path, output_path, _context), bits, decoded_bits, original_size) in enumerate(
             zip(jobs, bits_list, decoded_batch, original_sizes)
         ):
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(encoded_np[index]).save(output_path, format="PNG")
             results.append(
                 {
                     "bits": bits_to_string(bits),
@@ -174,9 +190,18 @@ class HiDDeNWatermark(BaseWatermark):
         assert self._model is not None
         assert self._hidden_config is not None
 
-        prepared = [self._prepare_tensor(input_path) for input_path, _context in jobs]
-        image_batch = self._torch.cat([item[0] for item in prepared], dim=0)
-        original_sizes = [item[1] for item in prepared]
+        loaded_images = load_rgb_batch([input_path for input_path, _context in jobs])
+        original_sizes = [image.size for image in loaded_images]
+        width = int(self._hidden_config.W)
+        height = int(self._hidden_config.H)
+        resized_images = [image.resize((width, height), Image.Resampling.BICUBIC) for image in loaded_images]
+        image_batch = to_tensor_batch(
+            resized_images,
+            transform=self._tf.to_tensor,
+            torch_module=self._torch,
+            device=self._model.device,
+        )
+        image_batch = image_batch * 2 - 1
         with self._torch.no_grad():
             decoded = self._model.encoder_decoder.decoder(image_batch)
         decoded_batch = decoded.detach().cpu().numpy().round().clip(0, 1).astype(int).tolist()

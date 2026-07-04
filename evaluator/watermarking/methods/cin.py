@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_batch_io import load_rgb_batch, save_image_batch, to_tensor_batch
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
 from evaluator.watermarking.utils import (
@@ -39,6 +40,7 @@ def _patch_cin_state_for_current_kornia(model: Any, state: Mapping[str, Any]) ->
 class CINWatermark(BaseWatermark):
     name = "cin"
     description = "CIN combined-noise 30-bit watermark wrapper using packaged pretrained weights."
+    uses_batch_image_io = True
 
     def __init__(
         self,
@@ -140,13 +142,12 @@ class CINWatermark(BaseWatermark):
 
         device = next(self._model.parameters()).device
         transform = self._transform()
-        images = self._torch.cat(
-            [
-                transform(Image.open(input_path).convert("RGB")).unsqueeze(0)
-                for input_path, _output_path, _context in jobs
-            ],
-            dim=0,
-        ).to(device)
+        images = to_tensor_batch(
+            load_rgb_batch([input_path for input_path, _output_path, _context in jobs]),
+            transform=transform,
+            torch_module=self._torch,
+            device=device,
+        )
         bits_list = [bits_from_message(context.message, self.payload_bits, seed=context.seed) for _input_path, _output_path, context in jobs]
         messages = self._torch.tensor(bits_list, dtype=self._torch.float32, device=device)
 
@@ -154,8 +155,16 @@ class CINWatermark(BaseWatermark):
             encoded = self._model.encoder(images, messages)
 
         to_pil = self._tf.ToPILImage()
-        for index, (_input_path, output_path, _context) in enumerate(jobs):
-            to_pil(((encoded[index].detach().cpu().clamp(-1, 1) + 1) / 2)).save(output_path)
+        save_image_batch(
+            (
+                (
+                    to_pil(((encoded[index].detach().cpu().clamp(-1, 1) + 1) / 2)),
+                    output_path,
+                )
+                for index, (_input_path, output_path, _context) in enumerate(jobs)
+            ),
+            save_fn=lambda image, path: image.save(path),
+        )
 
         return [
             {
@@ -180,10 +189,12 @@ class CINWatermark(BaseWatermark):
 
         device = next(self._model.parameters()).device
         transform = self._transform()
-        images = self._torch.cat(
-            [transform(Image.open(input_path).convert("RGB")).unsqueeze(0) for input_path, _context in jobs],
-            dim=0,
-        ).to(device)
+        images = to_tensor_batch(
+            load_rgb_batch([input_path for input_path, _context in jobs]),
+            transform=transform,
+            torch_module=self._torch,
+            device=device,
+        )
         with self._torch.no_grad():
             _, decoded, _, _ = self._model.train_val_decoder(images, "Identity")
         decoded_batch = decoded.detach().cpu().round().clip(0, 1).int().tolist()

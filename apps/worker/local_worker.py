@@ -5,7 +5,7 @@ import os
 import socket
 import sys
 import time
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 
@@ -51,11 +51,6 @@ def _heartbeat(
     )
 
 
-@contextmanager
-def _run_timeout(seconds: int):
-    yield
-
-
 def run_once(worker_id: str | None = None) -> int:
     settings = get_settings()
     apply_runtime_parallel_env(settings.runs_root)
@@ -85,13 +80,12 @@ def run_once(worker_id: str | None = None) -> int:
             with redirect_stdout(log_file), redirect_stderr(log_file):
                 print(f"[worker] start run={run_id} worker={resolved_worker_id} device={device}", flush=True)
                 started = time.perf_counter()
-                with _run_timeout(settings.run_timeout_seconds):
-                    result = service.execute_run(
-                        run_id,
-                        worker_id=resolved_worker_id,
-                        device=device,
-                        log_path=log_path,
-                    )
+                result = service.execute_run(
+                    run_id,
+                    worker_id=resolved_worker_id,
+                    device=device,
+                    log_path=log_path,
+                )
                 elapsed = time.perf_counter() - started
                 print(
                     f"[worker] finish run={run_id} status={result['status']} elapsed={elapsed:.2f}s",

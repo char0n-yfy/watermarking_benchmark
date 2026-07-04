@@ -74,7 +74,6 @@ $env:WM_BENCH_RUNS_ROOT = "$RunsRoot"
 $env:WM_BENCH_DB_PATH = "$DbPath"
 $env:WM_BENCH_DEVICE = if ($env:WM_BENCH_DEVICE) { $env:WM_BENCH_DEVICE } else { $Device }
 $env:WM_BENCH_WORKER_POLL_SECONDS = if ($env:WM_BENCH_WORKER_POLL_SECONDS) { $env:WM_BENCH_WORKER_POLL_SECONDS } else { "2" }
-$env:WM_BENCH_RUN_TIMEOUT_SECONDS = if ($env:WM_BENCH_RUN_TIMEOUT_SECONDS) { $env:WM_BENCH_RUN_TIMEOUT_SECONDS } else { "3600" }
 $env:API_HOST = $ApiHost
 $env:API_PORT = "$ApiPort"
 

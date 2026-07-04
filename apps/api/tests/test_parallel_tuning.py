@@ -24,15 +24,19 @@ class ParallelTuningPolicyTest(unittest.TestCase):
             {
                 "tuneWatermarks": True,
                 "tuneAttacks": True,
+                "tuneQuality": True,
                 "watermarkMethods": ["dwsf", "trustmark-q"],
                 "attackMethods": ["jpeg", "brightness"],
+                "qualityMetrics": ["psnr", "lpips"],
             }
         )
 
         self.assertEqual(request.watermark_methods, ["dwsf", "trustmark-q"])
         self.assertEqual(request.attack_methods, ["jpeg", "brightness"])
+        self.assertEqual(request.quality_metrics, ["psnr", "lpips"])
         self.assertEqual(request.to_json()["watermarkMethods"], ["dwsf", "trustmark-q"])
         self.assertEqual(request.to_json()["attackMethods"], ["jpeg", "brightness"])
+        self.assertEqual(request.to_json()["qualityMetrics"], ["psnr", "lpips"])
 
     def test_tuning_request_expands_samples_for_candidate_batches(self) -> None:
         request = TuningRequest.from_payload(
@@ -433,6 +437,59 @@ class ParallelTuningPolicyTest(unittest.TestCase):
                 VIEWPOINT_RERENDERING_PRIMARY_METHOD,
             )
             self.assertIn("WM_BENCH_ATTACK_BATCH_SIZES", summary["envUpdates"])
+
+    def test_quality_summary_uses_metric_specific_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            report = {
+                "jobId": "tune_test",
+                "watermarks": [],
+                "attacks": [],
+                "quality": {
+                    "bestCpuWorkers": {"workers": 16, "ok": True, "imagesPerSecond": 10.0},
+                    "bestCpuWorkersByMetric": {
+                        "psnr": {"workers": 8, "ok": True, "imagesPerSecond": 11.0},
+                        "ssim": {"workers": 12, "ok": True, "imagesPerSecond": 12.0},
+                        "ms_ssim": {"workers": 16, "ok": True, "imagesPerSecond": 13.0},
+                        "nmi": {"workers": 4, "ok": True, "imagesPerSecond": 14.0},
+                    },
+                    "bestPerceptualBatch": {"batchSize": 16, "ok": True, "imagesPerSecond": 20.0},
+                    "bestPerceptualBatchByMetric": {
+                        "lpips": {"batchSize": 32, "ok": True, "imagesPerSecond": 30.0},
+                        "dists": {"batchSize": 8, "ok": True, "imagesPerSecond": 15.0},
+                    },
+                },
+            }
+
+            summary = service._build_summary(report)
+
+            self.assertEqual(
+                summary["envUpdates"]["WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC"],
+                "psnr=8,ssim=12,ms_ssim=16,nmi=4",
+            )
+            self.assertNotIn("WM_BENCH_QUALITY_CPU_WORKERS", summary["envUpdates"])
+            self.assertEqual(summary["envUpdates"]["WM_BENCH_PERCEPTUAL_BATCH_SIZES"], "lpips=32,dists=8")
+            self.assertNotIn("WM_BENCH_PERCEPTUAL_BATCH_SIZE", summary["envUpdates"])
+            self.assertEqual(summary["qualityCpuWorkerOverrides"], ["psnr=8", "ssim=12", "ms_ssim=16", "nmi=4"])
+            self.assertEqual(summary["qualityPerceptualBatchOverrides"], ["lpips=32", "dists=8"])
+
+    def test_quality_step_estimate_counts_selected_metric_searches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ParallelTuningService(resources_root=root / "resources", runs_root=root / "runs")
+            request = TuningRequest(
+                tune_watermarks=False,
+                tune_attacks=False,
+                tune_quality=True,
+                batch_candidates=[1, 2, 4],
+                worker_candidates=[1, 2],
+                max_batch_size=4,
+                max_worker_count=2,
+                quality_metrics=["psnr", "lpips", "dists"],
+            )
+
+            self.assertEqual(service._estimate_steps(request), 1 + 2 + (2 * 3))
 
 
 if __name__ == "__main__":

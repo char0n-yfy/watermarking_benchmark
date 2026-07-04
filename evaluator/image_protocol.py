@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -15,6 +18,66 @@ CANONICAL_PREPROCESS_POLICY = "center_cover_crop_512"
 CANONICAL_OUTPUT_POLICY = "resize_bicubic_to_canonical_512"
 QUALITY_ALIGNMENT_NONE = "none"
 QUALITY_ALIGNMENT_RESIZE_TARGET = "resize_target_bicubic_to_reference"
+_IMAGE_METADATA_CACHE_LOCK = threading.Lock()
+_IMAGE_SIZE_CACHE: OrderedDict[tuple[str, int, int], list[int]] = OrderedDict()
+
+
+def _image_metadata_cache_enabled() -> bool:
+    return os.getenv("WM_BENCH_IMAGE_METADATA_CACHE", "1") != "0"
+
+
+def _image_metadata_cache_max_entries() -> int:
+    raw = os.getenv("WM_BENCH_IMAGE_METADATA_CACHE_MAX_ENTRIES", "200000")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 200000
+    return max(0, value)
+
+
+def _image_cache_path(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path.absolute())
+
+
+def _image_size_cache_key(path: Path) -> tuple[str, int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (_image_cache_path(path), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def clear_image_metadata_cache() -> None:
+    with _IMAGE_METADATA_CACHE_LOCK:
+        _IMAGE_SIZE_CACHE.clear()
+
+
+def invalidate_image_metadata(path: str | Path) -> None:
+    cache_path = _image_cache_path(Path(path))
+    with _IMAGE_METADATA_CACHE_LOCK:
+        for key in list(_IMAGE_SIZE_CACHE.keys()):
+            if key[0] == cache_path:
+                _IMAGE_SIZE_CACHE.pop(key, None)
+
+
+def register_image_size(path: str | Path, size: Any) -> None:
+    parsed = size_list(size)
+    if parsed is None or not _image_metadata_cache_enabled():
+        return
+    key = _image_size_cache_key(Path(path))
+    if key is None:
+        return
+    max_entries = _image_metadata_cache_max_entries()
+    if max_entries <= 0:
+        return
+    with _IMAGE_METADATA_CACHE_LOCK:
+        _IMAGE_SIZE_CACHE[key] = parsed
+        _IMAGE_SIZE_CACHE.move_to_end(key)
+        while len(_IMAGE_SIZE_CACHE) > max_entries:
+            _IMAGE_SIZE_CACHE.popitem(last=False)
 
 
 def size_list(size: Any) -> list[int] | None:
@@ -40,11 +103,22 @@ def size_list(size: Any) -> list[int] | None:
 
 
 def image_size(path: str | Path) -> list[int] | None:
+    path = Path(path)
+    key = _image_size_cache_key(path)
+    if key is not None and _image_metadata_cache_enabled():
+        with _IMAGE_METADATA_CACHE_LOCK:
+            cached = _IMAGE_SIZE_CACHE.get(key)
+            if cached is not None:
+                _IMAGE_SIZE_CACHE.move_to_end(key)
+                return list(cached)
     try:
         with Image.open(path) as image:
-            return [int(image.size[0]), int(image.size[1])]
+            result = [int(image.size[0]), int(image.size[1])]
     except Exception:
         return None
+    if key is not None:
+        register_image_size(path, result)
+    return result
 
 
 def first_metadata_size(metadata: Mapping[str, Any], keys: tuple[str, ...]) -> list[int] | None:
@@ -84,6 +158,7 @@ def canonical_preprocess_image(
     bottom = top + target_h
     cropped = resized.crop((left, top, right, bottom))
     save_png_image(cropped, target_path)
+    register_image_size(target_path, [target_w, target_h])
 
     return {
         "preprocessPolicy": CANONICAL_PREPROCESS_POLICY,
@@ -121,6 +196,7 @@ def canonicalize_image_file_in_place(
             "outputSizePolicy": None,
         }
     if before == target_size:
+        register_image_size(image_path, before)
         return {
             "ok": True,
             "changed": False,
@@ -131,6 +207,7 @@ def canonicalize_image_file_in_place(
     with Image.open(image_path) as opened:
         image = opened.convert("RGB").resize(size, Image.Resampling.BICUBIC)
     save_png_image(image, image_path)
+    register_image_size(image_path, target_size)
     return {
         "ok": True,
         "changed": True,

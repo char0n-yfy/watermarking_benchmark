@@ -84,10 +84,6 @@ def artifact_paths(run_root: Path) -> dict[str, Path]:
     }
 
 
-def stage_event(paths: dict[str, Path], run_id: str, stage: str, status: str, **payload: Any) -> None:
-    return None
-
-
 def progress(current: int, total: int) -> int:
     if total <= 0:
         return 0
@@ -262,22 +258,36 @@ class RunStateWriter:
         key: str,
         *,
         status: str = "succeeded",
+        current: int | None = None,
+        total: int | None = None,
         current_item: JsonDict | None = None,
         counters: JsonDict | None = None,
         artifact_refs: JsonDict | None = None,
         error: str | None = None,
+        replace_counters: bool = False,
     ) -> None:
         phase = self._phase(key)
         now = utc_timestamp()
         phase["status"] = status
         phase["updatedAt"] = now
         phase["finishedAt"] = now
-        if int(phase.get("total") or 0) > 0 and status == "succeeded":
+        if total is not None:
+            phase["total"] = max(0, int(total))
+        if current is not None:
+            phase["current"] = max(0, int(current))
+        elif int(phase.get("total") or 0) > 0 and status == "succeeded":
             phase["current"] = int(phase["total"])
+        total_value = int(phase.get("total") or 0)
+        if total_value > 0:
+            phase["current"] = min(int(phase.get("current") or 0), total_value)
         if current_item is not None:
             phase["currentItem"] = current_item
-        if counters:
-            phase["counters"] = {**dict(phase.get("counters") or {}), **counters}
+        if counters is not None:
+            phase["counters"] = (
+                dict(counters)
+                if replace_counters
+                else {**dict(phase.get("counters") or {}), **counters}
+            )
         if artifact_refs:
             phase["artifactRefs"] = {**dict(phase.get("artifactRefs") or {}), **artifact_refs}
         if error:

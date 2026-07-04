@@ -7,7 +7,7 @@ import sys
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -25,6 +25,12 @@ from evaluator.execution import (
     replace_result_execution,
     resolve_named_batch_size,
     resolve_named_cpu_workers,
+)
+from evaluator.image_batch_io import (
+    AsyncImageSavePool,
+    ImageBatchPrefetcher,
+    prefetch_rgb_batch,
+    suspend_image_save_pool,
 )
 
 
@@ -181,40 +187,24 @@ def run_attack_dir_with_attack(job: AttackJob, attack: BaseAttack) -> list[Attac
             default=1,
         )
         batch_size = batch_config.value
-        results: list[AttackResult] = []
-        for offset in range(0, len(tasks), batch_size):
-            chunk = tasks[offset : offset + batch_size]
-            for _input_path, output_path, _context in chunk:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-            execution = ExecutionProfile(
-                stage="attack",
-                method=str(attack.name),
-                mode="batch",
-                job_count=len(tasks),
-                device=job.device,
-                cpu_workers=1,
-                configured_batch_size=batch_size,
-                actual_batch_size=len(chunk),
-                batch_stage=batch_capability.stage,
-                supports_batch=True,
-                thread_safe_parallel=thread_safe_parallel,
-                config={
-                    "batchSize": batch_config.to_json(),
-                    "batchCapability": batch_capability.to_json(),
-                },
-            )
-            started = time.perf_counter()
-            try:
-                metadatas = [dict(metadata) for metadata in attack.apply_batch_impl(chunk)]
-                if len(metadatas) != len(chunk):
-                    raise ValueError(
-                        f"apply_batch_impl returned {len(metadatas)} results for {len(chunk)} jobs"
-                    )
-            except Exception as exc:
-                fallback = ExecutionProfile(
+        results_by_index: list[AttackResult | None] = [None] * len(tasks)
+        deferred_payloads: list[
+            tuple[int, Path, Path, dict[str, Any], ExecutionProfile, float]
+        ] = []
+        with AsyncImageSavePool() as save_pool, ImageBatchPrefetcher(
+            enabled=bool(getattr(attack, "uses_batch_image_io", False))
+        ) as prefetcher:
+            for offset in range(0, len(tasks), batch_size):
+                indexed_chunk = list(enumerate(tasks[offset : offset + batch_size], start=offset))
+                chunk = [task for _index, task in indexed_chunk]
+                next_chunk = tasks[offset + batch_size : offset + (2 * batch_size)]
+                prefetch_rgb_batch(input_path for input_path, _output_path, _context in next_chunk)
+                for _input_path, output_path, _context in chunk:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                execution = ExecutionProfile(
                     stage="attack",
                     method=str(attack.name),
-                    mode="batch_fallback_serial",
+                    mode="batch",
                     job_count=len(tasks),
                     device=job.device,
                     cpu_workers=1,
@@ -223,47 +213,91 @@ def run_attack_dir_with_attack(job: AttackJob, attack: BaseAttack) -> list[Attac
                     batch_stage=batch_capability.stage,
                     supports_batch=True,
                     thread_safe_parallel=thread_safe_parallel,
-                    fallback=True,
-                    fallback_reason=f"{type(exc).__name__}: {exc}",
                     config={
                         "batchSize": batch_config.to_json(),
                         "batchCapability": batch_capability.to_json(),
+                        "asyncImageSave": save_pool.profile(),
+                        "imagePrefetch": prefetcher.profile(),
                     },
                 )
-                results.extend(replace_result_execution(run_one(task), fallback) for task in chunk)
-                continue
-
-            elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
-            for (input_path, output_path, _context), metadata in zip(chunk, metadatas):
+                started = time.perf_counter()
                 try:
-                    metadata = attack._protocol_metadata(input_path, output_path, metadata)
-                    metadata = attach_execution_metadata(metadata, execution)
-                    results.append(
-                        AttackResult(
-                            input_path=input_path,
-                            output_path=output_path,
-                            attack_name=attack.name,
-                            params=attack.params,
-                            elapsed_ms=elapsed_ms,
-                            ok=True,
-                            error=None,
-                            metadata=metadata,
+                    metadatas = [dict(metadata) for metadata in attack.apply_batch_impl(chunk)]
+                    if len(metadatas) != len(chunk):
+                        raise ValueError(
+                            f"apply_batch_impl returned {len(metadatas)} results for {len(chunk)} jobs"
                         )
-                    )
                 except Exception as exc:
-                    results.append(
-                        AttackResult(
-                            input_path=input_path,
-                            output_path=output_path,
-                            attack_name=attack.name,
-                            params=attack.params,
-                            elapsed_ms=elapsed_ms,
-                            ok=False,
-                            error=f"{type(exc).__name__}: {exc}",
-                            metadata=attach_execution_metadata({}, execution),
-                        )
+                    save_pool.flush()
+                    fallback = ExecutionProfile(
+                        stage="attack",
+                        method=str(attack.name),
+                        mode="batch_fallback_serial",
+                        job_count=len(tasks),
+                        device=job.device,
+                        cpu_workers=1,
+                        configured_batch_size=batch_size,
+                        actual_batch_size=len(chunk),
+                        batch_stage=batch_capability.stage,
+                        supports_batch=True,
+                        thread_safe_parallel=thread_safe_parallel,
+                        fallback=True,
+                        fallback_reason=f"{type(exc).__name__}: {exc}",
+                        config={
+                            "batchSize": batch_config.to_json(),
+                            "batchCapability": batch_capability.to_json(),
+                            "asyncImageSave": save_pool.profile(),
+                            "imagePrefetch": prefetcher.profile(),
+                        },
                     )
+                    with suspend_image_save_pool():
+                        for index, task in indexed_chunk:
+                            results_by_index[index] = replace_result_execution(run_one(task), fallback)
+                    continue
 
+                elapsed_ms = ((time.perf_counter() - started) * 1000) / max(1, len(chunk))
+                for (index, (_input_path, output_path, _context)), metadata in zip(indexed_chunk, metadatas):
+                    deferred_payloads.append((index, _input_path, output_path, metadata, execution, elapsed_ms))
+
+            save_pool.flush()
+            async_save_profile = save_pool.profile()
+            image_prefetch_profile = prefetcher.profile()
+
+        for index, input_path, output_path, metadata, execution, elapsed_ms in deferred_payloads:
+            try:
+                execution = replace(
+                    execution,
+                    config={
+                        **dict(execution.config),
+                        "asyncImageSave": async_save_profile,
+                        "imagePrefetch": image_prefetch_profile,
+                    },
+                )
+                metadata = attack._protocol_metadata(input_path, output_path, metadata)
+                metadata = attach_execution_metadata(metadata, execution)
+                results_by_index[index] = AttackResult(
+                    input_path=input_path,
+                    output_path=output_path,
+                    attack_name=attack.name,
+                    params=attack.params,
+                    elapsed_ms=elapsed_ms,
+                    ok=True,
+                    error=None,
+                    metadata=metadata,
+                )
+            except Exception as exc:
+                results_by_index[index] = AttackResult(
+                    input_path=input_path,
+                    output_path=output_path,
+                    attack_name=attack.name,
+                    params=attack.params,
+                    elapsed_ms=elapsed_ms,
+                    ok=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                    metadata=attach_execution_metadata({}, execution),
+                )
+
+        results = [result for result in results_by_index if result is not None]
         attack.write_manifest(job.output_dir / "attack_manifest.json", results)
         return results
 

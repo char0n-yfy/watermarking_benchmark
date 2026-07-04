@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from PIL import Image
 
+from evaluator.image_batch_io import load_rgb_batch, save_image_batch, to_tensor_batch
 from evaluator.image_io import save_png_image
 from evaluator.watermarking.base import BaseWatermark, WatermarkContext
 from evaluator.watermarking.registry import register_watermark
@@ -26,6 +27,7 @@ from evaluator.watermarking.utils import (
 class WAMWatermark(BaseWatermark):
     name = "wam"
     description = "Watermark Anything localized 32-bit watermark wrapper using packaged MIT weights."
+    uses_batch_image_io = True
 
     def __init__(
         self,
@@ -168,28 +170,36 @@ class WAMWatermark(BaseWatermark):
         assert self._save_image is not None
         assert self._model is not None
 
-        loaded: list[tuple[int, Path, list[int], Any, Any]] = []
-        for index, (input_path, output_path, context) in enumerate(jobs):
+        images = load_rgb_batch([input_path for input_path, _output_path, _context in jobs])
+        loaded: list[tuple[int, Path, list[int], Any, Any, Any]] = []
+        for index, ((_input_path, output_path, context), image) in enumerate(zip(jobs, images)):
             bits = bits_from_message(context.message, self.payload_bits, seed=context.seed)
             msg = self._torch.tensor(bits, dtype=self._torch.float32)
-            tensor = self._default_transform(Image.open(input_path).convert("RGB"))
-            loaded.append((index, output_path, bits, tensor, msg))
+            loaded.append((index, output_path, bits, image, msg, tuple(image.size)))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
-        grouped: dict[tuple[int, int], list[tuple[int, Path, list[int], Any, Any]]] = {}
+        grouped: dict[tuple[int, int], list[tuple[int, Path, list[int], Any, Any, Any]]] = {}
         for item in loaded:
-            grouped.setdefault(tuple(item[3].shape[-2:]), []).append(item)
+            grouped.setdefault(tuple(item[5]), []).append(item)
 
         assert self._to_pil_image is not None
         device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = move_tensor_to_device(self._torch.stack([item[3] for item in items], dim=0), device)
+                tensors = to_tensor_batch(
+                    [item[3] for item in items],
+                    transform=self._default_transform,
+                    torch_module=self._torch,
+                    device=device,
+                )
                 messages = move_tensor_to_device(self._torch.stack([item[4] for item in items], dim=0), device)
                 outputs = self._model.embed(tensors, messages)
                 watermarked = self._unnormalize_img(outputs["imgs_w"]).detach().cpu().clamp(0, 1)
-                for batch_index, (result_index, output_path, bits, _tensor, _msg) in enumerate(items):
-                    save_png_image(self._to_pil_image(watermarked[batch_index]), output_path)
+                save_image_batch(
+                    (self._to_pil_image(watermarked[batch_index]), output_path)
+                    for batch_index, (_result_index, output_path, _bits, _image, _msg, _size) in enumerate(items)
+                )
+                for _batch_index, (result_index, _output_path, bits, _image, _msg, _size) in enumerate(items):
                     results[result_index] = {
                         "bits": bits_to_string(bits),
                         "payload_bits": self.payload_bits,
@@ -211,25 +221,30 @@ class WAMWatermark(BaseWatermark):
         assert self._msg_predict_inference is not None
         assert self._model is not None
 
-        loaded: list[tuple[int, WatermarkContext, Any]] = []
-        for index, (input_path, context) in enumerate(jobs):
-            tensor = self._default_transform(Image.open(input_path).convert("RGB"))
-            loaded.append((index, context, tensor))
+        images = load_rgb_batch([input_path for input_path, _context in jobs])
+        loaded: list[tuple[int, WatermarkContext, Any, Any]] = []
+        for index, ((_input_path, context), image) in enumerate(zip(jobs, images)):
+            loaded.append((index, context, image, tuple(image.size)))
 
         results: list[Mapping[str, Any] | None] = [None] * len(jobs)
-        grouped: dict[tuple[int, int], list[tuple[int, WatermarkContext, Any]]] = {}
+        grouped: dict[tuple[int, int], list[tuple[int, WatermarkContext, Any, Any]]] = {}
         for item in loaded:
-            grouped.setdefault(tuple(item[2].shape[-2:]), []).append(item)
+            grouped.setdefault(tuple(item[3]), []).append(item)
 
         device = next(self._model.parameters()).device
         with self._torch.no_grad():
             for items in grouped.values():
-                tensors = move_tensor_to_device(self._torch.stack([item[2] for item in items], dim=0), device)
+                tensors = to_tensor_batch(
+                    [item[2] for item in items],
+                    transform=self._default_transform,
+                    torch_module=self._torch,
+                    device=device,
+                )
                 preds = self._model.detect(tensors)["preds"]
                 mask_preds = self._F.sigmoid(preds[:, 0, :, :])
                 bit_preds = preds[:, 1:, :, :]
                 decoded_batch = self._msg_predict_inference(bit_preds, mask_preds).cpu().float().int().tolist()
-                for batch_index, ((result_index, context, _tensor), decoded) in enumerate(zip(items, decoded_batch)):
+                for batch_index, ((result_index, context, _image, _size), decoded) in enumerate(zip(items, decoded_batch)):
                     metadata: dict[str, Any] = {
                         "bits": bits_to_string(decoded),
                         "payload_bits": len(decoded),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.services.scoring import (
     PROTOCOL_ID,
+    _compute_cpu_quality_metrics_batch_with_profile,
     aggregate_benchmark_score,
     attack_category,
     attack_resource_category,
@@ -184,6 +186,32 @@ class ScoringTest(unittest.TestCase):
             self.assertIn("cpu", profile)
             self.assertIn("perceptual", profile)
             self.assertIn(profile["cpu"]["mode"], {"serial", "threadpool"})
+
+    def test_cpu_quality_metric_workers_can_be_split_by_metric(self) -> None:
+        previous = os.environ.get("WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC")
+        os.environ["WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC"] = "psnr=1,ssim=1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                reference = root / "reference.png"
+                target = root / "target.png"
+                Image.new("RGB", (32, 32), (120, 160, 200)).save(reference)
+                Image.new("RGB", (32, 32), (122, 158, 198)).save(target)
+
+                metrics, profile = _compute_cpu_quality_metrics_batch_with_profile(
+                    [(reference, target)],
+                    metrics=("psnr",),
+                )
+
+                self.assertEqual(profile["mode"], "split_serial")
+                self.assertEqual(profile["config"]["metrics"], ["psnr"])
+                self.assertIn("psnr", metrics[0])
+                self.assertNotIn("ssim", metrics[0])
+        finally:
+            if previous is None:
+                os.environ.pop("WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC", None)
+            else:
+                os.environ["WM_BENCH_QUALITY_CPU_WORKERS_BY_METRIC"] = previous
 
 
 if __name__ == "__main__":

@@ -20,7 +20,13 @@ from app.services.local_runner import LocalRunRequest, estimate_selection, run_l
 from app.services.resources import get_attack_catalog_item, get_dataset_by_id, get_watermark_catalog_item
 from app.services.runtime_resource_manager import release_runtime_resources
 from app.services.runtime_parallel_config import apply_runtime_parallel_env
-from app.services.scoring import PROTOCOL_ID, aggregate_benchmark_score, benchmark_protocols, score_cell_from_records
+from app.services.scoring import (
+    LEGACY_PROTOCOL_IDS,
+    PROTOCOL_ID,
+    aggregate_benchmark_score,
+    benchmark_protocols,
+    score_cell_from_records,
+)
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "paused", "cancelled", "partially_failed"}
@@ -953,7 +959,7 @@ class ExperimentService:
         return benchmark_protocols()
 
     def list_leaderboard(self, protocol_id: str = PROTOCOL_ID) -> dict[str, Any]:
-        if protocol_id != PROTOCOL_ID:
+        if protocol_id != PROTOCOL_ID and protocol_id not in LEGACY_PROTOCOL_IDS:
             raise KeyError(f"Unknown benchmark protocol: {protocol_id}")
         rows: list[dict[str, Any]] = []
         for run in self.list_runs():

@@ -21,10 +21,22 @@ def png_save_kwargs() -> dict[str, Any]:
     return {"format": "PNG", "compress_level": png_compress_level()}
 
 
+def _register_saved_image(path: Path, image: Image.Image) -> None:
+    try:
+        from evaluator.image_protocol import invalidate_image_metadata, register_image_size
+
+        invalidate_image_metadata(path)
+        register_image_size(path, [int(image.size[0]), int(image.size[1])])
+    except Exception:
+        return
+
+
 def save_png_image(image: Image.Image, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    image.convert("RGB").save(path, **png_save_kwargs())
+    converted = image.convert("RGB")
+    converted.save(path, **png_save_kwargs())
+    _register_saved_image(path, converted)
 
 
 def save_png_array(array: np.ndarray, path: str | Path) -> None:

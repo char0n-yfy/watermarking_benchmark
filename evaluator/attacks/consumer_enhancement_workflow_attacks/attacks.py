@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -9,6 +14,7 @@ from PIL import Image, ImageEnhance, ImageOps
 
 from evaluator.attacks.base import AttackContext, BaseAttack
 from evaluator.attacks.registry import register_attack
+from evaluator.image_batch_io import load_rgb_batch, save_image_batch
 
 from evaluator.attacks.consumer_enhancement_workflow_attacks.helpers import (
     apply_filter_lut,
@@ -36,6 +42,91 @@ DEFAULT_WEIGHT_ROOT = (
     / "attacks"
     / "consumer_enhancement_workflow_attacks"
 )
+_CEW_STEP_CACHE_LOCK = threading.Lock()
+_CEW_STEP_CACHE: OrderedDict[str, tuple[Image.Image, dict[str, Any]]] = OrderedDict()
+
+
+def _cew_step_cache_enabled() -> bool:
+    return os.getenv("WM_BENCH_CEW_STEP_CACHE", "1") != "0"
+
+
+def _cew_step_cache_max_entries() -> int:
+    raw = os.getenv("WM_BENCH_CEW_STEP_CACHE_MAX_ENTRIES", "512")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 512
+    return max(0, value)
+
+
+def _image_digest(image: Image.Image) -> str:
+    rgb = image.convert("RGB")
+    digest = hashlib.sha256()
+    digest.update(str(rgb.size).encode("ascii"))
+    digest.update(rgb.tobytes())
+    return digest.hexdigest()
+
+
+def _cew_step_cache_key(
+    *,
+    image: Image.Image,
+    step_name: str,
+    attack: Any,
+    context: AttackContext,
+) -> str:
+    return json.dumps(
+        {
+            "schema": "cew-step-v1",
+            "imageDigest": _image_digest(image),
+            "step": str(step_name),
+            "operation": str(getattr(attack, "operation", "")),
+            "config": dict(getattr(attack, "config", {}) or {}),
+            "device": str(context.device),
+        },
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+
+
+def _get_cew_step_cache(key: str) -> tuple[Image.Image, dict[str, Any]] | None:
+    if not _cew_step_cache_enabled() or _cew_step_cache_max_entries() <= 0:
+        return None
+    with _CEW_STEP_CACHE_LOCK:
+        cached = _CEW_STEP_CACHE.get(key)
+        if cached is None:
+            return None
+        _CEW_STEP_CACHE.move_to_end(key)
+        image, metadata = cached
+        return image.copy(), {**metadata, "cew_step_cache_hit": True}
+
+
+def _set_cew_step_cache(key: str, image: Image.Image, metadata: Mapping[str, Any]) -> None:
+    if not _cew_step_cache_enabled():
+        return
+    max_entries = _cew_step_cache_max_entries()
+    if max_entries <= 0:
+        return
+    with _CEW_STEP_CACHE_LOCK:
+        _CEW_STEP_CACHE[key] = (image.copy(), dict(metadata))
+        _CEW_STEP_CACHE.move_to_end(key)
+        while len(_CEW_STEP_CACHE) > max_entries:
+            _CEW_STEP_CACHE.popitem(last=False)
+
+
+def cew_step_cache_stats() -> dict[str, Any]:
+    with _CEW_STEP_CACHE_LOCK:
+        entry_count = len(_CEW_STEP_CACHE)
+    return {
+        "enabled": _cew_step_cache_enabled(),
+        "maxEntries": _cew_step_cache_max_entries(),
+        "entryCount": entry_count,
+    }
+
+
+def clear_cew_step_cache() -> None:
+    with _CEW_STEP_CACHE_LOCK:
+        _CEW_STEP_CACHE.clear()
 
 
 def _resolve_weight_path(task_name: str, model_name: str, weight_root: str | Path | None = None) -> Path:
@@ -631,9 +722,65 @@ def _apply_named_step(
     return output, step_name, metadata
 
 
+def _apply_named_step_cached(
+    image: Image.Image,
+    step: str | Mapping[str, Any],
+    context: AttackContext,
+    inherited_params: Mapping[str, Any] | None = None,
+) -> tuple[Image.Image, str, dict[str, Any]]:
+    step_name, attack = _build_named_step_attack(step, inherited_params)
+    cache_key = _cew_step_cache_key(image=image, step_name=step_name, attack=attack, context=context)
+    cached = _get_cew_step_cache(cache_key)
+    if cached is not None:
+        output, metadata = cached
+        return output, step_name, metadata
+    output, metadata = attack._apply_image(image, context)
+    _set_cew_step_cache(cache_key, output, metadata)
+    return output, step_name, {**metadata, "cew_step_cache_hit": False}
+
+
+def _apply_step_batch_cached(
+    *,
+    step_name: str,
+    attack: Any,
+    images: list[Image.Image],
+    contexts: list[AttackContext],
+) -> list[tuple[Image.Image, dict[str, Any]]]:
+    results: list[tuple[Image.Image, dict[str, Any]] | None] = [None] * len(images)
+    miss_images: list[Image.Image] = []
+    miss_contexts: list[AttackContext] = []
+    miss_indexes: list[int] = []
+    miss_keys: list[str] = []
+
+    for index, (image, context) in enumerate(zip(images, contexts)):
+        key = _cew_step_cache_key(image=image, step_name=step_name, attack=attack, context=context)
+        cached = _get_cew_step_cache(key)
+        if cached is not None:
+            results[index] = cached
+            continue
+        miss_images.append(image)
+        miss_contexts.append(context)
+        miss_indexes.append(index)
+        miss_keys.append(key)
+
+    if miss_images:
+        for index, key, (output, metadata) in zip(
+            miss_indexes,
+            miss_keys,
+            attack._apply_images(miss_images, miss_contexts),
+        ):
+            _set_cew_step_cache(key, output, metadata)
+            results[index] = (output, {**metadata, "cew_step_cache_hit": False})
+
+    if any(result is None for result in results):
+        raise RuntimeError("CEW step cache produced incomplete batch results")
+    return [result for result in results if result is not None]
+
+
 class CEWAttack(BaseAttack):
     operation: str = ""
     default_params: Mapping[str, Any] = {}
+    uses_batch_image_io = True
 
     def __init__(self, **params: Any) -> None:
         merged = {**self.default_params, **params}
@@ -680,7 +827,7 @@ class CEWAttack(BaseAttack):
             current = image
             metadata_steps: list[dict[str, Any]] = []
             for step in self.config["chain"]:
-                current, step_name, step_meta = _apply_named_step(current, step, context, self.config)
+                current, step_name, step_meta = _apply_named_step_cached(current, step, context, self.config)
                 metadata_steps.append({"step": step_name, **step_meta})
             return current, {"backend": "cew_composite_chain", "fallback_used": any(step.get("fallback_used") for step in metadata_steps), "steps": metadata_steps}
         raise ValueError(f"Unsupported CEW operation: {operation}")
@@ -702,7 +849,14 @@ class CEWAttack(BaseAttack):
         for step in self.config["chain"]:
             step_name, attack = _build_named_step_attack(step, self.config)
             next_images: list[Image.Image] = []
-            for index, (output, metadata) in enumerate(attack._apply_images(current_images, contexts)):
+            for index, (output, metadata) in enumerate(
+                _apply_step_batch_cached(
+                    step_name=step_name,
+                    attack=attack,
+                    images=current_images,
+                    contexts=contexts,
+                )
+            ):
                 next_images.append(output)
                 metadata_steps_by_image[index].append({"step": step_name, **metadata})
             current_images = next_images
@@ -730,7 +884,7 @@ class CEWAttack(BaseAttack):
         self,
         jobs: list[tuple[Path, Path, AttackContext]],
     ) -> list[Mapping[str, Any]]:
-        images = [load_rgb(input_path) for input_path, _output_path, _context in jobs]
+        images = load_rgb_batch([input_path for input_path, _output_path, _context in jobs])
         contexts = [context for _input_path, _output_path, context in jobs]
         outputs = self._apply_images(images, contexts)
         if self.operation == "composite":
@@ -743,8 +897,11 @@ class CEWAttack(BaseAttack):
             adapter = "sequential_batch_adapter"
             reason = "CEW edit operations expose image-level PIL APIs in this wrapper"
         metadatas: list[Mapping[str, Any]] = []
-        for (_input_path, output_path, _context), (output, metadata) in zip(jobs, outputs):
-            save_png(output, output_path)
+        save_image_batch(
+            (output, output_path)
+            for (_input_path, output_path, _context), (output, _metadata) in zip(jobs, outputs)
+        )
+        for (_input_path, _output_path, _context), (_output, metadata) in zip(jobs, outputs):
             metadatas.append(
                 {
                     **metadata,
