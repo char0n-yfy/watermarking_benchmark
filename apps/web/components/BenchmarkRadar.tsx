@@ -1,6 +1,6 @@
 import { chartAreaFill, chartColorByIndex, chartColorForDomain, chartStrokeColor } from "@/lib/chart-colors";
 import type { BenchmarkCategoryScore } from "@/lib/types";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 const RING_LEVELS = [0.2, 0.4, 0.6, 0.8, 1];
 
 export function BenchmarkRadar({
@@ -20,6 +20,9 @@ export function BenchmarkRadar({
   colorDomain?: string[];
   variant?: "default" | "hero";
 }) {
+  const [hoveredCategoryKey, setHoveredCategoryKey] = useState<string | null>(null);
+  const [hoveredSeriesId, setHoveredSeriesId] = useState<string | null>(null);
+  const [focusedSeriesId, setFocusedSeriesId] = useState<string | null>(null);
   const visibleSeries = (series ?? [])
     .map((item) => ({
       ...item,
@@ -62,6 +65,20 @@ export function BenchmarkRadar({
   const fallbackSeries = [{ id: "score", label: "score", categories }];
   const drawableSeries = visibleSeries.length > 0 ? visibleSeries : fallbackSeries;
   const renderSeries = drawableSeries.slice().sort((left, right) => seriesArea(right.categories) - seriesArea(left.categories));
+  const activeCategoryKey = hoveredCategoryKey ?? selectedCategoryKey;
+  const highlightedSeriesId = hoveredSeriesId ?? focusedSeriesId;
+  const tooltip = hoveredCategoryKey
+    ? buildRadarTooltip({
+        categoryKey: hoveredCategoryKey,
+        center,
+        drawableSeries,
+        focusedSeriesId,
+        hoveredSeriesId,
+        labelPoints: axisPoints,
+        radius,
+        size
+      })
+    : null;
 
   return (
     <div
@@ -83,11 +100,13 @@ export function BenchmarkRadar({
             className={[
               "radar-axis",
               point.covered ? "covered" : "uncovered",
-              selectedCategoryKey === point.category.key ? "active" : ""
+              activeCategoryKey === point.category.key ? "active" : ""
             ]
               .filter(Boolean)
               .join(" ")}
             key={point.category.key}
+            onMouseEnter={() => setHoveredCategoryKey(point.category.key)}
+            onMouseLeave={() => setHoveredCategoryKey(null)}
             x1={center}
             x2={point.axisX}
             y1={center}
@@ -121,7 +140,18 @@ export function BenchmarkRadar({
           });
           const areaPath = buildRadarAreaPath(points);
           return (
-            <g key={item.id}>
+            <g
+              className={[
+                "radar-series",
+                highlightedSeriesId === item.id ? "highlighted" : "",
+                highlightedSeriesId && highlightedSeriesId !== item.id ? "dimmed" : ""
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={item.id}
+              onMouseEnter={() => setHoveredSeriesId(item.id)}
+              onMouseLeave={() => setHoveredSeriesId(null)}
+            >
               {areaPath ? (
                 <path
                   className="radar-area"
@@ -142,7 +172,7 @@ export function BenchmarkRadar({
                     className={[
                       "radar-dot",
                       "covered",
-                      selectedCategoryKey === point.category.key ? "active" : ""
+                      activeCategoryKey === point.category.key ? "active" : ""
                     ]
                       .filter(Boolean)
                       .join(" ")}
@@ -151,24 +181,54 @@ export function BenchmarkRadar({
                     fill={color}
                     key={`${item.id}-${point.category.key}-dot`}
                     onClick={() => onSelectCategory?.(point.category)}
+                    onFocus={() => {
+                      setHoveredCategoryKey(point.category.key);
+                      setHoveredSeriesId(item.id);
+                    }}
+                    onBlur={() => {
+                      setHoveredCategoryKey(null);
+                      setHoveredSeriesId(null);
+                    }}
+                    onMouseEnter={() => {
+                      setHoveredCategoryKey(point.category.key);
+                      setHoveredSeriesId(item.id);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredCategoryKey(null);
+                      setHoveredSeriesId(null);
+                    }}
                     r={isHero ? "5" : "4"}
                     style={{ "--radar-color": color } as CSSProperties}
+                    tabIndex={0}
                   />
                 ))}
             </g>
           );
         })}
+        {tooltip ? (
+          <g className="radar-svg-tooltip" transform={`translate(${tooltip.x},${tooltip.y})`}>
+            <rect height="46" rx="8" width="148" />
+            <text className="radar-svg-tooltip-title" x="10" y="18">
+              {tooltip.title}
+            </text>
+            <text className="radar-svg-tooltip-value" x="10" y="35">
+              {tooltip.value}
+            </text>
+          </g>
+        ) : null}
         {axisPoints.map((point) => (
           <text
             className={[
               "radar-label",
               point.covered ? "covered" : "uncovered",
-              selectedCategoryKey === point.category.key ? "active" : ""
+              activeCategoryKey === point.category.key ? "active" : ""
             ]
               .filter(Boolean)
               .join(" ")}
             key={`${point.category.key}-label`}
             onClick={() => onSelectCategory?.(point.category)}
+            onMouseEnter={() => setHoveredCategoryKey(point.category.key)}
+            onMouseLeave={() => setHoveredCategoryKey(null)}
             textAnchor={point.labelX < center - 8 ? "end" : point.labelX > center + 8 ? "start" : "middle"}
             dominantBaseline="middle"
             x={point.labelX}
@@ -180,10 +240,19 @@ export function BenchmarkRadar({
       </svg>
       <div className={isHero ? "radar-score-list hero" : "radar-score-list"}>
         {drawableSeries.map((item, index) => (
-          <span key={item.id}>
+          <button
+            aria-pressed={focusedSeriesId === item.id}
+            className={focusedSeriesId === item.id ? "active" : ""}
+            key={item.id}
+            onClick={() => setFocusedSeriesId((current) => (current === item.id ? null : item.id))}
+            onMouseEnter={() => setHoveredSeriesId(item.id)}
+            onMouseLeave={() => setHoveredSeriesId(null)}
+            title={item.label}
+            type="button"
+          >
             <i className="covered" style={{ background: seriesColor(item.id, index, colorDomain) }} />
             {item.label}
-          </span>
+          </button>
         ))}
       </div>
     </div>
@@ -251,6 +320,63 @@ type RadarPlotPoint = {
   x: number;
   y: number;
 };
+
+type RadarAxisPoint = {
+  category: BenchmarkCategoryScore;
+  covered: boolean;
+  angle: number;
+  labelX: number;
+  labelY: number;
+  axisX: number;
+  axisY: number;
+};
+
+function buildRadarTooltip({
+  categoryKey,
+  center,
+  drawableSeries,
+  focusedSeriesId,
+  hoveredSeriesId,
+  labelPoints,
+  radius,
+  size
+}: {
+  categoryKey: string;
+  center: number;
+  drawableSeries: Array<{ id: string; label: string; categories: BenchmarkCategoryScore[] }>;
+  focusedSeriesId: string | null;
+  hoveredSeriesId: string | null;
+  labelPoints: RadarAxisPoint[];
+  radius: number;
+  size: number;
+}) {
+  const series =
+    drawableSeries.find((item) => item.id === hoveredSeriesId) ??
+    drawableSeries.find((item) => item.id === focusedSeriesId) ??
+    drawableSeries[0];
+  const category = series?.categories.find((item) => item.key === categoryKey);
+  const fallbackPoint = labelPoints.find((item) => item.category.key === categoryKey);
+  if (!category || !fallbackPoint) {
+    return null;
+  }
+  const scoreRadius = categoryScoreRadius(category);
+  const x = scoreRadius == null ? fallbackPoint.axisX : center + Math.cos(fallbackPoint.angle) * radius * scoreRadius;
+  const y = scoreRadius == null ? fallbackPoint.axisY : center + Math.sin(fallbackPoint.angle) * radius * scoreRadius;
+  const boxX = Math.max(8, Math.min(size - 156, x + (x > center ? -160 : 12)));
+  const boxY = Math.max(8, Math.min(size - 54, y - 56));
+  const title = shortLabel(category.label);
+  const valuePrefix = series?.label ? `${series.label}: ` : "";
+  return {
+    x: boxX,
+    y: boxY,
+    title: title.length > 18 ? `${title.slice(0, 17)}...` : title,
+    value: `${valuePrefix}${formatRadarScore(category.score)}`
+  };
+}
+
+function formatRadarScore(score: number | null | undefined): string {
+  return score == null || !Number.isFinite(score) ? "no data" : `Score ${score.toFixed(3)}`;
+}
 
 function buildRadarAreaPath(points: RadarPlotPoint[]): string | null {
   const segments: string[] = [];

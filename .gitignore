@@ -42,6 +42,8 @@
 *.bmp
 *.tif
 *.tiff
+!apps/web/public/result-icons/
+!apps/web/public/result-icons/*.png
 
 # Python / build outputs
 __pycache__/

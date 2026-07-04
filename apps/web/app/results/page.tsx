@@ -2,17 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   BarChart3,
-  Bug,
-  CheckCircle2,
   Download,
   Filter,
   Gauge,
   Info,
   PlayCircle,
   RefreshCw,
-  Search,
   SlidersHorizontal,
   Trophy
 } from "lucide-react";
@@ -45,7 +41,7 @@ import {
   countSelectedBenchmarkAttackTypes,
   isHiddenBenchmarkAttack
 } from "@/lib/benchmark-attack-catalog";
-import { formatMetric, rankAggregates, statusBadgeClass } from "@/lib/insights";
+import { formatMetric, rankAggregates } from "@/lib/insights";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
   BenchmarkCategoryScore,
@@ -58,17 +54,16 @@ import type {
   DemoRunRecord,
   RunAggregate,
   RunResultUnit,
-  RunResults,
-  RunStatus
+  RunResults
 } from "@/lib/types";
 
-type ResultsTab = "overview" | "attack" | "quality" | "debug";
+type ResultsTab = "overview" | "attack" | "quality";
 
 type AttackSelectorKey = "dataset" | "attack";
 type AttackHeatmapMetric = "tpr" | "nqd";
 type AttackHeatmapRowMode = "category" | "attack";
 type QualitySelectorKey = "dataset" | "algorithm" | "attack";
-type StatusFilter = RunStatus | "all";
+type SummaryIconKind = "experiment" | "status" | "dataset" | "watermark" | "attack";
 type StringArraySetter = (value: string[] | ((current: string[]) => string[])) => void;
 type AttackSelectorSetter = (
   value: AttackSelectorKey | null | ((current: AttackSelectorKey | null) => AttackSelectorKey | null)
@@ -189,7 +184,7 @@ interface ScoringSummary {
   tprAtFpr?: number | null;
 }
 
-const RESULT_TABS: ResultsTab[] = ["overview", "attack", "quality", "debug"];
+const RESULT_TABS: ResultsTab[] = ["overview", "attack", "quality"];
 const EMPTY_SCORE_ROWS: BenchmarkLeaderboardRow[] = [];
 
 export default function ResultsPage() {
@@ -224,10 +219,6 @@ export default function ResultsPage() {
   const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<string[]>([]);
   const [qualityAttackIds, setQualityAttackIds] = useState<string[]>([]);
   const [activeQualitySelectorKey, setActiveQualitySelectorKey] = useState<QualitySelectorKey | null>("attack");
-  const [debugStatus, setDebugStatus] = useState<StatusFilter>("all");
-  const [debugAttack, setDebugAttack] = useState("all");
-  const [debugSearch, setDebugSearch] = useState("");
-  const [failedOnly, setFailedOnly] = useState(false);
 
   const legacyRanking = useMemo(() => rankAggregates(results?.aggregates ?? []), [results]);
   const scoreRows = score?.leaderboardRows ?? EMPTY_SCORE_ROWS;
@@ -261,7 +252,10 @@ export default function ResultsPage() {
     [qualityAvailableCurvePoints]
   );
   const attackAttackOptionIds = useMemo(
-    () => buildQualityAttackOptions(qualityAvailableCurvePoints).map((item) => item.attackPresetId),
+    () =>
+      buildQualityAttackOptions(qualityAvailableCurvePoints)
+        .filter((item) => !isIdentityAttackOption(item))
+        .map((item) => item.attackPresetId),
     [qualityAvailableCurvePoints]
   );
 
@@ -477,39 +471,6 @@ export default function ResultsPage() {
         .map((item) => ({ aggregate: item, point: findScorePoint(score, item) })),
     [results, score, selectedSet]
   );
-  const debugAttackOptions = useMemo(
-    () => Array.from(new Set((results?.resultUnits ?? []).map((unit) => unit.attackPresetId))).sort(),
-    [results]
-  );
-  const debugResultUnits = useMemo(
-    () =>
-      (results?.resultUnits ?? []).filter((unit) => {
-        const scoring = resultUnitScoring(unit);
-        const haystack = [
-          unit.id,
-          unit.resultUnitKey,
-          unit.cellKey,
-          unit.datasetId,
-          unit.algorithmId,
-          unit.watermarkMethod,
-          unit.attackPresetId,
-          unit.attackMethod,
-          unit.error,
-          scoring?.failureStage
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        const queryMatch = !debugSearch.trim() || haystack.includes(debugSearch.trim().toLowerCase());
-        const statusMatch = debugStatus === "all" || unit.status === debugStatus;
-        const attackMatch = debugAttack === "all" || unit.attackPresetId === debugAttack;
-        const algorithmMatch = selectedSet.size === 0 || selectedSet.has(unit.algorithmId);
-        const failedMatch = !failedOnly || unit.status === "failed" || unit.status === "partially_failed" || Boolean(unit.error);
-        return queryMatch && statusMatch && attackMatch && algorithmMatch && failedMatch;
-      }),
-    [debugAttack, debugSearch, debugStatus, failedOnly, results, selectedSet]
-  );
-
   const overviewMainRadarCategories = useMemo(
     () => buildMainOverviewRadarTemplate(language),
     [language]
@@ -555,7 +516,7 @@ export default function ResultsPage() {
           loadingTitle: "Loading run results",
           loadingBody: "If a worker is running, results will appear here after completion.",
           title: "No real results to show yet",
-          body: "Create a config, submit it on Runs, and start a worker. WRS, coverage, curves, and debug cells appear after completion.",
+          body: "Create a config, submit it on Runs, and start a worker. WRS, coverage, and curves appear after completion.",
           openRuns: "Open Runs",
           openConfigs: "Open Configs"
         };
@@ -649,47 +610,45 @@ export default function ResultsPage() {
         <>
       <section className="results-summary-grid">
         <SummaryCard
+          iconKind="experiment"
+          iconTitle={uiText("可追踪的实验运行实例", "Traceable experiment run")}
           label={language === "zh" ? "实验名称" : "Experiment"}
           meta={summary.experimentMeta}
           value={summary.experimentName}
         />
         <SummaryCard
+          iconKind="status"
+          iconTitle={uiText("实验运行状态与完成进度", "Run status and completion progress")}
           label={language === "zh" ? "实验状态" : "Status"}
           meta={summary.statusMeta}
           value={summary.statusLabel}
         />
         <SummaryCard
+          iconKind="dataset"
+          iconTitle={uiText("标准化图像样本集合", "Standardized image sample collection")}
           label={language === "zh" ? "数据集" : "Datasets"}
           meta={summary.datasetMeta}
           value={summary.datasetValue}
         />
         <SummaryCard
+          iconKind="watermark"
+          iconTitle={uiText("隐藏嵌入与可检测标识", "Hidden embedding and detectable mark")}
           label={language === "zh" ? "水印算法" : "Watermarks"}
           meta={summary.watermarkMeta}
           value={summary.watermarkValue}
         />
         <SummaryCard
+          iconKind="attack"
+          iconTitle={uiText("鲁棒性压力测试与失真模拟", "Robustness stress tests and distortion simulation")}
           label={language === "zh" ? "攻击算法" : "Attacks"}
           meta={summary.attackMeta}
           value={summary.attackValue}
         />
       </section>
 
-      <section className="result-confidence-card">
-        <div className={score?.officialEligible ? "confidence-icon ok" : "confidence-icon warn"}>
-          {score?.officialEligible ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-        </div>
-        <div>
-          <strong>{score?.officialEligible ? t.results.officialReady : t.results.provisionalWarning}</strong>
-          <p>
-            {score
-              ? `${t.results.sampleFloor}: ${score.coverage.minSampleCount}/${score.officialMinSamples}. ${t.results.missingCategories}: ${
-                  score.coverage.missingCategories.length ? score.coverage.missingCategories.join(", ") : t.results.none
-                }`
-              : t.results.noScoreYet}
-          </p>
-        </div>
-      </section>
+      {activeInsight?.kind === "run" && activeInsight.key?.startsWith("summary-card:") ? (
+        <InsightStrip insight={activeInsight} />
+      ) : null}
 
       <section className="result-tabs" aria-label={t.results.resultViews}>
         {RESULT_TABS.map((tab) => (
@@ -768,23 +727,6 @@ export default function ResultsPage() {
         />
       ) : null}
 
-      {activeTab === "debug" ? (
-        <DebugTab
-          attackOptions={debugAttackOptions}
-          debugAttack={debugAttack}
-          debugResultUnits={debugResultUnits}
-          debugSearch={debugSearch}
-          debugStatus={debugStatus}
-          failedOnly={failedOnly}
-          results={results}
-          selectedAlgorithmIds={selectedAlgorithmIds}
-          setDebugAttack={setDebugAttack}
-          setDebugSearch={setDebugSearch}
-          setDebugStatus={setDebugStatus}
-          setFailedOnly={setFailedOnly}
-          setSelectedAlgorithmIds={setSelectedAlgorithmIds}
-        />
-      ) : null}
         </>
       )}
     </AppShell>
@@ -961,6 +903,20 @@ export default function ResultsPage() {
                     categories={detail.categories}
                     colorDomain={algorithmColorDomain}
                     emptyText={t.common.noData}
+                    onSelectCategory={(category) =>
+                      setActiveInsight({
+                        kind: "category",
+                        key: `${detail.categoryKey}:${category.key}`,
+                        title: `${detail.title} / ${category.label}`,
+                        body: `${uiText("得分", "Score")} ${formatMetric(category.score)}`,
+                        meta: category.key
+                      })
+                    }
+                    selectedCategoryKey={
+                      activeInsight?.kind === "category" && activeInsight.key?.startsWith(`${detail.categoryKey}:`)
+                        ? activeInsight.key.slice(detail.categoryKey.length + 1)
+                        : undefined
+                    }
                     series={detail.series}
                   />
                 ) : (
@@ -1021,7 +977,7 @@ export default function ResultsPage() {
   }) {
     const allPoints = (score?.curvePoints ?? []).sort(qualityCurvePointSort);
     const datasetOptions = buildQualityDatasetOptions(allPoints);
-    const attackOptions = buildQualityAttackOptions(allPoints);
+    const attackOptions = buildQualityAttackOptions(allPoints).filter((item) => !isIdentityAttackOption(item));
     const selectedDatasetSet = new Set(attackDatasetIds);
     const selectedAttackSet = new Set(attackAttackIds);
     const filteredPoints = allPoints.filter(
@@ -1795,138 +1751,6 @@ export default function ResultsPage() {
       </>
     );
   }
-  function DebugTab({
-    attackOptions,
-    debugAttack,
-    debugResultUnits,
-    debugSearch,
-    debugStatus,
-    failedOnly,
-    results,
-    selectedAlgorithmIds,
-    setDebugAttack,
-    setDebugSearch,
-    setDebugStatus,
-    setFailedOnly,
-    setSelectedAlgorithmIds
-  }: {
-    attackOptions: string[];
-    debugAttack: string;
-    debugResultUnits: RunResultUnit[];
-    debugSearch: string;
-    debugStatus: StatusFilter;
-    failedOnly: boolean;
-    results: RunResults | null;
-    selectedAlgorithmIds: string[];
-    setDebugAttack: (value: string) => void;
-    setDebugSearch: (value: string) => void;
-    setDebugStatus: (value: StatusFilter) => void;
-    setFailedOnly: (value: boolean) => void;
-    setSelectedAlgorithmIds: (value: string[] | ((current: string[]) => string[])) => void;
-  }) {
-    return (
-      <>
-        <AlgorithmSelector
-          algorithmIds={algorithmIds}
-          selectedAlgorithmIds={selectedAlgorithmIds}
-          setSelectedAlgorithmIds={setSelectedAlgorithmIds}
-          title={t.results.selectedAlgorithms}
-        />
-        <section className="panel results-detail-panel">
-          <div className="panel-header">
-              <h2>{language === "zh" ? "结果单元调试" : "Result unit debug"}</h2>
-            <Bug size={16} />
-          </div>
-          <div className="panel-body">
-            <div className="debug-filter-bar">
-              <div className="field-icon-input">
-                <Search size={15} />
-                <input
-              aria-label={language === "zh" ? "搜索结果单元" : "Search result units"}
-              onChange={(event) => setDebugSearch(event.target.value)}
-              placeholder={language === "zh" ? "搜索结果单元" : "Search result units"}
-                  value={debugSearch}
-                />
-              </div>
-              <select onChange={(event) => setDebugStatus(event.target.value as StatusFilter)} value={debugStatus}>
-                <option value="all">{t.results.allStatuses}</option>
-                <option value="succeeded">{t.common.status.succeeded}</option>
-                <option value="failed">{t.common.status.failed}</option>
-                <option value="partially_failed">{t.common.status.partially_failed}</option>
-                <option value="cancelled">{t.common.status.cancelled}</option>
-              </select>
-              <select onChange={(event) => setDebugAttack(event.target.value)} value={debugAttack}>
-                <option value="all">{t.results.allAttacks}</option>
-                {attackOptions.map((attack) => (
-                  <option key={attack} value={attack}>
-                    {attack}
-                  </option>
-                ))}
-              </select>
-              <label className="toggle-row inline-toggle">
-                <input checked={failedOnly} onChange={(event) => setFailedOnly(event.target.checked)} type="checkbox" />
-                <span>{t.results.failedOnly}</span>
-              </label>
-            </div>
-
-            <div className="table-scroll">
-              <table className="table">
-                <thead>
-                  <tr>
-                  <th>{language === "zh" ? "结果单元" : "Result unit"}</th>
-                    <th>{t.common.algorithm}</th>
-                    <th>{t.common.attackPreset}</th>
-                    <th>Bit Acc.</th>
-                    <th>BER</th>
-                    <th>{t.results.tprAtFpr}</th>
-                    <th>{t.runs.status}</th>
-                    <th>{t.results.failureStage}</th>
-                    <th>{t.results.manifest}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {debugResultUnits.map((unit) => {
-                    const scoring = resultUnitScoring(unit);
-                    return (
-                      <tr key={unit.id ?? unit.resultUnitKey ?? unit.cellKey}>
-                        <td>
-                          <strong>{unit.datasetId}</strong>
-                          <span className="subtle-cell">
-                            {unit.watermarkMethod} · {unit.attackMethod}: {unit.attackStrength} · seed {unit.seed}
-                          </span>
-                        </td>
-                        <td>{unit.algorithmId}</td>
-                        <td>{unit.attackPresetId}</td>
-                        <td>{formatMetric(unit.bitAccuracy)}</td>
-                        <td>{formatMetric(unit.bitErrorRate)}</td>
-                        <td>{formatMetric(scoring?.tprAtFpr)}</td>
-                        <td>
-                          <span className={statusBadgeClass(unit.status)}>{t.common.status[unit.status]}</span>
-                        </td>
-                        <td>{scoring?.failureStage ?? (unit.error ? "unknown" : "n/a")}</td>
-                        <td className="path-cell" title={unit.manifestPath ?? undefined}>
-                          {unit.manifestPath ?? "n/a"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {debugResultUnits.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
-            </div>
-
-            {results?.run.logPath ? (
-              <div className="debug-detail">
-                <strong>{t.runs.logPath}</strong>
-                <code>{results.run.logPath}</code>
-              </div>
-            ) : null}
-          </div>
-        </section>
-      </>
-    );
-  }
-
   function ScoreRowsTable({ rows }: { rows: BenchmarkLeaderboardRow[] }) {
     if (rows.length === 0) {
       return <div className="empty compact-empty">{t.common.noData}</div>;
@@ -2012,54 +1836,54 @@ export default function ResultsPage() {
     );
   }
 
-  function AlgorithmSelector({
-    algorithmIds,
-    selectedAlgorithmIds,
-    setSelectedAlgorithmIds,
-    title
+  function SummaryCard({
+    iconKind,
+    iconTitle,
+    label,
+    meta,
+    value
   }: {
-    algorithmIds: string[];
-    selectedAlgorithmIds: string[];
-    setSelectedAlgorithmIds: (value: string[] | ((current: string[]) => string[])) => void;
-    title: string;
+    iconKind?: SummaryIconKind;
+    iconTitle?: string;
+    label: string;
+    meta: string;
+    value: string;
   }) {
-    if (algorithmIds.length === 0) {
-      return null;
-    }
-    return (
-      <section className="algorithm-selector">
-        <div>
-          <Filter size={15} />
-          <strong>{title}</strong>
-        </div>
-        <div className="selector-chip-row">
-          {algorithmIds.map((algorithmId) => (
-            <button
-              className={selectedAlgorithmIds.includes(algorithmId) ? "selector-chip active" : "selector-chip"}
-              key={algorithmId}
-              onClick={() =>
-                setSelectedAlgorithmIds((current) =>
-                  current.includes(algorithmId)
-                    ? current.filter((id) => id !== algorithmId)
-                    : [...current, algorithmId]
-                )
-              }
-              type="button"
-            >
-              {algorithmId}
-            </button>
-          ))}
-        </div>
-      </section>
-    );
-  }
+    const summaryInsight = iconKind
+      ? {
+          kind: "run" as const,
+          key: `summary-card:${iconKind}`,
+          title: `${label}: ${value}`,
+          body: iconTitle ?? meta,
+          details: [
+            { label: uiText("当前值", "Current"), value },
+            { label: uiText("说明", "Meaning"), value: iconTitle ?? label }
+          ],
+          meta
+        }
+      : null;
 
-  function SummaryCard({ label, meta, value }: { label: string; meta: string; value: string }) {
     return (
-      <div className="result-summary-card">
-        <span>{label}</span>
-        <strong title={value}>{value}</strong>
-        <small title={meta}>{meta}</small>
+      <div
+        className={iconKind ? `result-summary-card has-summary-icon ${iconKind}` : "result-summary-card"}
+        data-active={activeInsight?.key === summaryInsight?.key ? "true" : undefined}
+      >
+        {iconKind ? (
+          <button
+            aria-label={`${label}: ${iconTitle ?? value}`}
+            className="result-summary-icon-button"
+            onClick={() => summaryInsight && setActiveInsight(summaryInsight)}
+            title={iconTitle ?? label}
+            type="button"
+          >
+            <img alt="" draggable={false} src={`/result-icons/${iconKind}.png`} />
+          </button>
+        ) : null}
+        <div className="result-summary-copy">
+          <span>{label}</span>
+          <strong title={value}>{value}</strong>
+          <small title={meta}>{meta}</small>
+        </div>
       </div>
     );
   }
@@ -2210,6 +2034,12 @@ function buildQualityAttackOptions(points: BenchmarkCurvePoint[]): QualityAttack
         left.attackMethod.localeCompare(right.attackMethod) ||
         left.attackPresetId.localeCompare(right.attackPresetId)
     );
+}
+
+function isIdentityAttackOption(option: Pick<QualityAttackOption, "attackPresetId" | "attackMethod">): boolean {
+  const preset = option.attackPresetId.toLowerCase().replace(/[_\s]+/g, "-");
+  const method = option.attackMethod.toLowerCase().replace(/[_\s]+/g, "-");
+  return preset === "identity" || preset === "atk-identity" || method === "identity";
 }
 
 function buildAttackVisualSummaries(
@@ -3311,10 +3141,7 @@ function tabIcon(tab: ResultsTab) {
   if (tab === "attack") {
     return <Gauge size={15} />;
   }
-  if (tab === "quality") {
-    return <BarChart3 size={15} />;
-  }
-  return <Bug size={15} />;
+  return <BarChart3 size={15} />;
 }
 
 function tabLabel(tab: ResultsTab, t: ReturnType<typeof useLanguage>["t"]) {
@@ -3324,10 +3151,7 @@ function tabLabel(tab: ResultsTab, t: ReturnType<typeof useLanguage>["t"]) {
   if (tab === "attack") {
     return t.results.attackAnalysis;
   }
-  if (tab === "quality") {
-    return t.results.qualityRobustness;
-  }
-  return t.results.debugResultUnits;
+  return t.results.qualityRobustness;
 }
 
 function formatThreshold(value: number | "inf" | "-inf" | null | undefined) {
