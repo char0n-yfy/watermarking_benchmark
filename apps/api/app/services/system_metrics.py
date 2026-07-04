@@ -28,6 +28,7 @@ except ModuleNotFoundError:
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,9 @@ _LHM_HTTP_PAYLOAD_CACHE: tuple[float, dict[str, Any]] | None = None
 _LHM_POWER_RAW_SAMPLES: list[float] = []
 _WINDOWS_PDH_POWER: dict[str, Any] = {"query": None, "counter": None, "primed": False}
 _WINDOWS_PDH_SAMPLES: list[float] = []
+_GPU_TELEMETRY_HISTORY: list[dict[str, Any]] = []
+_GPU_TELEMETRY_LOCK = threading.Lock()
+_MAX_GPU_TELEMETRY_SAMPLES = 720
 _MAX_PDH_POWER_SAMPLES = 5
 _MAX_LHM_POWER_SAMPLES = 3
 _LHM_HTTP_CACHE_TTL_S = 0.5
@@ -108,6 +112,29 @@ def collect_system_metrics(*, data_root: Path, device: str) -> dict[str, Any]:
             "rssBytes": _process_rss_bytes(),
             "pythonExecutable": sys.executable,
         },
+    }
+
+
+def collect_gpu_telemetry() -> dict[str, Any]:
+    gpu = _gpu_metrics()
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    sample = {
+        "timestamp": timestamp,
+        "epochMs": int(time.time() * 1000),
+        "devices": gpu["devices"],
+    }
+    with _GPU_TELEMETRY_LOCK:
+        _GPU_TELEMETRY_HISTORY.append(sample)
+        if len(_GPU_TELEMETRY_HISTORY) > _MAX_GPU_TELEMETRY_SAMPLES:
+            del _GPU_TELEMETRY_HISTORY[: len(_GPU_TELEMETRY_HISTORY) - _MAX_GPU_TELEMETRY_SAMPLES]
+        history = [dict(item) for item in _GPU_TELEMETRY_HISTORY]
+    return {
+        "timestamp": timestamp,
+        "epochMs": sample["epochMs"],
+        "available": bool(gpu["devices"]),
+        "devices": gpu["devices"],
+        "history": history,
+        "historyLimit": _MAX_GPU_TELEMETRY_SAMPLES,
     }
 
 
@@ -756,7 +783,7 @@ def _gpu_metrics() -> dict[str, Any]:
     output = _run_command(
         [
             _nvidia_smi_executable(),
-            "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+            "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit",
             "--format=csv,noheader,nounits",
         ],
         timeout=5,
@@ -778,6 +805,7 @@ def _gpu_metrics() -> dict[str, Any]:
                 "memoryUsedPercent": _percent(memory_used or 0, memory_total or 0),
                 "temperatureC": _float_or_none(parts[5]),
                 "powerDrawW": _float_or_none(parts[6]),
+                "powerLimitW": _float_or_none(parts[7]) if len(parts) >= 8 else None,
             }
         )
     return {"available": bool(devices), "devices": devices}

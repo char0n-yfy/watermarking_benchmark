@@ -32,7 +32,6 @@ class Settings:
     resources_root: Path
     data_root: Path
     runs_root: Path
-    database_path: Path
     api_host: str
     api_port: int
     device: str
@@ -66,10 +65,6 @@ def get_settings() -> Settings:
             PROJECT_ROOT,
         ),
         runs_root=resolved_runs_root,
-        database_path=_resolve_repo_path(
-            os.getenv("WM_BENCH_DB_PATH"),
-            resolved_runs_root / "wmbench.sqlite",
-        ),
         api_host=os.getenv("API_HOST", "127.0.0.1"),
         api_port=int(os.getenv("API_PORT", "8000")),
         device=os.getenv("WM_BENCH_DEVICE", "cpu"),

@@ -189,6 +189,7 @@ class RunStateWriter:
         tree = read_json_object(paths["artifactTree"])
         self.artifact_tree: JsonDict = tree if tree else {"runId": run_id, "datasets": {}, "updatedAt": utc_timestamp()}
         self.status = "running"
+        self.extra_state: JsonDict = {}
 
     def write_initial(self, *, status: str = "running") -> None:
         self.status = status
@@ -299,6 +300,31 @@ class RunStateWriter:
         self.status = status
         self._write()
 
+    def set_extra_state(self, extra_state: JsonDict) -> None:
+        self.extra_state = dict(extra_state)
+        self._write()
+
+    def replace_phase_states(
+        self,
+        phases: list[JsonDict],
+        *,
+        status: str | None = None,
+        extra_state: JsonDict | None = None,
+    ) -> None:
+        next_phases = {
+            str(phase["key"]): dict(phase)
+            for phase in phases
+            if isinstance(phase, dict) and isinstance(phase.get("key"), str)
+        }
+        for phase in default_phase_states():
+            next_phases.setdefault(str(phase["key"]), phase)
+        self.phases = next_phases
+        if status is not None:
+            self.status = status
+        if extra_state is not None:
+            self.extra_state = dict(extra_state)
+        self._write()
+
     def upsert_tree_path(
         self,
         *,
@@ -356,6 +382,7 @@ class RunStateWriter:
             "summaryPath": str(self.paths["runSummary"]),
             "phases": phases,
             "updatedAt": utc_timestamp(),
+            **self.extra_state,
         }
 
     def _phase(self, key: str) -> JsonDict:

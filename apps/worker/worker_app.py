@@ -4,7 +4,7 @@ from __future__ import annotations
 def worker_profile() -> dict[str, str]:
     return {
         "profile": "local",
-        "queue": "sqlite",
+        "queue": "file-state",
         "entrypoint": "python apps/worker/local_worker.py",
         "note": "Celery is intentionally not required for the local/AutoDL profile.",
     }

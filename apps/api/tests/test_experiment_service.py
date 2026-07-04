@@ -14,7 +14,6 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
 from app.services.local_artifacts import (
     RunStateWriter,
@@ -75,7 +74,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -107,7 +105,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -133,7 +130,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -194,7 +190,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (64, 64), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -222,7 +217,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -255,7 +249,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -291,7 +284,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -323,7 +315,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -357,7 +348,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -392,7 +382,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -426,7 +415,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -494,7 +482,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -516,15 +503,11 @@ class ExperimentServiceTest(unittest.TestCase):
                     if any(worker["currentRunId"] == run["id"] for worker in workers):
                         break
                     time.sleep(0.05)
-                with service.database.connect() as connection:
-                    connection.execute(
-                        """
-                        UPDATE experiment_runs
-                        SET updated_at = ?
-                        WHERE id = ?
-                        """,
-                        ("2020-01-01T00:00:00+00:00", run["id"]),
-                    )
+                with service._locked_state():
+                    record = service._read_run_record(run["id"])
+                    self.assertIsNotNone(record)
+                    record["updatedAt"] = "2020-01-01T00:00:00+00:00"
+                    service._write_run_record(record)
                 self.assertEqual(service.reconcile_stale_runs(stale_seconds=0), 0)
                 on_state({"overallProgress": 100, "currentPhase": "summary", "progressKind": "phaseOperations"})
                 return {"status": "succeeded", "progress": 100, "progressKind": "phaseOperations", "resultUnits": []}
@@ -534,14 +517,13 @@ class ExperimentServiceTest(unittest.TestCase):
 
             self.assertEqual(finished["status"], "succeeded")
 
-    def test_run_results_use_sqlite_lifecycle_over_artifact_status(self) -> None:
+    def test_run_results_use_file_lifecycle_over_artifact_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dataset_dir = root / "resources" / "datasets" / "smoke"
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -586,7 +568,6 @@ class ExperimentServiceTest(unittest.TestCase):
             dataset_dir.mkdir(parents=True)
             Image.new("RGB", (300, 300), (120, 160, 200)).save(dataset_dir / "sample.png")
             service = ExperimentService(
-                database=LocalDatabase(root / "state.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )
@@ -602,15 +583,13 @@ class ExperimentServiceTest(unittest.TestCase):
             )
             run = service.create_run(config["id"])
             stale_time = "2020-01-01T00:00:00+00:00"
-            with service.database.connect() as connection:
-                connection.execute(
-                    """
-                    UPDATE experiment_runs
-                    SET status = ?, worker_id = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    ("running", "dead-worker", stale_time, run["id"]),
-                )
+            with service._locked_state():
+                record = service._read_run_record(run["id"])
+                self.assertIsNotNone(record)
+                record["status"] = "running"
+                record["workerId"] = "dead-worker"
+                record["updatedAt"] = stale_time
+                service._write_run_record(record)
 
             reconciled = service.reconcile_stale_runs(stale_seconds=1)
             refreshed = service.get_run(run["id"])

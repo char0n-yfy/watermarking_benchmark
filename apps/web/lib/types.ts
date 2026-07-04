@@ -232,8 +232,27 @@ export interface RunPhaseState {
   finishedAt?: string | null;
   currentItem?: Record<string, unknown>;
   counters?: Record<string, number | string | null>;
+  cellProgress?: { current: number; total: number; percent?: number };
   artifactRefs?: Record<string, string | null>;
   error?: string | null;
+}
+
+export interface RunShardProgress {
+  id: string;
+  index: number;
+  device: string;
+  status: RunStatus | string;
+  currentPhase: RunPhaseKey;
+  progress: number;
+  sampleCount: number;
+  expectedCells: number;
+  statePath?: string;
+  logPath?: string;
+  currentItem?: Record<string, unknown>;
+  imageProgress?: { current: number; total: number };
+  cellProgress?: { current: number; total: number };
+  phases?: RunPhaseState[];
+  updatedAt?: string | null;
 }
 
 export interface RunState {
@@ -250,6 +269,11 @@ export interface RunState {
   artifactTreePath?: string;
   summaryPath?: string;
   phases: RunPhaseState[];
+  executionMode?: string;
+  shards?: RunShardProgress[];
+  phaseTotals?: Record<string, RunPhaseState>;
+  logicalCells?: number;
+  totalExpandedCells?: number;
   updatedAt?: string;
   run?: DemoRunRecord;
 }
@@ -259,6 +283,10 @@ export interface RunResultUnit {
   runId: string;
   cellKey: string;
   resultUnitKey?: string;
+  logicalCellKey?: string;
+  shardId?: string;
+  device?: string;
+  sampleIds?: string[];
   status: RunStatus;
   datasetId: string;
   algorithmId: string;
@@ -507,7 +535,7 @@ export interface RuntimeInfo {
   dataRoot: string;
   resourcesRoot: string;
   runsRoot: string;
-  databasePath: string;
+  experimentStateRoot: string;
   apiHost: string;
   apiPort: number;
   configuredApiPort?: number;
@@ -578,6 +606,7 @@ export interface SystemMetrics {
       memoryUsedPercent: number | null;
       temperatureC: number | null;
       powerDrawW: number | null;
+      powerLimitW?: number | null;
     }>;
   };
   process: {
@@ -585,4 +614,31 @@ export interface SystemMetrics {
     rssBytes: number | null;
     pythonExecutable: string;
   };
+}
+
+export interface GpuTelemetryDevice {
+  index: number;
+  name: string;
+  utilizationPercent: number | null;
+  memoryUsedMiB: number | null;
+  memoryTotalMiB: number | null;
+  memoryUsedPercent: number | null;
+  temperatureC: number | null;
+  powerDrawW: number | null;
+  powerLimitW?: number | null;
+}
+
+export interface GpuTelemetrySample {
+  timestamp: string;
+  epochMs: number;
+  devices: GpuTelemetryDevice[];
+}
+
+export interface GpuTelemetry {
+  timestamp: string;
+  epochMs: number;
+  available: boolean;
+  devices: GpuTelemetryDevice[];
+  history: GpuTelemetrySample[];
+  historyLimit: number;
 }

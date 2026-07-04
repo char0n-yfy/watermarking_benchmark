@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.core.config import get_settings
-from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
 from app.services.runtime_parallel_config import write_runtime_parallel_env
 from apps.worker.local_worker import run_once
@@ -29,12 +28,10 @@ class LocalWorkerTest(unittest.TestCase):
 
             os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
-            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
             os.environ["WM_BENCH_DEVICE"] = "cpu"
             get_settings.cache_clear()
 
             service = ExperimentService(
-                database=LocalDatabase(root / "runs" / "wmbench.sqlite"),
                 resources_root=root / "resources",
                 runs_root=root / "runs",
             )

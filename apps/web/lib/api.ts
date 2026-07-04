@@ -9,6 +9,7 @@ import type {
   DatasetVersion,
   DemoRunRecord,
   ExperimentSelection,
+  GpuTelemetry,
   LeaderboardResponse,
   ParallelTuningJob,
   ParallelTuningSaveResult,
@@ -307,6 +308,10 @@ export function fetchReadiness(): Promise<ReadinessReport> {
 
 export function fetchSystemMetrics(): Promise<SystemMetrics> {
   return requestJson<SystemMetrics>("/system/metrics");
+}
+
+export function fetchGpuTelemetry(): Promise<GpuTelemetry> {
+  return requestJson<GpuTelemetry>("/system/gpu-telemetry");
 }
 
 export function startParallelTuning(payload?: Record<string, unknown>): Promise<ParallelTuningJob> {

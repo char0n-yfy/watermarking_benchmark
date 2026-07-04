@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Union
@@ -563,9 +563,10 @@ def _stable_json_digest(value: Any, length: int = 16) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
 
 
-def _dataset_fingerprint(dataset_path: Path) -> str:
+def _dataset_fingerprint(dataset_path: Path, sample_paths: list[Path] | None = None) -> str:
     entries: list[JsonDict] = []
-    for path in _list_image_files(dataset_path):
+    selected_paths = sample_paths if sample_paths is not None else _list_image_files(dataset_path)
+    for path in selected_paths:
         try:
             stat = path.stat()
         except OSError:
@@ -587,11 +588,34 @@ def _dataset_fingerprint(dataset_path: Path) -> str:
             "canonicalPreprocessPolicy": CANONICAL_PREPROCESS_POLICY,
             "canonicalOutputPolicy": CANONICAL_OUTPUT_POLICY,
             "canonicalImageSize": list(CANONICAL_IMAGE_SIZE),
-            "samplePool": "all_sorted_images",
+            "samplePool": "selected_shard_samples" if sample_paths is not None else "all_sorted_images",
             "entries": entries,
         },
         length=16,
     )
+
+
+def _sample_relatives_for_dataset(selection: JsonDict, dataset_id: str) -> list[str] | None:
+    overrides = selection.get("_sampleRelativesByDataset")
+    if not isinstance(overrides, dict):
+        return None
+    values = overrides.get(dataset_id)
+    if not isinstance(values, list):
+        return None
+    return [str(value) for value in values if str(value)]
+
+
+def _selected_dataset_image_files(dataset_path: Path, selection: JsonDict, dataset_id: str) -> list[Path]:
+    relatives = _sample_relatives_for_dataset(selection, dataset_id)
+    if relatives is None:
+        return _list_image_files(dataset_path)[: int(selection["maxSamples"])]
+    selected: list[Path] = []
+    for relative in relatives:
+        raw_path = Path(relative)
+        path = raw_path if raw_path.is_absolute() else dataset_path / raw_path
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTS:
+            selected.append(path)
+    return selected[: int(selection["maxSamples"])]
 
 
 def _module_version(module_name: str) -> str | None:
@@ -717,6 +741,16 @@ def _parse_sample_count_dir_name(path: Path, digest: str) -> int:
     raw = name[len(prefix) : -len(suffix)]
     try:
         return int(raw)
+    except ValueError:
+        return -1
+
+
+def _parse_any_sample_count_dir_name(path: Path) -> int:
+    parts = path.name.split("_", 2)
+    if len(parts) != 3 or parts[0] != "samples":
+        return -1
+    try:
+        return int(parts[1])
     except ValueError:
         return -1
 
@@ -885,6 +919,8 @@ def _normalize_completed_phase_state(
             "imagesDone": watermark_total,
             "groupsDone": watermark_groups,
             "resultUnitsDone": result_unit_count,
+            "phaseCellsDone": result_unit_count,
+            "phaseCellsTotal": expected_cells,
         },
         replace_counters=True,
     )
@@ -903,6 +939,8 @@ def _normalize_completed_phase_state(
             "negativeImagesDone": negative_attack_total,
             "negativeControlGroupsDone": len(negative_attack_counts),
             "resultUnitsDone": result_unit_count,
+            "phaseCellsDone": result_unit_count,
+            "phaseCellsTotal": expected_cells,
         },
         replace_counters=True,
     )
@@ -917,6 +955,8 @@ def _normalize_completed_phase_state(
             "positiveImagesDone": positive_attack_total,
             "negativeImagesDone": positive_attack_total,
             "resultUnitsDone": result_unit_count,
+            "phaseCellsDone": result_unit_count,
+            "phaseCellsTotal": expected_cells,
         },
         replace_counters=True,
     )
@@ -930,6 +970,8 @@ def _normalize_completed_phase_state(
             "pairsDone": per_unit_pair_total,
             "failedUnits": failed_units,
             "resultUnitsDone": result_unit_count,
+            "phaseCellsDone": result_unit_count,
+            "phaseCellsTotal": expected_cells,
         },
         replace_counters=True,
     )
@@ -943,6 +985,8 @@ def _normalize_completed_phase_state(
             "resultUnitsDone": result_unit_count,
             "failedUnits": failed_units,
             "skippedUnits": skipped_units,
+            "phaseCellsDone": result_unit_count,
+            "phaseCellsTotal": expected_cells,
         },
         artifact_refs={"summary": str(state_writer.paths["runSummary"])},
         replace_counters=True,
@@ -1495,9 +1539,85 @@ def _compatible_sample_dirs(parent_dir: Path, digest: str, target_dir: Path) -> 
         for path in parent_dir.iterdir()
         if path.is_dir()
         and path != target_dir
-        and _parse_sample_count_dir_name(path, digest) > 0
+        and _parse_any_sample_count_dir_name(path) > 0
     ]
-    return sorted(dirs, key=lambda path: _parse_sample_count_dir_name(path, digest), reverse=True)
+    return sorted(
+        dirs,
+        key=lambda path: (
+            _parse_sample_count_dir_name(path, digest) > 0,
+            _parse_any_sample_count_dir_name(path),
+        ),
+        reverse=True,
+    )
+
+
+def _sample_relative_token(path: Path) -> str:
+    parts = path.parts
+    for index, part in enumerate(parts):
+        if part.startswith("samples_") and _parse_any_sample_count_dir_name(Path(part)) > 0:
+            return "/".join(parts[index + 1 :])
+    return "/".join(parts[-2:]) if len(parts) >= 2 else path.name
+
+
+def _record_input_matches(record: JsonDict, input_key: str | None, expected_path: Path) -> bool:
+    if input_key is None:
+        return True
+    raw = record.get(input_key)
+    if not raw:
+        return False
+    if "sourceSize" in record or "sourceMtimeNs" in record:
+        try:
+            expected_stat = expected_path.stat()
+        except OSError:
+            return False
+        if record.get("sourceSize") != expected_stat.st_size:
+            return False
+        if record.get("sourceMtimeNs") != expected_stat.st_mtime_ns:
+            return False
+    source_path = Path(str(raw))
+    if source_path == expected_path:
+        return True
+    return _sample_relative_token(source_path) == _sample_relative_token(expected_path)
+
+
+def _normalized_json_value(value: Any) -> str:
+    return json.dumps(value if value is not None else {}, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _record_params_match(record_params: Any, expected_params: Any) -> bool:
+    return _normalized_json_value(record_params or {}) == _normalized_json_value(expected_params or {})
+
+
+def _record_params_include_expected(record_params: Any, expected_params: Any) -> bool:
+    if not isinstance(expected_params, dict) or not expected_params:
+        return True
+    if not isinstance(record_params, dict):
+        return False
+    for key, expected_value in expected_params.items():
+        if key not in record_params:
+            return False
+        if _normalized_json_value(record_params.get(key)) != _normalized_json_value(expected_value):
+            return False
+    return True
+
+
+def _watermark_embed_record_matches(
+    record: JsonDict,
+    *,
+    method_name: str,
+    params: JsonDict,
+    message: str,
+) -> bool:
+    record_message = record.get("message")
+    return (
+        str(record.get("method_name") or "") == method_name
+        and (record_message in {None, ""} or str(record_message) == message)
+        and _record_params_include_expected(record.get("params"), params)
+    )
+
+
+def _attack_record_matches(record: JsonDict, *, attack_name: str, params: JsonDict) -> bool:
+    return str(record.get("attack_name") or "") == attack_name and _record_params_match(record.get("params"), params)
 
 
 def _valid_prefix_records(
@@ -1506,10 +1626,13 @@ def _valid_prefix_records(
     expected_count: int,
     output_key: str,
     output_root: Path,
+    record_matches: Callable[[JsonDict], bool] | None = None,
 ) -> list[JsonDict]:
     prefix: list[JsonDict] = []
     records = _read_json_array_file(manifest_path)
     for record in records[:expected_count]:
+        if record_matches is not None and not record_matches(record):
+            break
         if output_key not in record:
             break
         if "ok" in record and not bool(record.get("ok")):
@@ -1531,6 +1654,7 @@ def _hydrate_prefix_records_from_compatible_dirs(
     expected_input_paths: list[Path],
     output_key: str,
     input_key: str | None,
+    record_matches: Callable[[JsonDict], bool] | None = None,
 ) -> list[JsonDict]:
     target_manifest = target_dir / manifest_name
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -1539,6 +1663,7 @@ def _hydrate_prefix_records_from_compatible_dirs(
         expected_count=expected_count,
         output_key=output_key,
         output_root=target_dir,
+        record_matches=record_matches,
     )
     if len(current) >= expected_count:
         return current[:expected_count]
@@ -1549,7 +1674,16 @@ def _hydrate_prefix_records_from_compatible_dirs(
             expected_count=expected_count,
             output_key=output_key,
             output_root=source_dir,
+            record_matches=record_matches,
         )
+        matched_records: list[JsonDict] = []
+        for index, record in enumerate(source_records):
+            if index >= len(expected_input_paths):
+                break
+            if not _record_input_matches(record, input_key, expected_input_paths[index]):
+                break
+            matched_records.append(record)
+        source_records = matched_records
         if len(source_records) <= len(current):
             continue
         for index in range(len(current), min(expected_count, len(source_records))):
@@ -1670,19 +1804,34 @@ def _watermark_embed_results_from_records(records: list[JsonDict]) -> list[Water
     return results
 
 
-def _watermark_embed_prefix_from_manifest(path: Path, *, expected_count: int) -> list[WatermarkEmbedResult]:
+def _watermark_embed_prefix_from_manifest(
+    path: Path,
+    *,
+    expected_count: int,
+    record_matches: Callable[[JsonDict], bool] | None = None,
+) -> list[WatermarkEmbedResult]:
     records = _valid_prefix_records(
         path,
         expected_count=expected_count,
         output_key="output_path",
         output_root=path.parent,
+        record_matches=record_matches,
     )
     results = _watermark_embed_results_from_records(records)
     return results or []
 
 
-def _watermark_embed_results_from_manifest(path: Path, *, expected_count: int) -> list[WatermarkEmbedResult] | None:
-    results = _watermark_embed_prefix_from_manifest(path, expected_count=expected_count)
+def _watermark_embed_results_from_manifest(
+    path: Path,
+    *,
+    expected_count: int,
+    record_matches: Callable[[JsonDict], bool] | None = None,
+) -> list[WatermarkEmbedResult] | None:
+    results = _watermark_embed_prefix_from_manifest(
+        path,
+        expected_count=expected_count,
+        record_matches=record_matches,
+    )
     if len(results) != expected_count:
         return None
     return results
@@ -1709,19 +1858,34 @@ def _attack_results_from_records(records: list[JsonDict]) -> list[AttackResult] 
     return results
 
 
-def _attack_prefix_from_manifest(path: Path, *, expected_count: int) -> list[AttackResult]:
+def _attack_prefix_from_manifest(
+    path: Path,
+    *,
+    expected_count: int,
+    record_matches: Callable[[JsonDict], bool] | None = None,
+) -> list[AttackResult]:
     records = _valid_prefix_records(
         path,
         expected_count=expected_count,
         output_key="output_path",
         output_root=path.parent,
+        record_matches=record_matches,
     )
     results = _attack_results_from_records(records)
     return results or []
 
 
-def _attack_results_from_manifest(path: Path, *, expected_count: int) -> list[AttackResult] | None:
-    results = _attack_prefix_from_manifest(path, expected_count=expected_count)
+def _attack_results_from_manifest(
+    path: Path,
+    *,
+    expected_count: int,
+    record_matches: Callable[[JsonDict], bool] | None = None,
+) -> list[AttackResult] | None:
+    results = _attack_prefix_from_manifest(
+        path,
+        expected_count=expected_count,
+        record_matches=record_matches,
+    )
     if len(results) != expected_count:
         return None
     return results
@@ -2172,6 +2336,11 @@ def run_local_experiment(
     )
     pending_cell_count = sum(len(variants) for variants in pending_groups.values())
     result_units: list[JsonDict] = list(existing_completed.values())
+    emitted_result_unit_keys = {
+        str(unit.get("resultUnitKey") or unit.get("cellKey"))
+        for unit in result_units
+        if unit.get("resultUnitKey") or unit.get("cellKey")
+    }
     started = time.perf_counter()
     estimate = estimate_selection(selection, request.resources_root)
     expected_cells = int(estimate["cellCount"])
@@ -2179,7 +2348,7 @@ def run_local_experiment(
     for dataset_id_value in selection["datasetIds"]:
         dataset_id = str(dataset_id_value)
         dataset = get_dataset_by_id(request.resources_root, dataset_id)
-        expected_samples_by_dataset[dataset_id] = len(_list_image_files(dataset.path)[: int(selection["maxSamples"])])
+        expected_samples_by_dataset[dataset_id] = len(_selected_dataset_image_files(dataset.path, selection, dataset_id))
     expected_sample_total = sum(expected_samples_by_dataset.values())
     expected_watermark_images = expected_sample_total * len(selection["algorithmIds"]) * len(selection["seeds"])
     scene_cache_runtime = _configure_3d_scene_cache_runtime_min(
@@ -2370,6 +2539,7 @@ def run_local_experiment(
         _write_json(result_unit_manifest, result_unit)
         _append_jsonl(paths["resultUnits"], result_unit)
         result_units.append(result_unit)
+        emitted_result_unit_keys.add(cell_key)
         state_writer.upsert_tree_path(
             dataset_id=dataset_id,
             algorithm_id=algorithm_id,
@@ -2383,6 +2553,66 @@ def run_local_experiment(
                 "status": "failed",
             },
         )
+
+    def emit_completed_variant(state: MaterializedCellState) -> tuple[JsonDict | None, Path]:
+        cell_key = state.cell_key
+        result_unit_manifest = state.variant_root / "result_unit.json"
+        if cell_key in emitted_result_unit_keys:
+            existing = next(
+                (
+                    unit
+                    for unit in result_units
+                    if str(unit.get("resultUnitKey") or unit.get("cellKey") or "") == cell_key
+                ),
+                None,
+            )
+            return existing, result_unit_manifest
+
+        elapsed_ms = (time.perf_counter() - state.cell_started) * 1000
+        result_unit = {
+            "runId": request.run_id,
+            "cellKey": state.cell_key,
+            "resultUnitKey": state.cell_key,
+            "status": state.status,
+            "datasetId": state.dataset_id,
+            "algorithmId": state.algorithm_id,
+            "watermarkMethod": state.algorithm["method"],
+            "attackPresetId": state.attack_id,
+            "attackMethod": state.attack["method"],
+            "attackStrength": state.strength,
+            "seed": state.seed,
+            "sampleCount": len(state.copied_samples),
+            "attackParams": state.attack_params,
+            "manifestPath": str(state.detection_manifest_path),
+            "outputDir": str(state.cell_root),
+            "variantKey": state.variant_key,
+            "materialized": {
+                "canonicalDir": str(state.canonical_input_dir),
+                "watermarkedDir": str(state.watermarked_dir),
+                "attackedDir": str(state.attacked_dir),
+                "negativeAttackedDir": str(state.negative_attacked_dir),
+            },
+            "error": state.error,
+            "elapsedMs": elapsed_ms,
+            "completedAt": _utc_timestamp(),
+        }
+        _write_json(result_unit_manifest, result_unit)
+        _append_jsonl(paths["resultUnits"], result_unit)
+        result_units.append(result_unit)
+        emitted_result_unit_keys.add(cell_key)
+        state_writer.upsert_tree_path(
+            dataset_id=state.dataset_id,
+            algorithm_id=state.algorithm_id,
+            seed=state.seed,
+            attack_id=state.attack_id,
+            variant_key=state.variant_key,
+            refs={
+                "resultUnit": str(result_unit_manifest),
+                "detection": str(state.detection_manifest_path),
+                "status": state.status,
+            },
+        )
+        return result_unit, result_unit_manifest
 
     dataset_contexts: list[MaterializedDatasetContext] = []
     try:
@@ -2409,7 +2639,8 @@ def run_local_experiment(
 
             dataset = get_dataset_by_id(request.resources_root, dataset_id)
             max_samples = int(selection["maxSamples"])
-            dataset_digest = _dataset_fingerprint(dataset.path)
+            canonical_source_paths = _selected_dataset_image_files(dataset.path, selection, dataset_id)
+            dataset_digest = _dataset_fingerprint(dataset.path, canonical_source_paths)
             path_planner = MaterializedPathPlanner(
                 root=materialized_root,
                 dataset_id=dataset_id,
@@ -2417,7 +2648,6 @@ def run_local_experiment(
                 max_samples=max_samples,
             )
             canonical_input_dir = path_planner.canonical_dir()
-            canonical_source_paths = _list_image_files(dataset.path)[:max_samples]
             _hydrate_prefix_records_from_compatible_dirs(
                 parent_dir=path_planner.canonical_parent_dir(),
                 target_dir=canonical_input_dir,
@@ -2434,6 +2664,7 @@ def run_local_experiment(
                 input_dir=canonical_input_dir,
                 max_samples=max_samples,
                 existing_sample_keys=existing_sample_keys,
+                sample_paths=canonical_source_paths,
             )
             dataset_contexts.append(
                 MaterializedDatasetContext(
@@ -2495,11 +2726,19 @@ def run_local_experiment(
                 "watermark_embed",
                 total=expected_watermark_images,
                 current_item={"algorithmCount": len(selection["algorithmIds"]), "seedCount": len(selection["seeds"])},
-                counters={"imagesDone": 0, "groupsDone": 0, "cacheHits": 0, "artifactCacheHits": 0},
+                counters={
+                    "imagesDone": 0,
+                    "groupsDone": 0,
+                    "cacheHits": 0,
+                    "artifactCacheHits": 0,
+                    "phaseCellsDone": len(result_units),
+                    "phaseCellsTotal": expected_cells,
+                },
             )
             watermark_images_done = 0
             watermark_groups_done = 0
             watermark_cache_hits = 0
+            watermark_cells_done = len(result_units)
             for algorithm_id_value in selection["algorithmIds"]:
                 if stop_status is not None or poll_stop():
                     break
@@ -2550,6 +2789,14 @@ def run_local_experiment(
                                 seed=seed,
                                 message=request.message,
                             )
+                            embed_record_matches = lambda record, method=str(algorithm["method"]), params=algorithm_params: (
+                                _watermark_embed_record_matches(
+                                    record,
+                                    method_name=method,
+                                    params=params,
+                                    message=request.message,
+                                )
+                            )
                             embed_error = None
                             embed_elapsed_ms = 0.0
                             embed_quality_records: list[JsonDict] = []
@@ -2557,7 +2804,7 @@ def run_local_experiment(
                             watermark_run_root.mkdir(parents=True, exist_ok=True)
 
                             def record_embed_artifact() -> None:
-                                nonlocal watermark_images_done, watermark_groups_done
+                                nonlocal watermark_cells_done, watermark_images_done, watermark_groups_done
                                 embed_manifest = watermark_run_root / "manifest.json"
                                 _write_json(
                                     embed_manifest,
@@ -2593,6 +2840,7 @@ def run_local_experiment(
                                 )
                                 watermark_images_done += len(copied_samples)
                                 watermark_groups_done += 1
+                                watermark_cells_done += len(pending_variants)
                                 state_writer.phase_advance(
                                     "watermark_embed",
                                     current=watermark_images_done,
@@ -2614,6 +2862,8 @@ def run_local_experiment(
                                         "groupsDone": watermark_groups_done,
                                         "cacheHits": watermark_cache_hits,
                                         "artifactCacheHits": watermark_cache_hits,
+                                        "phaseCellsDone": watermark_cells_done,
+                                        "phaseCellsTotal": expected_cells,
                                     },
                                     artifact_refs={"latestManifest": str(embed_manifest)},
                                 )
@@ -2628,10 +2878,12 @@ def run_local_experiment(
                                     expected_input_paths=copied_samples,
                                     output_key="output_path",
                                     input_key="input_path",
+                                    record_matches=embed_record_matches,
                                 )
                                 reused_embed_results = _watermark_embed_results_from_manifest(
                                     watermarked_dir / "watermark_embed_manifest.json",
                                     expected_count=len(copied_samples),
+                                    record_matches=embed_record_matches,
                                 )
                                 if reused_embed_results is not None:
                                     watermark_cache_hits += len(reused_embed_results)
@@ -2654,6 +2906,7 @@ def run_local_experiment(
                                     prefix_embed_results = _watermark_embed_prefix_from_manifest(
                                         watermarked_dir / "watermark_embed_manifest.json",
                                         expected_count=len(copied_samples),
+                                        record_matches=embed_record_matches,
                                     )
                                     if prefix_embed_results:
                                         watermark_cache_hits += len(prefix_embed_results)
@@ -2922,6 +3175,8 @@ def run_local_experiment(
                     "groupsDone": watermark_groups_done,
                     "cacheHits": watermark_cache_hits,
                     "artifactCacheHits": watermark_cache_hits,
+                    "phaseCellsDone": watermark_cells_done,
+                    "phaseCellsTotal": expected_cells,
                 },
             )
 
@@ -2938,6 +3193,7 @@ def run_local_experiment(
             attack_cache_hits = 0
             attack_scene_cache_hits = 0
             attack_backend_done = 0
+            attack_cells_done = len(result_units)
             counted_negative_attack_keys: set[str] = set()
             attack_model_groups: dict[str, list[MaterializedCellState]] = {}
             for state in all_states:
@@ -2958,6 +3214,8 @@ def run_local_experiment(
                     "sceneCacheHits": 0,
                     "positiveImagesDone": 0,
                     "negativeImagesDone": 0,
+                    "phaseCellsDone": attack_cells_done,
+                    "phaseCellsTotal": expected_cells,
                 },
             )
 
@@ -3023,6 +3281,9 @@ def run_local_experiment(
                             if stop_status is not None or poll_stop():
                                 break
                             try:
+                                negative_record_matches = lambda record, method=str(state.attack["method"]), params=state.attack_params: (
+                                    _attack_record_matches(record, attack_name=method, params=params)
+                                )
                                 _hydrate_prefix_records_from_compatible_dirs(
                                     parent_dir=state.negative_attacked_dir.parent,
                                     target_dir=state.negative_attacked_dir,
@@ -3032,10 +3293,12 @@ def run_local_experiment(
                                     expected_input_paths=state.copied_samples,
                                     output_key="output_path",
                                     input_key="input_path",
+                                    record_matches=negative_record_matches,
                                 )
                                 cached_negative = _attack_results_from_manifest(
                                     state.negative_attacked_dir / "attack_manifest.json",
                                     expected_count=len(state.copied_samples),
+                                    record_matches=negative_record_matches,
                                 )
                                 if cached_negative is not None:
                                     attack_cache_hits += len(cached_negative)
@@ -3069,6 +3332,7 @@ def run_local_experiment(
                                     prefix_negative = _attack_prefix_from_manifest(
                                         state.negative_attacked_dir / "attack_manifest.json",
                                         expected_count=len(state.copied_samples),
+                                        record_matches=negative_record_matches,
                                     )
                                     if prefix_negative:
                                         prefix_count = len(prefix_negative)
@@ -3277,6 +3541,8 @@ def run_local_experiment(
                                     "sceneCacheHits": attack_scene_cache_hits,
                                     "positiveImagesDone": positive_attack_images_done,
                                     "negativeImagesDone": negative_attack_images_done,
+                                    "phaseCellsDone": attack_cells_done,
+                                    "phaseCellsTotal": expected_cells,
                                 },
                                 artifact_refs={"latestManifest": str(negative_control_manifest)},
                             )
@@ -3287,6 +3553,9 @@ def run_local_experiment(
                             try:
                                 watermarked_inputs = _list_image_files(state.watermarked_dir)
                                 positive_attack_digest = _digest_from_sample_count_dir(state.attacked_dir)
+                                positive_record_matches = lambda record, method=str(state.attack["method"]), params=state.attack_params: (
+                                    _attack_record_matches(record, attack_name=method, params=params)
+                                )
                                 _hydrate_prefix_records_from_compatible_dirs(
                                     parent_dir=state.attacked_dir.parent,
                                     target_dir=state.attacked_dir,
@@ -3296,10 +3565,12 @@ def run_local_experiment(
                                     expected_input_paths=watermarked_inputs,
                                     output_key="output_path",
                                     input_key="input_path",
+                                    record_matches=positive_record_matches,
                                 )
                                 cached_positive = _attack_results_from_manifest(
                                     state.attacked_dir / "attack_manifest.json",
                                     expected_count=len(watermarked_inputs),
+                                    record_matches=positive_record_matches,
                                 )
                                 if cached_positive is not None:
                                     attack_cache_hits += len(cached_positive)
@@ -3328,6 +3599,7 @@ def run_local_experiment(
                                     prefix_positive = _attack_prefix_from_manifest(
                                         state.attacked_dir / "attack_manifest.json",
                                         expected_count=len(watermarked_inputs),
+                                        record_matches=positive_record_matches,
                                     )
                                     if prefix_positive:
                                         prefix_count = len(prefix_positive)
@@ -3496,6 +3768,7 @@ def run_local_experiment(
                             positive_image_count = len(_list_image_files(state.watermarked_dir))
                             attack_images_done += positive_image_count
                             positive_attack_images_done += positive_image_count
+                            attack_cells_done += 1
                             state_writer.phase_advance(
                                 "attack",
                                 current=attack_images_done,
@@ -3521,6 +3794,8 @@ def run_local_experiment(
                                     "sceneCacheHits": attack_scene_cache_hits,
                                     "positiveImagesDone": positive_attack_images_done,
                                     "negativeImagesDone": negative_attack_images_done,
+                                    "phaseCellsDone": attack_cells_done,
+                                    "phaseCellsTotal": expected_cells,
                                 },
                                 artifact_refs={"latestManifest": str(positive_attack_manifest)},
                             )
@@ -3543,12 +3818,6 @@ def run_local_experiment(
                     state_writer.phase_advance(
                         "attack",
                         current=attack_images_done,
-                        current_item={
-                            "attackMethod": first_state.attack["method"],
-                            "attackModelKey": model_digest,
-                            "backendDone": attack_backend_done,
-                            "backendTotal": len(attack_model_groups),
-                        },
                         counters={
                             "imagesDone": attack_images_done,
                             "backendDone": attack_backend_done,
@@ -3557,6 +3826,8 @@ def run_local_experiment(
                             "sceneCacheHits": attack_scene_cache_hits,
                             "positiveImagesDone": positive_attack_images_done,
                             "negativeImagesDone": negative_attack_images_done,
+                            "phaseCellsDone": attack_cells_done,
+                            "phaseCellsTotal": expected_cells,
                         },
                     )
             state_writer.phase_finish(
@@ -3570,6 +3841,8 @@ def run_local_experiment(
                     "sceneCacheHits": attack_scene_cache_hits,
                     "positiveImagesDone": positive_attack_images_done,
                     "negativeImagesDone": negative_attack_images_done,
+                    "phaseCellsDone": attack_cells_done,
+                    "phaseCellsTotal": expected_cells,
                 },
             )
 
@@ -3579,11 +3852,19 @@ def run_local_experiment(
             extract_total_images = sum(len(state.copied_samples) * 2 for state in all_states)
             extract_images_done = 0
             extract_groups_done = 0
+            extract_cells_done = len(result_units)
             state_writer.phase_start(
                 "watermark_extract",
                 total=extract_total_images,
                 current_item={"watermarkGroupCount": len({(state.algorithm_id, state.seed) for state in all_states})},
-                counters={"imagesDone": 0, "groupsDone": 0, "positiveImagesDone": 0, "negativeImagesDone": 0},
+                counters={
+                    "imagesDone": 0,
+                    "groupsDone": 0,
+                    "positiveImagesDone": 0,
+                    "negativeImagesDone": 0,
+                    "phaseCellsDone": extract_cells_done,
+                    "phaseCellsTotal": expected_cells,
+                },
             )
             extract_positive_images_done = 0
             extract_negative_images_done = 0
@@ -3695,6 +3976,7 @@ def run_local_experiment(
                         extract_images_done += positive_count + negative_count
                         extract_positive_images_done += positive_count
                         extract_negative_images_done += negative_count
+                        extract_cells_done += 1
                         state_writer.upsert_tree_path(
                             dataset_id=state.dataset_id,
                             algorithm_id=state.algorithm_id,
@@ -3720,6 +4002,9 @@ def run_local_experiment(
                                 "algorithmId": state.algorithm_id,
                                 "seed": state.seed,
                                 "attackPresetId": state.attack_id,
+                                "attackMethod": state.attack["method"],
+                                "attackStrength": state.strength,
+                                "attackParams": state.attack_params,
                                 "variantKey": state.variant_key,
                                 "positiveImages": positive_count,
                                 "negativeImages": negative_count,
@@ -3730,6 +4015,8 @@ def run_local_experiment(
                                 "groupsDone": extract_groups_done,
                                 "positiveImagesDone": extract_positive_images_done,
                                 "negativeImagesDone": extract_negative_images_done,
+                                "phaseCellsDone": extract_cells_done,
+                                "phaseCellsTotal": expected_cells,
                             },
                             artifact_refs={"latestManifest": str(positive_extract_manifest)},
                         )
@@ -3773,6 +4060,7 @@ def run_local_experiment(
                                 "error": error,
                             },
                         )
+                        extract_cells_done += 1
                 finally:
                     resource_manager.cleanup(
                         scope="watermark_extract",
@@ -3790,17 +4078,13 @@ def run_local_experiment(
                     state_writer.phase_advance(
                         "watermark_extract",
                         current=extract_images_done,
-                        current_item={
-                            "algorithmId": first_state.algorithm_id,
-                            "seed": first_state.seed,
-                            "cellCount": len(extract_states),
-                            "error": extract_error,
-                        },
                         counters={
                             "imagesDone": extract_images_done,
                             "groupsDone": extract_groups_done,
                             "positiveImagesDone": extract_positive_images_done,
                             "negativeImagesDone": extract_negative_images_done,
+                            "phaseCellsDone": extract_cells_done,
+                            "phaseCellsTotal": expected_cells,
                         },
                     )
             state_writer.phase_finish(
@@ -3811,6 +4095,8 @@ def run_local_experiment(
                     "groupsDone": extract_groups_done,
                     "positiveImagesDone": extract_positive_images_done,
                     "negativeImagesDone": extract_negative_images_done,
+                    "phaseCellsDone": extract_cells_done,
+                    "phaseCellsTotal": expected_cells,
                 },
             )
 
@@ -3825,10 +4111,18 @@ def run_local_experiment(
                 "quality",
                 total=quality_total_pairs,
                 current_item={"workerMode": "async", "resultUnitCount": len(all_states)},
-                counters={"pairsDone": 0, "failedUnits": 0, "qualityPairCacheHits": 0},
+                counters={
+                    "pairsDone": 0,
+                    "failedUnits": 0,
+                    "qualityPairCacheHits": 0,
+                    "phaseCellsDone": len(result_units),
+                    "phaseCellsTotal": expected_cells,
+                },
             )
             quality_states: list[MaterializedCellState] = []
             for state in all_states:
+                if stop_status is not None or poll_stop():
+                    break
                 operation_results = [
                     *state.positive_attack_results,
                     *state.negative_attack_results,
@@ -3883,39 +4177,11 @@ def run_local_experiment(
                     _write_json(state.detection_manifest_path, state.detection_records)
                 quality_states.append(state)
 
-            quality_results: dict[str, DeferredQualityResult] = {}
             if quality_states:
                 quality_workers = min(_async_quality_workers(), len(quality_states))
-                if quality_workers <= 1:
-                    for state in quality_states:
-                        quality_results[state.cell_key] = quality_stage.compute_for_cell(
-                            state,
-                            quality_pair_cache=quality_pair_cache,
-                        )
-                else:
-                    with ThreadPoolExecutor(max_workers=quality_workers) as executor:
-                        futures = {
-                            executor.submit(
-                                quality_stage.compute_for_cell,
-                                state,
-                                quality_pair_cache=quality_pair_cache,
-                            ): state
-                            for state in quality_states
-                        }
-                        for future in as_completed(futures):
-                            state = futures[future]
-                            try:
-                                quality_results[state.cell_key] = future.result()
-                            except Exception as exc:
-                                quality_results[state.cell_key] = DeferredQualityResult(
-                                    quality_records=[],
-                                    runtime_profiles=[],
-                                    error=f"{type(exc).__name__}: {exc}",
-                                )
-                for state in quality_states:
-                    quality_result = quality_results.get(state.cell_key)
-                    if quality_result is None:
-                        continue
+
+                def record_quality_result(state: MaterializedCellState, quality_result: DeferredQualityResult) -> bool:
+                    nonlocal quality_failed_units, quality_pair_cache_hits, quality_pairs_done
                     quality_manifest = state.variant_root / "quality.json"
                     if quality_result.quality_records:
                         records = []
@@ -4009,6 +4275,9 @@ def run_local_experiment(
                             "algorithmId": state.algorithm_id,
                             "seed": state.seed,
                             "attackPresetId": state.attack_id,
+                            "attackMethod": state.attack["method"],
+                            "attackStrength": state.strength,
+                            "attackParams": state.attack_params,
                             "variantKey": state.variant_key,
                             "pairCount": quality_pair_count,
                             "remainingPairs": max(0, quality_total_pairs - quality_pairs_done),
@@ -4018,9 +4287,102 @@ def run_local_experiment(
                             "failedUnits": quality_failed_units,
                             "workerCount": quality_workers,
                             "qualityPairCacheHits": quality_pair_cache_hits,
+                            "resultUnitsDone": len(emitted_result_unit_keys),
+                            "phaseCellsDone": len(emitted_result_unit_keys),
+                            "phaseCellsTotal": expected_cells,
                         },
                         artifact_refs={"latestManifest": str(quality_manifest)},
                     )
+                    result_unit, result_unit_manifest = emit_completed_variant(state)
+                    state_writer.phase_advance(
+                        "quality",
+                        current=quality_pairs_done,
+                        current_item={
+                            "datasetId": state.dataset_id,
+                            "algorithmId": state.algorithm_id,
+                            "seed": state.seed,
+                            "attackPresetId": state.attack_id,
+                            "attackMethod": state.attack["method"],
+                            "attackStrength": state.strength,
+                            "attackParams": state.attack_params,
+                            "variantKey": state.variant_key,
+                            "status": state.status,
+                        },
+                        counters={
+                            "pairsDone": quality_pairs_done,
+                            "failedUnits": sum(1 for item in result_units if item.get("status") != "succeeded"),
+                            "workerCount": quality_workers,
+                            "qualityPairCacheHits": quality_pair_cache_hits,
+                            "resultUnitsDone": len(result_units),
+                            "phaseCellsDone": len(result_units),
+                            "phaseCellsTotal": expected_cells,
+                        },
+                        artifact_refs={"latestResultUnit": str(result_unit_manifest)},
+                    )
+                    return result_unit is not None
+
+                if quality_workers <= 1:
+                    for state in quality_states:
+                        if stop_status is not None or poll_stop():
+                            break
+                        try:
+                            quality_result = quality_stage.compute_for_cell(
+                                state,
+                                quality_pair_cache=quality_pair_cache,
+                            )
+                        except Exception as exc:
+                            quality_result = DeferredQualityResult(
+                                quality_records=[],
+                                runtime_profiles=[],
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                        if record_quality_result(state, quality_result) and poll_stop():
+                            break
+                else:
+                    pending_futures = {}
+                    state_iter = iter(quality_states)
+                    stop_submitting = False
+
+                    def submit_next_quality(executor: ThreadPoolExecutor) -> bool:
+                        nonlocal stop_submitting
+                        if stop_submitting or stop_status is not None or poll_stop():
+                            stop_submitting = True
+                            return False
+                        try:
+                            next_state = next(state_iter)
+                        except StopIteration:
+                            return False
+                        pending_futures[
+                            executor.submit(
+                                quality_stage.compute_for_cell,
+                                next_state,
+                                quality_pair_cache=quality_pair_cache,
+                            )
+                        ] = next_state
+                        return True
+
+                    with ThreadPoolExecutor(max_workers=quality_workers) as executor:
+                        for _index in range(quality_workers):
+                            if not submit_next_quality(executor):
+                                break
+                        while pending_futures:
+                            done_futures, _pending = wait(pending_futures, return_when=FIRST_COMPLETED)
+                            for future in done_futures:
+                                state = pending_futures.pop(future)
+                                try:
+                                    quality_result = future.result()
+                                except Exception as exc:
+                                    quality_result = DeferredQualityResult(
+                                        quality_records=[],
+                                        runtime_profiles=[],
+                                        error=f"{type(exc).__name__}: {exc}",
+                                    )
+                                record_quality_result(state, quality_result)
+                                if poll_stop():
+                                    stop_submitting = True
+                            while len(pending_futures) < quality_workers and not stop_submitting:
+                                if not submit_next_quality(executor):
+                                    break
             state_writer.phase_finish(
                 "quality",
                 status=stop_status or "succeeded",
@@ -4028,6 +4390,9 @@ def run_local_experiment(
                     "pairsDone": quality_pairs_done,
                     "failedUnits": quality_failed_units,
                     "qualityPairCacheHits": quality_pair_cache_hits,
+                    "resultUnitsDone": len(result_units),
+                    "phaseCellsDone": len(result_units),
+                    "phaseCellsTotal": expected_cells,
                 },
             )
 
@@ -4038,6 +4403,8 @@ def run_local_experiment(
                 counters={
                     "resultUnitsDone": len(result_units),
                     "failedUnits": sum(1 for item in result_units if item.get("status") != "succeeded"),
+                    "phaseCellsDone": len(result_units),
+                    "phaseCellsTotal": expected_cells,
                 },
             )
             result_units_done = len(result_units)
@@ -4048,69 +4415,9 @@ def run_local_experiment(
                     counters={
                         "resultUnitsDone": result_units_done,
                         "failedUnits": sum(1 for item in result_units if item.get("status") != "succeeded"),
+                        "phaseCellsDone": result_units_done,
+                        "phaseCellsTotal": expected_cells,
                     },
-                )
-            for state in all_states:
-                elapsed_ms = (time.perf_counter() - state.cell_started) * 1000
-                result_unit = {
-                    "runId": request.run_id,
-                    "cellKey": state.cell_key,
-                    "resultUnitKey": state.cell_key,
-                    "status": state.status,
-                    "datasetId": state.dataset_id,
-                    "algorithmId": state.algorithm_id,
-                    "watermarkMethod": state.algorithm["method"],
-                    "attackPresetId": state.attack_id,
-                    "attackMethod": state.attack["method"],
-                    "attackStrength": state.strength,
-                    "seed": state.seed,
-                    "sampleCount": len(state.copied_samples),
-                    "attackParams": state.attack_params,
-                    "manifestPath": str(state.detection_manifest_path),
-                    "outputDir": str(state.cell_root),
-                    "materialized": {
-                        "canonicalDir": str(state.canonical_input_dir),
-                        "watermarkedDir": str(state.watermarked_dir),
-                        "attackedDir": str(state.attacked_dir),
-                        "negativeAttackedDir": str(state.negative_attacked_dir),
-                    },
-                    "error": state.error,
-                    "elapsedMs": elapsed_ms,
-                    "completedAt": _utc_timestamp(),
-                }
-                result_unit_manifest = state.variant_root / "result_unit.json"
-                _write_json(result_unit_manifest, result_unit)
-                _append_jsonl(paths["resultUnits"], result_unit)
-                result_units.append(result_unit)
-                state_writer.upsert_tree_path(
-                    dataset_id=state.dataset_id,
-                    algorithm_id=state.algorithm_id,
-                    seed=state.seed,
-                    attack_id=state.attack_id,
-                    variant_key=state.variant_key,
-                    refs={
-                        "resultUnit": str(result_unit_manifest),
-                        "detection": str(state.detection_manifest_path),
-                        "status": state.status,
-                    },
-                )
-                result_units_done += 1
-                state_writer.phase_advance(
-                    "summary",
-                    current=result_units_done,
-                    current_item={
-                        "datasetId": state.dataset_id,
-                        "algorithmId": state.algorithm_id,
-                        "seed": state.seed,
-                        "attackPresetId": state.attack_id,
-                        "variantKey": state.variant_key,
-                        "status": state.status,
-                    },
-                    counters={
-                        "resultUnitsDone": result_units_done,
-                        "failedUnits": sum(1 for item in result_units if item.get("status") != "succeeded"),
-                    },
-                    artifact_refs={"latestResultUnit": str(result_unit_manifest)},
                 )
 
         cleanup_run_once(reason="run_finished")

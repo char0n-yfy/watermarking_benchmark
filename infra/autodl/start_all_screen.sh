@@ -7,9 +7,9 @@ autodl_prepare_dirs
 
 autodl_ensure_screen
 
-screen -S wmbench-api -X quit >/dev/null 2>&1 || true
-screen -S wmbench-worker -X quit >/dev/null 2>&1 || true
-sleep 1
+autodl_stop_wmbench_screen_sessions
+autodl_wait_for_port_free "${API_PORT}" "${WM_BENCH_STOP_WAIT_SECONDS:-30}" || true
+autodl_wait_for_no_orphan_workers "${WM_BENCH_STOP_WAIT_SECONDS:-30}" || true
 
 autodl_assert_port_free "${API_PORT}"
 autodl_assert_no_orphan_workers

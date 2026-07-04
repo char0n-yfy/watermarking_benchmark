@@ -12,7 +12,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
-from .core.local_db import LocalDatabase
 from .core.status import RunStatus
 from .schemas.datasets import DatasetDownloadCreatePayload
 from .schemas.experiments import ExperimentConfigCreatePayload, ExperimentConfigRenamePayload, RunCreatePayload
@@ -32,7 +31,7 @@ from .services.resources import (
 )
 from .services.scoring import PROTOCOL_ID
 from .services.weight_download import WeightDownloadService
-from .services.system_metrics import collect_system_metrics, warmup_cpu_power_sensors
+from .services.system_metrics import collect_gpu_telemetry, collect_system_metrics, warmup_cpu_power_sensors
 
 
 @asynccontextmanager
@@ -46,7 +45,6 @@ async def _app_lifespan(_app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     service = ExperimentService(
-        database=LocalDatabase(settings.database_path),
         resources_root=settings.resources_root,
         runs_root=settings.runs_root,
     )
@@ -116,7 +114,7 @@ def create_app() -> FastAPI:
             "data_root": str(settings.data_root),
             "resources_root": str(settings.resources_root),
             "runs_root": str(settings.runs_root),
-            "database_path": str(settings.database_path),
+            "experiment_state_root": str(service.experiment_state_root_path()),
             "api_port": str(request_api_port(request)),
             "configured_api_port": str(settings.api_port),
         }
@@ -132,7 +130,7 @@ def create_app() -> FastAPI:
             "dataRoot": str(settings.data_root),
             "resourcesRoot": str(settings.resources_root),
             "runsRoot": str(settings.runs_root),
-            "databasePath": str(settings.database_path),
+            "experimentStateRoot": str(service.experiment_state_root_path()),
             "apiHost": settings.api_host,
             "apiPort": effective_api_port,
             "configuredApiPort": settings.api_port,
@@ -149,6 +147,10 @@ def create_app() -> FastAPI:
     @app.get("/system/metrics")
     def system_metrics() -> dict[str, object]:
         return collect_system_metrics(data_root=settings.data_root, device=settings.device)
+
+    @app.get("/system/gpu-telemetry")
+    def gpu_telemetry() -> dict[str, object]:
+        return collect_gpu_telemetry()
 
     @app.post("/system/parallel-tuning")
     def start_parallel_tuning(payload: Optional[dict[str, object]] = Body(default=None)) -> dict[str, object]:

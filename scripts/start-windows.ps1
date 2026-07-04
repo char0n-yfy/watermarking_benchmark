@@ -19,14 +19,12 @@ $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $RunsRoot = if ($env:WM_BENCH_RUNS_ROOT) { $env:WM_BENCH_RUNS_ROOT } else { Join-Path $RootDir "runs" }
 $LogDir = if ($env:WM_BENCH_LOG_DIR) { $env:WM_BENCH_LOG_DIR } else { Join-Path $RunsRoot "logs" }
 $PidDir = if ($env:WM_BENCH_PID_DIR) { $env:WM_BENCH_PID_DIR } else { Join-Path $RunsRoot "pids" }
-$DbPath = if ($env:WM_BENCH_DB_PATH) { $env:WM_BENCH_DB_PATH } else { Join-Path $RunsRoot "wmbench.sqlite" }
 $ResourcesRoot = if ($env:WM_BENCH_RESOURCES_ROOT) { $env:WM_BENCH_RESOURCES_ROOT } else { Join-Path $RootDir "resources" }
 
 New-Item -ItemType Directory -Force -Path `
   (Join-Path $ResourcesRoot "datasets"), `
   (Join-Path $ResourcesRoot "weights"), `
   $RunsRoot, `
-  (Split-Path $DbPath), `
   $LogDir, `
   $PidDir | Out-Null
 
@@ -71,7 +69,6 @@ $env:APP_ENV = if ($env:APP_ENV) { $env:APP_ENV } else { "development" }
 $env:WM_BENCH_DATA_ROOT = if ($env:WM_BENCH_DATA_ROOT) { $env:WM_BENCH_DATA_ROOT } else { "$RootDir" }
 $env:WM_BENCH_RESOURCES_ROOT = "$ResourcesRoot"
 $env:WM_BENCH_RUNS_ROOT = "$RunsRoot"
-$env:WM_BENCH_DB_PATH = "$DbPath"
 $env:WM_BENCH_DEVICE = if ($env:WM_BENCH_DEVICE) { $env:WM_BENCH_DEVICE } else { $Device }
 $env:WM_BENCH_WORKER_POLL_SECONDS = if ($env:WM_BENCH_WORKER_POLL_SECONDS) { $env:WM_BENCH_WORKER_POLL_SECONDS } else { "2" }
 $env:API_HOST = $ApiHost

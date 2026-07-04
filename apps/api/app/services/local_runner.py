@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from app.services.local_executor import (
     LocalRunRequest,
-    run_local_experiment,
 )
 from app.services.local_plan import (
     _attack_params,
@@ -13,6 +12,7 @@ from app.services.local_plan import (
     estimate_selection,
     normalize_selection,
 )
+from app.services.sharded_executor import run_sharded_experiment as run_local_experiment
 
 __all__ = [
     "LocalRunRequest",

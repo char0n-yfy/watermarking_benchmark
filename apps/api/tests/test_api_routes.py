@@ -26,7 +26,6 @@ class ApiRoutesTest(unittest.TestCase):
 
             os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
-            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
 
             from app.core.config import get_settings
 
@@ -54,7 +53,6 @@ class ApiRoutesTest(unittest.TestCase):
 
             os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
-            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
 
             from app.core.config import get_settings
 
@@ -79,7 +77,6 @@ class ApiRoutesTest(unittest.TestCase):
 
             os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
-            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
 
             from app.core.config import get_settings
 
@@ -132,7 +129,6 @@ class ApiRoutesTest(unittest.TestCase):
 
             os.environ["WM_BENCH_RESOURCES_ROOT"] = str(root / "resources")
             os.environ["WM_BENCH_RUNS_ROOT"] = str(root / "runs")
-            os.environ["WM_BENCH_DB_PATH"] = str(root / "runs" / "wmbench.sqlite")
             os.environ["WM_BENCH_DOTENV_PATH"] = str(root / ".env.autodl")
             os.environ["WM_BENCH_DEVICE"] = "cpu"
 
@@ -201,7 +197,7 @@ class ApiRoutesTest(unittest.TestCase):
             readiness = readiness_response.json()
             self.assertIn(readiness["status"], {"ready", "degraded", "not_ready"})
             check_ids = {check["id"] for check in readiness["checks"]}
-            self.assertIn("sqlite", check_ids)
+            self.assertIn("experiment_state_writable", check_ids)
             self.assertIn("resource_catalog", check_ids)
             self.assertIn("worker_heartbeat", check_ids)
 

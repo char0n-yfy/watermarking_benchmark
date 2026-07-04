@@ -104,7 +104,7 @@ def normalize_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
     seeds = [int(seed) for seed in _ensure_list(selection.get("seeds"), [42])]
     max_samples = int(selection.get("maxSamples") or 1)
 
-    return {
+    normalized: JsonDict = {
         "datasetIds": [str(value) for value in dataset_ids],
         "algorithmIds": [str(value) for value in algorithm_ids],
         "attackPresetIds": normalized_attack_ids,
@@ -117,6 +117,17 @@ def normalize_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
         "seeds": seeds,
         "maxSamples": max(1, max_samples),
     }
+    sample_overrides = selection.get("_sampleRelativesByDataset")
+    if isinstance(sample_overrides, dict):
+        normalized["_sampleRelativesByDataset"] = {
+            str(dataset_id): [str(item) for item in values if item is not None]
+            for dataset_id, values in sample_overrides.items()
+            if isinstance(values, list)
+        }
+    shard = selection.get("_shard")
+    if isinstance(shard, dict):
+        normalized["_shard"] = dict(shard)
+    return normalized
 
 
 def _strengths_for_attack(selection: JsonDict, attack_id: str, attack: JsonDict) -> list[float]:
@@ -181,7 +192,11 @@ def _attack_variants_for_attack(selection: JsonDict, attack_id: str, attack: Jso
 def estimate_selection(selection: JsonDict, resources_root: Path) -> JsonDict:
     normalized = normalize_selection(selection, resources_root)
     sample_count = 0
+    sample_overrides = normalized.get("_sampleRelativesByDataset")
     for dataset_id in normalized["datasetIds"]:
+        if isinstance(sample_overrides, dict) and isinstance(sample_overrides.get(dataset_id), list):
+            sample_count += min(len(sample_overrides[dataset_id]), normalized["maxSamples"])
+            continue
         try:
             dataset = get_dataset_by_id(resources_root, dataset_id)
         except KeyError:

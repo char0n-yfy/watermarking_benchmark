@@ -115,7 +115,7 @@ export const translations = {
       namePlaceholder: "例如：HiDDeN JPEG 鲁棒性扫描",
       savedConfigs: "已保存配置",
       saveConfig: "保存配置",
-      savedToast: "配置已保存到后端数据库",
+      savedToast: "配置已保存到后端文件状态",
       empty: "还没有保存的实验配置",
       specPreview: "配置预览",
       prefilledFromResources: "已从资源页预填实验配置草稿"
@@ -396,7 +396,7 @@ export const translations = {
       title: "数据结构",
       subtitle: "元数据实体",
       coreTables: "核心表",
-      tableDescription: "SQLite 本地元数据表"
+      tableDescription: "本地文件状态与实验结果结构"
     },
     resourceNames: {
       "ds-coco-v1": "MS-COCO 验证集切片",
@@ -527,7 +527,7 @@ export const translations = {
       namePlaceholder: "Example: HiDDeN JPEG robustness sweep",
       savedConfigs: "Saved configs",
       saveConfig: "Save config",
-      savedToast: "Config saved to the backend database",
+      savedToast: "Config saved to backend file state",
       empty: "No saved experiment configs yet",
       specPreview: "Spec preview",
       prefilledFromResources: "Experiment draft prefilled from Resources"
@@ -808,7 +808,7 @@ export const translations = {
       title: "Schema",
       subtitle: "Metadata entities",
       coreTables: "Core tables",
-      tableDescription: "SQLite local metadata table"
+      tableDescription: "Local file state and run artifact structure"
     },
     resourceNames: {},
     dates: {}

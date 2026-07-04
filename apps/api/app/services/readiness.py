@@ -47,7 +47,12 @@ def collect_readiness(settings: Settings, service: ExperimentService) -> dict[st
     add_path_check(checks, "weights_root", "Weights directory", weights_root, required=False)
     add_weight_files_check(checks, weights_root)
     add_writable_check(checks, "runs_root_writable", "Runs directory writable", settings.runs_root)
-    add_writable_check(checks, "database_parent_writable", "SQLite directory writable", settings.database_path.parent)
+    add_writable_check(
+        checks,
+        "experiment_state_writable",
+        "Experiment file state writable",
+        service.experiment_state_root_path(),
+    )
 
     try:
         datasets = scan_dataset_resources(settings.resources_root)
@@ -77,13 +82,6 @@ def collect_readiness(settings: Settings, service: ExperimentService) -> dict[st
             f"{type(exc).__name__}: {exc}",
             required=False,
         )
-
-    try:
-        with service.database.connect() as connection:
-            connection.execute("SELECT 1").fetchone()
-        add_check("sqlite", "SQLite metadata database", "ok", str(settings.database_path))
-    except Exception as exc:
-        add_check("sqlite", "SQLite metadata database", "error", f"{type(exc).__name__}: {exc}")
 
     try:
         watermarks = list_watermark_resources()
@@ -146,16 +144,11 @@ def add_autodl_runtime_check(checks: list[dict[str, Any]], settings: Settings) -
     looks_like_autodl = Path("/root/autodl-fs").exists() or Path("/root/autodl-tmp").exists()
     if not looks_like_autodl or not autodl_env.is_file():
         return
-    expected_db_prefix = Path("/root/autodl-fs/wm-bench").resolve()
     issues: list[str] = []
     if settings.environment != "autodl":
         issues.append(f"environment={settings.environment!r}")
     if not str(settings.device).startswith("cuda"):
         issues.append(f"device={settings.device!r}")
-    try:
-        settings.database_path.relative_to(expected_db_prefix)
-    except ValueError:
-        issues.append(f"database_path={settings.database_path}")
     if issues:
         status = "error"
         detail = "AutoDL host detected but runtime is not using the AutoDL profile: " + ", ".join(issues)
@@ -172,7 +165,7 @@ def add_autodl_runtime_check(checks: list[dict[str, Any]], settings: Settings) -
             "meta": {
                 "environment": settings.environment,
                 "device": settings.device,
-                "databasePath": str(settings.database_path),
+                "runsRoot": str(settings.runs_root),
                 "dotenvPath": str(autodl_env),
             },
         }

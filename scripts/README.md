@@ -133,8 +133,8 @@ AutoDL 默认路径：
 - 数据集: `<仓库根目录>/resources/datasets`
 - 权重: `<仓库根目录>/resources/weights`
 - 运行结果: `/root/autodl-tmp/wm-bench/runs`
+- 实验状态索引: `/root/autodl-tmp/wm-bench/runs/_experiment_state`
 - 日志: `/root/autodl-tmp/wm-bench/runs/logs`
-- SQLite: `/root/autodl-fs/wm-bench/state/wmbench.sqlite`
 - Python 虚拟环境: 项目根目录 `.venv`，默认允许读取 AutoDL 基础镜像中的系统包以复用 CUDA/PyTorch。
 
 常用 AutoDL 配置写在 `.env.autodl` 中：

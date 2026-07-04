@@ -22,7 +22,6 @@ export APP_ENV="${APP_ENV:-development}"
 export WM_BENCH_DATA_ROOT="${WM_BENCH_DATA_ROOT:-${ROOT_DIR}}"
 export WM_BENCH_RESOURCES_ROOT="${WM_BENCH_RESOURCES_ROOT:-${ROOT_DIR}/resources}"
 export WM_BENCH_RUNS_ROOT="${WM_BENCH_RUNS_ROOT:-${ROOT_DIR}/runs}"
-export WM_BENCH_DB_PATH="${WM_BENCH_DB_PATH:-${WM_BENCH_RUNS_ROOT}/wmbench.sqlite}"
 export WM_BENCH_DEVICE="${WM_BENCH_DEVICE:-cpu}"
 export WM_BENCH_WORKER_POLL_SECONDS="${WM_BENCH_WORKER_POLL_SECONDS:-2}"
 export API_HOST
@@ -35,7 +34,6 @@ mkdir -p \
   "${WM_BENCH_RESOURCES_ROOT}/datasets" \
   "${WM_BENCH_RESOURCES_ROOT}/weights" \
   "${WM_BENCH_RUNS_ROOT}" \
-  "$(dirname "${WM_BENCH_DB_PATH}")" \
   "${LOG_DIR}" \
   "${PID_DIR}"
 

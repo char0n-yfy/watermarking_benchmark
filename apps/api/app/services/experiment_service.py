@@ -3,17 +3,12 @@ from __future__ import annotations
 import json
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
-from app.core.local_db import (
-    LocalDatabase,
-    dumps_json,
-    row_to_config,
-    row_to_run,
-)
 from app.core.storage import safe_segment
 from app.services.local_artifacts import default_phase_states, read_json_object, read_jsonl
 from app.services.local_runner import LocalRunRequest, estimate_selection, run_local_experiment
@@ -35,6 +30,8 @@ STOP_INTENT_CANCEL = "cancel"
 STOP_INTENT_PAUSE = "pause"
 HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
 WORKER_HEARTBEAT_RETENTION_SECONDS = 3600
+EXPERIMENT_STATE_DIR = "_experiment_state"
+RUN_RECORD_NAME = "run_record.json"
 
 
 def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
@@ -106,29 +103,180 @@ def validate_selection_resource_ids(selection: dict[str, Any], resources_root: P
             )
 
 
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+    os.replace(tmp_path, path)
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _sort_timestamp(value: Any) -> str:
+    return str(value or "")
+
+
 class ExperimentService:
-    """Local experiment service backed by SQLite and project-local artifacts."""
+    """Local experiment service backed by filesystem state and run artifacts."""
 
     def __init__(
         self,
-        database: LocalDatabase | None = None,
         resources_root: Path | None = None,
         runs_root: Path | None = None,
     ) -> None:
-        if database is None or resources_root is None or runs_root is None:
+        if resources_root is None or runs_root is None:
             from app.core.config import get_settings
 
             settings = get_settings()
-            database = database or LocalDatabase(settings.database_path)
             resources_root = resources_root or settings.resources_root
             runs_root = runs_root or settings.runs_root
-        self.database = database
-        self.resources_root = resources_root
-        self.runs_root = runs_root
-        self.database.initialize()
+        self.resources_root = Path(resources_root)
+        self.runs_root = Path(runs_root)
+        self.state_root = self.runs_root / EXPERIMENT_STATE_DIR
+        self.configs_dir = self.state_root / "experiment_configs"
+        self.runs_dir = self.state_root / "experiment_runs"
+        self.heartbeats_dir = self.state_root / "worker_heartbeats"
+        self.lock_path = self.state_root / ".lock"
+        self._initialize_file_state()
         self._cache_lock = threading.Lock()
         self._result_units_cache: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
         self._score_cache: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+
+    def _initialize_file_state(self) -> None:
+        for directory in (self.runs_root, self.configs_dir, self.runs_dir, self.heartbeats_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_path.touch(exist_ok=True)
+
+    @contextmanager
+    def _locked_state(self) -> Iterator[None]:
+        self._initialize_file_state()
+        with self.lock_path.open("a+", encoding="utf-8") as handle:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except Exception:
+                pass
+            try:
+                yield
+            finally:
+                try:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+
+    def _config_path(self, config_id: str) -> Path:
+        return self.configs_dir / f"{safe_segment(config_id)}.json"
+
+    def _run_index_path(self, run_id: str) -> Path:
+        return self.runs_dir / f"{safe_segment(run_id)}.json"
+
+    def _run_record_path(self, run_or_id: dict[str, Any] | str) -> Path:
+        if isinstance(run_or_id, dict):
+            artifact_root = Path(str(run_or_id["artifactRoot"]))
+        else:
+            artifact_root = self.runs_root / safe_segment(run_or_id)
+        return artifact_root / RUN_RECORD_NAME
+
+    def _heartbeat_path(self, worker_id: str) -> Path:
+        return self.heartbeats_dir / f"{safe_segment(worker_id)}.json"
+
+    def experiment_state_root_path(self) -> Path:
+        return self.state_root
+
+    def _read_config_file(self, config_id: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
+        config = _read_json_file(self._config_path(config_id))
+        if not config:
+            return None
+        if not include_deleted and config.get("deletedAt"):
+            return None
+        return config
+
+    def _write_config_file(self, config: dict[str, Any]) -> None:
+        _write_json_atomic(self._config_path(str(config["id"])), config)
+
+    def _iter_config_files(self, *, include_deleted: bool = False) -> list[dict[str, Any]]:
+        configs: list[dict[str, Any]] = []
+        if not self.configs_dir.exists():
+            return configs
+        for path in self.configs_dir.glob("*.json"):
+            config = _read_json_file(path)
+            if not config or not isinstance(config.get("id"), str):
+                continue
+            if not include_deleted and config.get("deletedAt"):
+                continue
+            configs.append(config)
+        return configs
+
+    def _read_run_record(self, run_id: str) -> dict[str, Any] | None:
+        run = _read_json_file(self._run_index_path(run_id))
+        if not run:
+            run = _read_json_file(self._run_record_path(run_id))
+        if not run or not isinstance(run.get("id"), str):
+            return None
+        return run
+
+    def _write_run_record(self, run: dict[str, Any]) -> None:
+        run_id = str(run["id"])
+        artifact_root = Path(str(run["artifactRoot"]))
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        _write_json_atomic(self._run_index_path(run_id), run)
+        _write_json_atomic(artifact_root / RUN_RECORD_NAME, run)
+
+    def _iter_run_records(self) -> list[dict[str, Any]]:
+        runs: dict[str, dict[str, Any]] = {}
+        if self.runs_dir.exists():
+            for path in self.runs_dir.glob("*.json"):
+                run = _read_json_file(path)
+                if isinstance(run.get("id"), str):
+                    runs[str(run["id"])] = run
+        for run_dir in self._iter_file_run_dirs():
+            record = _read_json_file(run_dir / RUN_RECORD_NAME)
+            if isinstance(record.get("id"), str):
+                runs.setdefault(str(record["id"]), record)
+        return list(runs.values())
+
+    def _run_from_file_record(self, run: dict[str, Any]) -> dict[str, Any]:
+        normalized = {
+            "id": str(run["id"]),
+            "taskName": str(run.get("taskName") or run.get("runName") or run.get("configName") or run["id"]),
+            "configId": str(run.get("configId") or ""),
+            "configName": str(run.get("configName") or ""),
+            "status": str(run.get("status") or "queued"),
+            "cells": int(run.get("cells") or 0),
+            "progress": int(run.get("progress") or 0),
+            "completedProgress": int(run.get("completedProgress") or run.get("progress") or 0),
+            "progressKind": str(run.get("progressKind") or "phaseOperations"),
+            "artifactRoot": str(run.get("artifactRoot") or (self.runs_root / safe_segment(str(run["id"])))),
+            "logPath": run.get("logPath"),
+            "workerId": run.get("workerId"),
+            "cancelRequested": bool(run.get("cancelRequested")),
+            "stopIntent": run.get("stopIntent"),
+            "error": run.get("error"),
+            "createdAt": str(run.get("createdAt") or ""),
+            "updatedAt": str(run.get("updatedAt") or run.get("createdAt") or ""),
+            "startedAt": run.get("startedAt"),
+            "finishedAt": run.get("finishedAt"),
+        }
+        if not normalized["createdAt"]:
+            normalized["createdAt"] = self._path_timestamp(Path(normalized["artifactRoot"]))
+        if not normalized["updatedAt"]:
+            normalized["updatedAt"] = normalized["createdAt"]
+        return normalized
 
     def create_config(self, name: str, selection: dict[str, Any]) -> dict[str, Any]:
         now = utc_now()
@@ -137,92 +285,60 @@ class ExperimentService:
         validate_selection_resource_ids(selection_with_baseline, self.resources_root)
         estimate = estimate_selection(selection_with_baseline, self.resources_root)
         normalized = estimate["selection"]
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO experiment_configs (
-                  id, name, selection_json, cell_count, sample_count,
-                  image_operation_count, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    config_id,
-                    name.strip() or "Untitled experiment config",
-                    dumps_json(normalized),
-                    estimate["cellCount"],
-                    estimate["sampleCount"],
-                    estimate["imageOperationCount"],
-                    now,
-                    now,
-                ),
-            )
-            row = connection.execute(
-                "SELECT * FROM experiment_configs WHERE id = ?",
-                (config_id,),
-            ).fetchone()
-        return row_to_config(row)
+        config = {
+            "id": config_id,
+            "name": name.strip() or "Untitled experiment config",
+            "selection": normalized,
+            "cellCount": estimate["cellCount"],
+            "sampleCount": estimate["sampleCount"],
+            "imageOperationCount": estimate["imageOperationCount"],
+            "createdAt": now,
+            "updatedAt": now,
+            "deletedAt": None,
+        }
+        with self._locked_state():
+            self._write_config_file(config)
+        public_config = dict(config)
+        public_config.pop("deletedAt", None)
+        return public_config
 
     def list_configs(self) -> list[dict[str, Any]]:
-        with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM experiment_configs WHERE deleted_at IS NULL ORDER BY created_at DESC"
-            ).fetchall()
-        return [row_to_config(row) for row in rows]
+        configs = sorted(
+            self._iter_config_files(),
+            key=lambda config: _sort_timestamp(config.get("createdAt")),
+            reverse=True,
+        )
+        return [{key: value for key, value in config.items() if key != "deletedAt"} for config in configs]
 
     def get_config(self, config_id: str) -> dict[str, Any]:
-        with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM experiment_configs WHERE id = ?",
-                (config_id,),
-            ).fetchone()
-        if row is None:
+        config = self._read_config_file(config_id)
+        if config is None:
             raise KeyError(f"Unknown config id: {config_id}")
-        return row_to_config(row)
+        return {key: value for key, value in config.items() if key != "deletedAt"}
 
     def rename_config(self, config_id: str, name: str) -> dict[str, Any]:
         next_name = name.strip()
         if not next_name:
             raise ValueError("Config name cannot be empty")
         now = utc_now()
-        with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM experiment_configs WHERE id = ? AND deleted_at IS NULL",
-                (config_id,),
-            ).fetchone()
-            if row is None:
+        with self._locked_state():
+            config = self._read_config_file(config_id)
+            if config is None:
                 raise KeyError(f"Unknown config id: {config_id}")
-            connection.execute(
-                """
-                UPDATE experiment_configs
-                SET name = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (next_name, now, config_id),
-            )
-            updated = connection.execute(
-                "SELECT * FROM experiment_configs WHERE id = ?",
-                (config_id,),
-            ).fetchone()
-        return row_to_config(updated)
+            config["name"] = next_name
+            config["updatedAt"] = now
+            self._write_config_file(config)
+        return {key: value for key, value in config.items() if key != "deletedAt"}
 
     def delete_config(self, config_id: str) -> dict[str, str]:
         now = utc_now()
-        with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM experiment_configs WHERE id = ? AND deleted_at IS NULL",
-                (config_id,),
-            ).fetchone()
-            if row is None:
+        with self._locked_state():
+            config = self._read_config_file(config_id)
+            if config is None:
                 raise KeyError(f"Unknown config id: {config_id}")
-            connection.execute(
-                """
-                UPDATE experiment_configs
-                SET deleted_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (now, now, config_id),
-            )
+            config["deletedAt"] = now
+            config["updatedAt"] = now
+            self._write_config_file(config)
         return {"id": config_id, "status": "deleted"}
 
     def create_run(self, config_id: str, *, execute: bool = False, name: str | None = None) -> dict[str, Any]:
@@ -231,28 +347,29 @@ class ExperimentService:
         run_name = (name or "").strip() or config["name"]
         run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
         artifact_root = self.runs_root / safe_segment(run_id)
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO experiment_runs (
-                  id, config_id, config_name, run_name, status, cells, progress,
-                  artifact_root, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    run_id,
-                    config["id"],
-                    config["name"],
-                    run_name,
-                    "queued",
-                    config["cellCount"],
-                    0,
-                    str(artifact_root),
-                    now,
-                    now,
-                ),
-            )
+        run = {
+            "id": run_id,
+            "taskName": run_name,
+            "configId": config["id"],
+            "configName": config["name"],
+            "status": "queued",
+            "cells": config["cellCount"],
+            "progress": 0,
+            "completedProgress": 0,
+            "progressKind": "phaseOperations",
+            "artifactRoot": str(artifact_root),
+            "logPath": None,
+            "workerId": None,
+            "cancelRequested": False,
+            "stopIntent": None,
+            "error": None,
+            "createdAt": now,
+            "updatedAt": now,
+            "startedAt": None,
+            "finishedAt": None,
+        }
+        with self._locked_state():
+            self._write_run_record(run)
 
         if execute:
             self.execute_run(run_id)
@@ -261,36 +378,24 @@ class ExperimentService:
     def claim_next_run(self, worker_id: str) -> dict[str, Any] | None:
         self.reconcile_stale_runs()
         now = utc_now()
-        with self.database.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT * FROM experiment_runs
-                WHERE status = ? AND cancel_requested = 0
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                ("queued",),
-            ).fetchone()
-            if row is None:
-                return None
-
-            cursor = connection.execute(
-                """
-                UPDATE experiment_runs
-                SET status = ?, worker_id = ?, started_at = COALESCE(started_at, ?),
-                    updated_at = ?
-                WHERE id = ? AND status = ?
-                """,
-                ("running", worker_id, now, now, row["id"], "queued"),
+        with self._locked_state():
+            queued = sorted(
+                [
+                    self._run_from_file_record(run)
+                    for run in self._iter_run_records()
+                    if str(run.get("status")) == "queued" and not bool(run.get("cancelRequested"))
+                ],
+                key=lambda run: _sort_timestamp(run.get("createdAt")),
             )
-            if cursor.rowcount != 1:
+            if not queued:
                 return None
-            claimed = connection.execute(
-                "SELECT * FROM experiment_runs WHERE id = ?",
-                (row["id"],),
-            ).fetchone()
-        return row_to_run(claimed)
+            claimed = queued[0]
+            claimed["status"] = "running"
+            claimed["workerId"] = worker_id
+            claimed["startedAt"] = claimed.get("startedAt") or now
+            claimed["updatedAt"] = now
+            self._write_run_record(claimed)
+        return self.get_run(str(claimed["id"]))
 
     def execute_run(
         self,
@@ -310,17 +415,19 @@ class ExperimentService:
         config = self.get_config(run["configId"])
         now = utc_now()
         log_path_value = str(log_path) if log_path is not None else run.get("logPath")
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE experiment_runs
-                SET status = ?, worker_id = COALESCE(?, worker_id),
-                    log_path = COALESCE(?, log_path),
-                    started_at = COALESCE(started_at, ?), updated_at = ?
-                WHERE id = ?
-                """,
-                ("running", worker_id, log_path_value, now, now, run_id),
-            )
+        with self._locked_state():
+            current = self._read_run_record(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            current = self._run_from_file_record(current)
+            current["status"] = "running"
+            if worker_id is not None:
+                current["workerId"] = worker_id
+            if log_path_value is not None:
+                current["logPath"] = log_path_value
+            current["startedAt"] = current.get("startedAt") or now
+            current["updatedAt"] = now
+            self._write_run_record(current)
 
         heartbeat_stop: threading.Event | None = None
         heartbeat_thread: threading.Thread | None = None
@@ -342,16 +449,23 @@ class ExperimentService:
 
         def record_run_state(state: dict[str, Any]) -> None:
             progress = int(state.get("overallProgress") or state.get("progress") or 0)
+            expected_result_units = state.get("expectedResultUnits")
             timestamp = utc_now()
-            with self.database.connect() as connection:
-                connection.execute(
-                    """
-                    UPDATE experiment_runs
-                    SET progress = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (progress, timestamp, run_id),
-                )
+            with self._locked_state():
+                current = self._read_run_record(run_id)
+                if current is None:
+                    return
+                current = self._run_from_file_record(current)
+                try:
+                    if expected_result_units is not None:
+                        current["cells"] = int(expected_result_units)
+                except (TypeError, ValueError):
+                    pass
+                current["progress"] = progress
+                current["completedProgress"] = progress
+                current["progressKind"] = str(state.get("progressKind") or current.get("progressKind") or "phaseOperations")
+                current["updatedAt"] = timestamp
+                self._write_run_record(current)
 
         try:
             summary = run_local_experiment(
@@ -387,15 +501,23 @@ class ExperimentService:
             if summary is not None
             else self.get_run(run_id).get("progress", 0)
         )
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE experiment_runs
-                SET status = ?, progress = ?, error = ?, finished_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, final_progress, error, finished, finished, run_id),
-            )
+        with self._locked_state():
+            current = self._read_run_record(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            current = self._run_from_file_record(current)
+            current["status"] = status
+            try:
+                current["cells"] = int(summary.get("totalExpandedCells") or summary.get("expectedResultUnits") or current["cells"]) if summary else current["cells"]
+            except (TypeError, ValueError):
+                pass
+            current["progress"] = final_progress
+            current["completedProgress"] = final_progress
+            current["error"] = error
+            current["workerId"] = None
+            current["finishedAt"] = finished
+            current["updatedAt"] = finished
+            self._write_run_record(current)
         return self.get_run(run_id)
 
     def _start_run_heartbeat(
@@ -434,16 +556,19 @@ class ExperimentService:
         if run["status"] not in RESUMABLE_STATUSES:
             raise ValueError(f"Run cannot be resumed from status: {run['status']}")
         now = utc_now()
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE experiment_runs
-                SET status = ?, progress = ?, cancel_requested = 0, error = NULL,
-                    stop_intent = NULL, worker_id = NULL, finished_at = NULL, updated_at = ?
-                WHERE id = ?
-                """,
-                ("queued", run["progress"], now, run_id),
-            )
+        with self._locked_state():
+            current = self._read_run_record(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            current = self._run_from_file_record(current)
+            current["status"] = "queued"
+            current["cancelRequested"] = False
+            current["error"] = None
+            current["stopIntent"] = None
+            current["workerId"] = None
+            current["finishedAt"] = None
+            current["updatedAt"] = now
+            self._write_run_record(current)
         return self.get_run(run_id)
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
@@ -459,87 +584,61 @@ class ExperimentService:
             return run
         if run["status"] == "queued":
             status = "paused" if intent == STOP_INTENT_PAUSE else "cancelled"
-            with self.database.connect() as connection:
-                connection.execute(
-                    """
-                    UPDATE experiment_runs
-                    SET status = ?, cancel_requested = 1, stop_intent = ?, finished_at = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (status, intent, now, now, run_id),
-                )
+            with self._locked_state():
+                current = self._read_run_record(run_id)
+                if current is None:
+                    raise KeyError(f"Unknown run id: {run_id}")
+                current = self._run_from_file_record(current)
+                current["status"] = status
+                current["cancelRequested"] = True
+                current["stopIntent"] = intent
+                current["finishedAt"] = now
+                current["updatedAt"] = now
+                self._write_run_record(current)
             return self.get_run(run_id)
 
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE experiment_runs
-                SET cancel_requested = 1, stop_intent = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (intent, now, run_id),
-            )
+        with self._locked_state():
+            current = self._read_run_record(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            current = self._run_from_file_record(current)
+            current["cancelRequested"] = True
+            current["stopIntent"] = intent
+            current["updatedAt"] = now
+            self._write_run_record(current)
         return self.get_run(run_id)
 
     def list_runs(self, *, scope: str | None = None) -> list[dict[str, Any]]:
         self.reconcile_stale_runs()
-        active_statuses = ["running", "paused"]
-        unfinished_statuses = ["running", "paused", "failed", "partially_failed"]
-        with self.database.connect() as connection:
+        runs = [
+            self._enrich_run_with_state(self._run_from_file_record(run))
+            for run in self._iter_run_records()
+        ]
+        runs = self._merge_file_backed_runs(runs, scope=scope)
+        runs = [run for run in runs if self._run_matches_scope(run, scope)]
+
+        def sort_key(run: dict[str, Any]) -> tuple[int, str]:
+            status = str(run.get("status") or "")
             if scope == "active":
-                rows = connection.execute(
-                    """
-                    SELECT * FROM experiment_runs
-                    WHERE status IN (?, ?)
-                    ORDER BY
-                      CASE status
-                        WHEN 'running' THEN 0
-                        WHEN 'paused' THEN 1
-                        ELSE 2
-                      END,
-                      updated_at DESC
-                    """,
-                    tuple(active_statuses),
-                ).fetchall()
-                runs = [self._enrich_run_with_state(row_to_run(row)) for row in rows]
-                return self._merge_file_backed_runs(runs, scope=scope)
-            if scope == "unfinished":
-                rows = connection.execute(
-                    """
-                    SELECT * FROM experiment_runs
-                    WHERE status IN (?, ?, ?, ?)
-                    ORDER BY
-                      CASE status
-                        WHEN 'running' THEN 0
-                        WHEN 'paused' THEN 1
-                        WHEN 'failed' THEN 2
-                        WHEN 'partially_failed' THEN 3
-                        ELSE 4
-                      END,
-                      updated_at DESC
-                    """,
-                    tuple(unfinished_statuses),
-                ).fetchall()
-                runs = [self._enrich_run_with_state(row_to_run(row)) for row in rows]
-                return self._merge_file_backed_runs(runs, scope=scope)
-            rows = connection.execute(
-                "SELECT * FROM experiment_runs ORDER BY created_at DESC"
-            ).fetchall()
-        runs = [self._enrich_run_with_state(row_to_run(row)) for row in rows]
-        return self._merge_file_backed_runs(runs, scope=scope)
+                status_order = {"running": 0, "paused": 1}.get(status, 2)
+            elif scope == "unfinished":
+                status_order = {"running": 0, "paused": 1, "failed": 2, "partially_failed": 3}.get(status, 4)
+            else:
+                status_order = 0
+            return (status_order, _sort_timestamp(run.get("updatedAt") or run.get("createdAt")))
+
+        if scope in {"active", "unfinished"}:
+            return sorted(runs, key=sort_key)
+        return sorted(runs, key=lambda run: _sort_timestamp(run.get("createdAt") or run.get("updatedAt")), reverse=True)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
-        with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM experiment_runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            file_run = self._file_backed_run(run_id)
-            if file_run is not None:
-                return file_run
-            raise KeyError(f"Unknown run id: {run_id}")
-        return self._enrich_run_with_state(row_to_run(row))
+        run = self._read_run_record(run_id)
+        if run is not None:
+            return self._enrich_run_with_state(self._run_from_file_record(run))
+        file_run = self._file_backed_run(run_id)
+        if file_run is not None:
+            return file_run
+        raise KeyError(f"Unknown run id: {run_id}")
 
     def _merge_file_backed_runs(self, runs: list[dict[str, Any]], *, scope: str | None) -> list[dict[str, Any]]:
         existing_ids = {str(run.get("id")) for run in runs}
@@ -566,7 +665,8 @@ class ExperimentService:
             if path.is_dir()
             and path.name.startswith("run_")
             and (
-                (path / "run_summary.json").exists()
+                (path / RUN_RECORD_NAME).exists()
+                or (path / "run_summary.json").exists()
                 or (path / "run_state.json").exists()
                 or (path / "result_units.jsonl").exists()
             )
@@ -581,8 +681,11 @@ class ExperimentService:
         state = read_json_object(run_dir / "run_state.json")
         status_doc = read_json_object(run_dir / "run_status.json")
         plan = read_json_object(run_dir / "run_plan.json")
-        if not any((summary, state, status_doc, plan, (run_dir / "result_units.jsonl").exists())):
+        record = read_json_object(run_dir / RUN_RECORD_NAME)
+        if not any((record, summary, state, status_doc, plan, (run_dir / "result_units.jsonl").exists())):
             return None
+        if record:
+            return self._enrich_run_with_state(self._run_from_file_record(record))
 
         selection = self._first_dict(summary.get("selection"), state.get("selection"), plan.get("selection"))
         created_at = self._first_string(
@@ -657,7 +760,10 @@ class ExperimentService:
         return f"Imported run ({dataset_count} datasets, {algorithm_count} algorithms, {attack_count} attacks)"
 
     def _path_timestamp(self, path: Path) -> str:
-        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+        except OSError:
+            return utc_now()
 
     def _first_string(self, *values: Any) -> str:
         for value in values:
@@ -1014,73 +1120,53 @@ class ExperimentService:
         message: str | None = None,
     ) -> None:
         now = utc_now()
-        with self.database.connect() as connection:
-            self._prune_worker_heartbeats(connection, now=now)
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO worker_heartbeats (
-                  worker_id, status, pid, device, current_run_id, message, last_seen_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (worker_id, status, pid, device, current_run_id, message, now),
-            )
+        heartbeat = {
+            "workerId": worker_id,
+            "status": status,
+            "pid": int(pid),
+            "device": device,
+            "currentRunId": current_run_id,
+            "message": message,
+            "lastSeenAt": now,
+        }
+        with self._locked_state():
+            self._prune_worker_heartbeats(now=now)
+            _write_json_atomic(self._heartbeat_path(worker_id), heartbeat)
 
-    def _prune_worker_heartbeats(self, connection: Any, *, now: str) -> None:
+    def _prune_worker_heartbeats(self, *, now: str) -> None:
         try:
             now_dt = datetime.fromisoformat(now)
         except ValueError:
             return
         cutoff = now_dt.timestamp() - WORKER_HEARTBEAT_RETENTION_SECONDS
-        rows = connection.execute("SELECT worker_id, last_seen_at FROM worker_heartbeats").fetchall()
-        stale_ids: list[str] = []
-        for row in rows:
+        for path in self.heartbeats_dir.glob("*.json"):
+            heartbeat = _read_json_file(path)
             try:
-                last_seen = datetime.fromisoformat(row["last_seen_at"])
+                last_seen = datetime.fromisoformat(str(heartbeat.get("lastSeenAt")))
             except (TypeError, ValueError):
-                stale_ids.append(row["worker_id"])
+                path.unlink(missing_ok=True)
                 continue
             if last_seen.timestamp() < cutoff:
-                stale_ids.append(row["worker_id"])
-        if stale_ids:
-            connection.executemany(
-                "DELETE FROM worker_heartbeats WHERE worker_id = ?",
-                [(worker_id,) for worker_id in stale_ids],
-            )
+                path.unlink(missing_ok=True)
 
-    def _prune_dead_worker_heartbeats(self, connection: Any) -> None:
+    def _prune_dead_worker_heartbeats(self) -> None:
         if os.name != "posix" or not Path("/proc").exists():
             return
-        rows = connection.execute("SELECT worker_id, pid FROM worker_heartbeats").fetchall()
-        dead_ids = [
-            row["worker_id"]
-            for row in rows
-            if isinstance(row["pid"], int) and row["pid"] > 0 and not Path(f"/proc/{row['pid']}").exists()
-        ]
-        if dead_ids:
-            connection.executemany(
-                "DELETE FROM worker_heartbeats WHERE worker_id = ?",
-                [(worker_id,) for worker_id in dead_ids],
-            )
+        for path in self.heartbeats_dir.glob("*.json"):
+            heartbeat = _read_json_file(path)
+            pid = heartbeat.get("pid")
+            if isinstance(pid, int) and pid > 0 and not Path(f"/proc/{pid}").exists():
+                path.unlink(missing_ok=True)
 
     def list_worker_heartbeats(self) -> list[dict[str, Any]]:
-        with self.database.connect() as connection:
-            self._prune_dead_worker_heartbeats(connection)
-            rows = connection.execute(
-                "SELECT * FROM worker_heartbeats ORDER BY last_seen_at DESC"
-            ).fetchall()
-        return [
-            {
-                "workerId": row["worker_id"],
-                "status": row["status"],
-                "pid": row["pid"],
-                "device": row["device"],
-                "currentRunId": row["current_run_id"],
-                "message": row["message"],
-                "lastSeenAt": row["last_seen_at"],
-            }
-            for row in rows
-        ]
+        with self._locked_state():
+            self._prune_dead_worker_heartbeats()
+            heartbeats = [
+                heartbeat
+                for path in self.heartbeats_dir.glob("*.json")
+                if (heartbeat := _read_json_file(path)).get("workerId")
+            ]
+        return sorted(heartbeats, key=lambda item: _sort_timestamp(item.get("lastSeenAt")), reverse=True)
 
     def reconcile_stale_runs(self, *, stale_seconds: float | None = None) -> int:
         """Mark orphaned running tasks as paused when no fresh worker is executing them."""
@@ -1095,17 +1181,16 @@ class ExperimentService:
 
         now = datetime.now(timezone.utc)
         reconciled = 0
-        with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT id, updated_at FROM experiment_runs WHERE status = ?",
-                ("running",),
-            ).fetchall()
-            for row in rows:
-                run_id = row["id"]
+        with self._locked_state():
+            for raw_run in self._iter_run_records():
+                run = self._run_from_file_record(raw_run)
+                if run["status"] != "running":
+                    continue
+                run_id = run["id"]
                 if run_id in active_run_ids:
                     continue
                 try:
-                    updated_at = datetime.fromisoformat(str(row["updated_at"]))
+                    updated_at = datetime.fromisoformat(str(run["updatedAt"]))
                 except ValueError:
                     updated_at = now
                 if updated_at.tzinfo is None:
@@ -1114,40 +1199,32 @@ class ExperimentService:
                     continue
 
                 timestamp = utc_now()
-                connection.execute(
-                    """
-                    UPDATE experiment_runs
-                    SET status = ?, progress = progress, error = ?, worker_id = NULL,
-                        stop_intent = ?, cancel_requested = 1,
-                        finished_at = COALESCE(finished_at, ?), updated_at = ?
-                    WHERE id = ? AND status = ?
-                    """,
-                    (
-                        "paused",
-                        "Worker stopped before completion; run auto-paused for resume.",
-                        STOP_INTENT_PAUSE,
-                        timestamp,
-                        timestamp,
-                        run_id,
-                        "running",
-                    ),
-                )
+                run["status"] = "paused"
+                run["error"] = "Worker stopped before completion; run auto-paused for resume."
+                run["workerId"] = None
+                run["stopIntent"] = STOP_INTENT_PAUSE
+                run["cancelRequested"] = True
+                run["finishedAt"] = run.get("finishedAt") or timestamp
+                run["updatedAt"] = timestamp
+                self._write_run_record(run)
                 reconciled += 1
         return reconciled
 
     def _finish_stopped_run(self, run_id: str, intent: str) -> dict[str, Any]:
         now = utc_now()
         status = "paused" if intent == STOP_INTENT_PAUSE else "cancelled"
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE experiment_runs
-                SET status = ?, cancel_requested = 1, stop_intent = ?, finished_at = COALESCE(finished_at, ?),
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (status, intent, now, now, run_id),
-            )
+        with self._locked_state():
+            run = self._read_run_record(run_id)
+            if run is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            run = self._run_from_file_record(run)
+            run["status"] = status
+            run["cancelRequested"] = True
+            run["stopIntent"] = intent
+            run["workerId"] = None
+            run["finishedAt"] = run.get("finishedAt") or now
+            run["updatedAt"] = now
+            self._write_run_record(run)
         return self.get_run(run_id)
 
     def _run_status_from_summary(self, run_id: str, summary_status: str) -> str:

@@ -2,7 +2,8 @@
 
 The active development profile is local/AutoDL:
 
-- FastAPI stores demo metadata in SQLite.
+- FastAPI stores experiment configs, run queue state, and worker heartbeats under
+  `WM_BENCH_RUNS_ROOT/_experiment_state`.
 - Runs and image artifacts are written under `runs/local` locally or
   `WM_BENCH_RUNS_ROOT` on AutoDL.
 - The local worker is a plain Python process.

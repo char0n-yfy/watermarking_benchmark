@@ -5,10 +5,10 @@ This is the primary deployment profile for the MVP.
 Recommended paths:
 
 - Persistent state: `/root/autodl-fs/wm-bench`
-- SQLite: `/root/autodl-fs/wm-bench/state/wmbench.sqlite`
 - Datasets: `<repo>/resources/datasets`
 - Weights: `<repo>/resources/weights`
 - Run cache/results: `/root/autodl-tmp/wm-bench/runs`
+- Experiment state index: `<run cache/results>/_experiment_state`
 - Logs: `/root/autodl-tmp/wm-bench/runs/logs`
 
 ## One Command

@@ -35,6 +35,14 @@ autodl_load_env_file() {
   done <"${env_file}"
 }
 
+autodl_load_platform_env() {
+  local profile="/etc/profile.d/autodl.env.sh"
+  if [[ -f "${profile}" ]]; then
+    # shellcheck disable=SC1090
+    source "${profile}"
+  fi
+}
+
 autodl_load_env() {
   autodl_cd_repo
 
@@ -42,6 +50,7 @@ autodl_load_env() {
     cp .env.autodl.example .env.autodl
   fi
 
+  autodl_load_platform_env
   autodl_load_env_file "${AUTODL_REPO_ROOT}/.env.autodl"
 
   export WM_BENCH_DOTENV_PATH="${AUTODL_REPO_ROOT}/.env.autodl"
@@ -49,7 +58,6 @@ autodl_load_env() {
   export WM_BENCH_DATA_ROOT="${WM_BENCH_DATA_ROOT:-/root/autodl-fs/wm-bench}"
   export WM_BENCH_RESOURCES_ROOT="${WM_BENCH_RESOURCES_ROOT:-${AUTODL_REPO_ROOT}/resources}"
   export WM_BENCH_RUNS_ROOT="${WM_BENCH_RUNS_ROOT:-${AUTODL_REPO_ROOT}/runs}"
-  export WM_BENCH_DB_PATH="${WM_BENCH_DB_PATH:-${WM_BENCH_DATA_ROOT}/state/wmbench.sqlite}"
   export WM_BENCH_DEVICE="${WM_BENCH_DEVICE:-cuda:0}"
   export WM_BENCH_WORKER_POLL_SECONDS="${WM_BENCH_WORKER_POLL_SECONDS:-2}"
   export WM_BENCH_VENV="${WM_BENCH_VENV:-.venv}"
@@ -70,7 +78,6 @@ autodl_prepare_dirs() {
     "${WM_BENCH_RESOURCES_ROOT}/datasets" \
     "${WM_BENCH_RESOURCES_ROOT}/weights" \
     "${WM_BENCH_RUNS_ROOT}" \
-    "$(dirname "${WM_BENCH_DB_PATH}")" \
     "${WM_BENCH_LOG_DIR}"
 }
 
@@ -97,6 +104,21 @@ autodl_ensure_screen() {
   return 1
 }
 
+autodl_wmbench_screen_sessions() {
+  if ! command -v screen >/dev/null 2>&1; then
+    return 0
+  fi
+  screen -ls 2>/dev/null | awk '/[.](wmbench-api|wmbench-worker)([^[:space:]]*)/ { print $1 }'
+}
+
+autodl_stop_wmbench_screen_sessions() {
+  local session
+  while IFS= read -r session; do
+    [[ -n "${session}" ]] || continue
+    screen -S "${session}" -X quit >/dev/null 2>&1 || true
+  done < <(autodl_wmbench_screen_sessions)
+}
+
 autodl_local_host() {
   local host="$1"
   if [[ "${host}" == "0.0.0.0" ]]; then
@@ -104,6 +126,29 @@ autodl_local_host() {
   else
     echo "${host}"
   fi
+}
+
+autodl_public_url_for_port() {
+  local port="$1"
+  local configured="${WM_BENCH_PUBLIC_URL:-}"
+  local env_name value
+
+  if [[ -n "${configured}" ]]; then
+    echo "${configured%/}"
+    return 0
+  fi
+
+  env_name="AutoDLService${port}URL"
+  value="$(printenv "${env_name}" 2>/dev/null || true)"
+  if [[ -z "${value}" && "${port}" == "6006" ]]; then
+    value="$(printenv AutoDLServiceURL 2>/dev/null || true)"
+  fi
+
+  echo "${value%/}"
+}
+
+autodl_list_public_service_urls() {
+  env | awk -F= '/^AutoDLService([0-9]+)?URL=/ { print "  " $0 }' | sort
 }
 
 autodl_wait_for_url() {
@@ -118,7 +163,7 @@ autodl_wait_for_url() {
   fi
 
   for ((i = 0; i < timeout_seconds; i += 1)); do
-    if curl -fsS "${url}" >/dev/null 2>&1; then
+    if curl -fsSk --connect-timeout 5 --max-time 10 "${url}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -204,6 +249,22 @@ PY
   fi
 }
 
+autodl_wait_for_port_free() {
+  local port="$1"
+  local timeout_seconds="${2:-30}"
+  local pids
+
+  for ((i = 0; i < timeout_seconds; i += 1)); do
+    pids="$(autodl_port_pids "${port}" | tr '\n' ' ' | xargs || true)"
+    if [[ -z "${pids}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
 autodl_describe_pids() {
   local pids="$1"
   [[ -n "${pids}" ]] || return 0
@@ -246,6 +307,21 @@ for name in os.listdir("/proc"):
 PY
 }
 
+autodl_wait_for_no_orphan_workers() {
+  local timeout_seconds="${1:-30}"
+  local pids
+
+  for ((i = 0; i < timeout_seconds; i += 1)); do
+    pids="$(autodl_worker_pids | tr '\n' ' ' | xargs || true)"
+    if [[ -z "${pids}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
 autodl_assert_port_free() {
   local port="$1"
   local pids
@@ -276,18 +352,16 @@ autodl_assert_no_orphan_workers() {
 autodl_validate_runtime() {
   local runtime_url="$1"
   local expected_environment="$2"
-  local expected_database_path="$3"
-  local expected_device="$4"
+  local expected_device="$3"
 
-  python - "${runtime_url}" "${expected_environment}" "${expected_database_path}" "${expected_device}" <<'PY'
+  python - "${runtime_url}" "${expected_environment}" "${expected_device}" <<'PY'
 from __future__ import annotations
 
 import json
 import sys
 import urllib.request
-from pathlib import Path
 
-url, expected_environment, expected_database_path, expected_device = sys.argv[1:5]
+url, expected_environment, expected_device = sys.argv[1:4]
 try:
     with urllib.request.urlopen(url, timeout=10) as response:
         payload = json.loads(response.read().decode("utf-8"))
@@ -298,10 +372,6 @@ except Exception as exc:
 errors: list[str] = []
 if payload.get("environment") != expected_environment:
     errors.append(f"environment={payload.get('environment')!r}, expected {expected_environment!r}")
-actual_database_path = Path(str(payload.get("databasePath") or "")).expanduser().resolve()
-expected_database_path = Path(expected_database_path).expanduser().resolve()
-if actual_database_path != expected_database_path:
-    errors.append(f"databasePath={str(actual_database_path)!r}, expected {str(expected_database_path)!r}")
 if payload.get("device") != expected_device:
     errors.append(f"device={payload.get('device')!r}, expected {expected_device!r}")
 

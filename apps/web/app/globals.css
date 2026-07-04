@@ -7117,13 +7117,12 @@ a.button {
 
 .run-stage-content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.72fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
 
-.run-stage-detail-panel,
-.run-stage-side-panel {
+.run-stage-detail-panel {
   display: grid;
   align-content: start;
   gap: 12px;
@@ -7158,16 +7157,238 @@ a.button {
   line-height: 1.15;
 }
 
-.run-stage-kpi-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.run-shard-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
 }
 
-.run-stage-side-panel .run-current-grid {
-  grid-template-columns: 1fr;
+.run-shard-card {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(460px, 1.45fr) minmax(300px, 0.95fr);
+  min-width: 0;
+  align-items: stretch;
+  gap: 12px;
+  border: 1px solid #e1e8e3;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.run-stage-side-panel .run-meta-grid {
-  grid-template-columns: 1fr;
+.run-shard-card:hover,
+.run-shard-card:focus-visible {
+  border-color: #9bd4c8;
+  box-shadow: 0 8px 24px rgba(28, 129, 115, 0.1);
+  outline: none;
+}
+
+.run-shard-card.expanded {
+  border-color: #58b8aa;
+}
+
+.run-shard-identity,
+.run-shard-progress-stack {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.run-shard-identity {
+  align-content: space-between;
+}
+
+.run-shard-progress-stack {
+  align-content: center;
+}
+
+.run-shard-card-head,
+.run-shard-progress > div,
+.run-shard-foot {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-shard-card-head {
+  align-items: flex-start;
+}
+
+.run-shard-card-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.run-shard-card-head span,
+.run-shard-progress span,
+.run-shard-foot span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.run-shard-card-head strong {
+  overflow: visible;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.run-shard-card-head small {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #eef7f2;
+  color: var(--teal-dark);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.run-shard-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+  gap: 6px;
+}
+
+.run-shard-meta span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border-radius: 7px;
+  background: #f7faf8;
+  padding: 7px;
+}
+
+.run-shard-meta b {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.run-shard-meta em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-shard-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.run-shard-progress strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.run-shard-foot {
+  border-top: 1px solid #edf1ee;
+  padding-top: 8px;
+}
+
+.run-shard-foot code {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 5px 7px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-gpu-telemetry-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border-top: 1px solid #edf1ee;
+  padding-top: 10px;
+}
+
+.run-gpu-chart {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid #e8efeb;
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 10px;
+}
+
+.run-gpu-chart-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-gpu-chart-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.run-gpu-chart-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.run-gpu-chart-head span,
+.run-gpu-chart-head em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.run-gpu-chart svg {
+  width: 100%;
+  height: 176px;
+}
+
+.run-gpu-grid-line {
+  stroke: #dfeae5;
+  stroke-dasharray: 5 5;
+  stroke-width: 1;
+}
+
+.run-gpu-line {
+  fill: none;
+  stroke: #149887;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.run-gpu-point {
+  fill: #149887;
+}
+
+.run-gpu-axis-label,
+.run-gpu-time-label {
+  fill: #6b7280;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.run-gpu-time-label.end {
+  text-anchor: end;
 }
 
 .run-stage-log-shell .run-live-log {
@@ -7610,6 +7831,23 @@ a.button {
   white-space: pre-wrap;
 }
 
+@media (max-width: 1500px) {
+  .run-shard-card {
+    grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.15fr);
+  }
+
+  .run-shard-progress-stack {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .run-shard-progress-stack {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1180px) {
   .shell {
     grid-template-columns: 1fr;
@@ -7672,6 +7910,7 @@ a.button {
   .tuning-stage-metrics,
   .tuning-quality-metrics,
   .run-stage-content-grid,
+  .run-shard-grid,
   .run-monitor-grid,
   .run-monitor-overview,
   .run-attack-status-grid,
@@ -7690,6 +7929,12 @@ a.button {
   .run-monitor-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .run-shard-card,
+  .run-shard-meta,
+  .run-gpu-telemetry-panel {
+    grid-template-columns: 1fr;
   }
 
   .run-monitor-actions {
@@ -7925,7 +8170,6 @@ a.button {
   }
 
   .run-stage-option-grid,
-  .run-stage-kpi-grid,
   .run-summary-compact-grid {
     grid-template-columns: 1fr;
   }

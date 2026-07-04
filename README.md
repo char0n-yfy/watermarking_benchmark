@@ -47,8 +47,8 @@ bash scripts/deploy-autodl-linux.sh stop
 
 - 数据集：`<仓库根目录>/resources/datasets`
 - 权重：`<仓库根目录>/resources/weights`
-- SQLite：`/root/autodl-fs/wm-bench/state/wmbench.sqlite`
 - 运行结果：`/root/autodl-tmp/wm-bench/runs`
+- 实验状态索引：`<运行结果目录>/_experiment_state`
 
 攻击算法在前端按 `evaluator/attacks/<folder>` 目录名分类展示；新增攻击目录后，重启 API 即可刷新资源目录。
 
@@ -62,7 +62,6 @@ API_HOST=0.0.0.0
 API_PORT=6006
 WM_BENCH_RESOURCES_ROOT=/root/autodl-fs/wm-bench/resources
 WM_BENCH_RUNS_ROOT=/root/autodl-tmp/wm-bench/runs
-WM_BENCH_DB_PATH=/root/autodl-fs/wm-bench/state/wmbench.sqlite
 NEXT_PUBLIC_API_BASE_URL=
 ```
 
@@ -76,7 +75,7 @@ NEXT_PUBLIC_API_BASE_URL=
 python3 scripts/check-deploy-readiness.py
 ```
 
-该脚本会检查资源目录、数据集目录、权重目录、运行目录可写性、SQLite、算法/攻击目录扫描和 worker 心跳。缺数据集或 worker 未启动会显示 WARN；SQLite、运行目录、资源目录扫描失败会显示 FAIL。服务运行后也可以访问 `/system/readiness` 查看同一份检查结果。
+该脚本会检查资源目录、数据集目录、权重目录、运行目录和实验状态目录可写性、算法/攻击目录扫描和 worker 心跳。缺数据集或 worker 未启动会显示 WARN；运行目录、实验状态目录、资源目录扫描失败会显示 FAIL。服务运行后也可以访问 `/system/readiness` 查看同一份检查结果。
 
 ## 验证
 

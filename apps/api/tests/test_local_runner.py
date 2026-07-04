@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.services.local_runner import LocalRunRequest, run_local_experiment
+from app.services.local_artifacts import artifact_paths, write_json, write_jsonl
+from app.services.local_plan import normalize_selection
+from app.services.sharded_executor import _aggregate_shard_outputs, _build_shard_specs
 
 
 class LocalRunnerTest(unittest.TestCase):
@@ -466,6 +469,127 @@ class LocalRunnerTest(unittest.TestCase):
             self.assertEqual(summary["status"], "paused")
             self.assertEqual(run_status["status"], "paused")
             self.assertEqual(run_summary["status"], "paused")
+
+    def test_shard_specs_split_samples_evenly_and_expand_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "resources" / "datasets" / "smoke"
+            dataset_dir.mkdir(parents=True)
+            for index in range(10):
+                Image.new("RGB", (64, 64), (index, 120, 200)).save(dataset_dir / f"sample_{index:02d}.png")
+
+            request = LocalRunRequest(
+                run_id="run_sharded_plan",
+                selection={
+                    "datasetIds": ["smoke"],
+                    "algorithmIds": ["alg-traditional-spread-dct"],
+                    "attackPresetIds": ["atk-identity"],
+                    "seeds": [42],
+                    "maxSamples": 10,
+                },
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+                device="cuda:0",
+            )
+            selection = normalize_selection(request.selection, request.resources_root)
+            samples = sorted(dataset_dir.glob("*.png"))
+            specs = _build_shard_specs(
+                request=request,
+                selection=selection,
+                devices=[f"cuda:{index}" for index in range(5)],
+                samples_by_dataset={"smoke": samples},
+            )
+
+            self.assertEqual([spec["sampleCount"] for spec in specs], [2, 2, 2, 2, 2])
+            self.assertEqual(sum(int(spec["expectedCells"]) for spec in specs), 5)
+            self.assertEqual(specs[0]["selection"]["_sampleRelativesByDataset"]["smoke"], ["sample_00.png", "sample_05.png"])
+
+    def test_parent_summary_aggregates_shard_outputs_for_results_readers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_root = root / "runs" / "run_parent"
+            resources_root = root / "resources"
+            materialized_root = run_root / "materialized"
+            parent_paths = artifact_paths(run_root)
+            shard_specs = []
+            for index, device in enumerate(("cuda:0", "cuda:1")):
+                shard_id = f"shard_{index:03d}_cuda{index}"
+                shard_root = run_root / "shards" / shard_id
+                shard_root.mkdir(parents=True)
+                cell_key = "smoke__alg-traditional-spread-dct__atk-identity__42"
+                shard_specs.append(
+                    {
+                        "id": shard_id,
+                        "index": index,
+                        "device": device,
+                        "sampleCount": 2,
+                        "expectedCells": 1,
+                        "selection": {"_sampleRelativesByDataset": {"smoke": [f"sample_{index}.png"]}},
+                        "statePath": str(shard_root / "run_state.json"),
+                    }
+                )
+                write_json(shard_root / "run_summary.json", {"status": "succeeded", "resultUnitCount": 1})
+                write_jsonl(
+                    shard_root / "result_units.jsonl",
+                    [
+                        {
+                            "runId": shard_id,
+                            "cellKey": cell_key,
+                            "resultUnitKey": cell_key,
+                            "status": "succeeded",
+                            "datasetId": "smoke",
+                            "algorithmId": "alg-traditional-spread-dct",
+                            "watermarkMethod": "spread_spectrum_dct",
+                            "attackPresetId": "atk-identity",
+                            "attackMethod": "identity",
+                            "attackStrength": 0,
+                            "seed": 42,
+                            "sampleCount": 2,
+                            "manifestPath": str(shard_root / "detection.json"),
+                            "outputDir": str(shard_root / "cell"),
+                            "error": None,
+                        }
+                    ],
+                )
+                write_jsonl(
+                    shard_root / "image_detection.jsonl",
+                    [{"runId": shard_id, "cellKey": cell_key, "datasetId": "smoke", "label": 1}],
+                )
+                write_jsonl(shard_root / "image_quality.jsonl", [{"runId": shard_id, "cellKey": cell_key}])
+                write_jsonl(shard_root / "image_attack.jsonl", [{"runId": shard_id, "cellKey": cell_key}])
+                write_jsonl(shard_root / "image_watermark_embed.jsonl", [{"runId": shard_id, "cellKey": cell_key}])
+                write_jsonl(shard_root / "runtime_profile.jsonl", [{"runId": shard_id, "cell_key": cell_key}])
+
+            summary = _aggregate_shard_outputs(
+                request=LocalRunRequest(
+                    run_id="run_parent",
+                    selection={},
+                    resources_root=resources_root,
+                    runs_root=root / "runs",
+                ),
+                selection={},
+                parent_paths=parent_paths,
+                run_root=run_root,
+                materialized_root=materialized_root,
+                shard_specs=shard_specs,
+                total_expanded_cells=2,
+                logical_cells=1,
+                previous_summary={},
+                invocation_elapsed_ms=10,
+                errors=[],
+            )
+            units = [json.loads(line) for line in parent_paths["resultUnits"].read_text().splitlines()]
+            detection = [json.loads(line) for line in parent_paths["imageDetection"].read_text().splitlines()]
+
+            self.assertEqual(summary["status"], "succeeded")
+            self.assertEqual(summary["totalExpandedCells"], 2)
+            self.assertEqual(len(units), 2)
+            self.assertEqual({unit["runId"] for unit in units}, {"run_parent"})
+            self.assertEqual({unit["shardId"] for unit in units}, {"shard_000_cuda0", "shard_001_cuda1"})
+            self.assertEqual(len({unit["resultUnitKey"] for unit in units}), 2)
+            self.assertTrue(all(unit["logicalCellKey"] == "smoke__alg-traditional-spread-dct__atk-identity__42" for unit in units))
+            self.assertEqual({record["runId"] for record in detection}, {"run_parent"})
+            self.assertTrue(all(record["cellKey"].startswith(record["shardId"]) for record in detection))
 
 
 if __name__ == "__main__":

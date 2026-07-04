@@ -158,8 +158,15 @@ def _manifest_record_matches(record: JsonDict, signature: JsonDict, target: Path
     )
 
 
-def copy_canonical_samples(dataset_path: Path, output_dir: Path, max_samples: int) -> list[StagedSample]:
-    sample_paths = iter_image_paths(dataset_path)[:max_samples]
+def copy_canonical_samples(
+    dataset_path: Path,
+    output_dir: Path,
+    max_samples: int,
+    *,
+    sample_paths: list[Path] | None = None,
+) -> list[StagedSample]:
+    selected_paths = sample_paths if sample_paths is not None else iter_image_paths(dataset_path)[:max_samples]
+    sample_paths = selected_paths[:max_samples] if max_samples > 0 else selected_paths
     output_dir.mkdir(parents=True, exist_ok=True)
     existing_manifest = _read_canonical_manifest(output_dir)
     staged: list[StagedSample] = []
@@ -214,8 +221,14 @@ class DatasetStage:
         input_dir: Path,
         max_samples: int,
         existing_sample_keys: set[tuple[str, str]],
+        sample_paths: list[Path] | None = None,
     ) -> DatasetStageResult:
-        staged_samples = copy_canonical_samples(dataset_path, input_dir, max_samples)
+        staged_samples = copy_canonical_samples(
+            dataset_path,
+            input_dir,
+            max_samples,
+            sample_paths=sample_paths,
+        )
         copied_samples = [sample.path for sample in staged_samples]
         if not staged_samples:
             raise ValueError(f"Dataset has no supported image files: {dataset_path}")

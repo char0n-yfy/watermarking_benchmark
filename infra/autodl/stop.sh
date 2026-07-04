@@ -6,9 +6,9 @@ AUTODL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${AUTODL_SCRIPT_DIR}/common.sh"
 autodl_load_env
 
-screen -S wmbench-api -X quit >/dev/null 2>&1 || true
-screen -S wmbench-worker -X quit >/dev/null 2>&1 || true
-sleep 1
+autodl_stop_wmbench_screen_sessions
+autodl_wait_for_port_free "${API_PORT}" "${WM_BENCH_STOP_WAIT_SECONDS:-30}" || true
+autodl_wait_for_no_orphan_workers "${WM_BENCH_STOP_WAIT_SECONDS:-30}" || true
 
 echo "WM Bench AutoDL services stopped."
 echo

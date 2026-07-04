@@ -14,7 +14,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "api"))
 
 from app.core.config import get_settings
-from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
 from app.services.runtime_parallel_config import apply_runtime_parallel_env
 
@@ -22,7 +21,6 @@ from app.services.runtime_parallel_config import apply_runtime_parallel_env
 def build_service() -> ExperimentService:
     settings = get_settings()
     return ExperimentService(
-        database=LocalDatabase(settings.database_path),
         resources_root=settings.resources_root,
         runs_root=settings.runs_root,
     )

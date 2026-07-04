@@ -12,7 +12,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "api"))
 
 from app.core.config import get_settings
-from app.core.local_db import LocalDatabase
 from app.services.experiment_service import ExperimentService
 from app.services.readiness import collect_readiness
 
@@ -31,7 +30,6 @@ def main() -> int:
 
     settings = get_settings()
     service = ExperimentService(
-        database=LocalDatabase(settings.database_path),
         resources_root=settings.resources_root,
         runs_root=settings.runs_root,
     )

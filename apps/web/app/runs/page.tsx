@@ -5,7 +5,6 @@ import {
   BarChart3,
   Check,
   CheckCircle2,
-  Clock3,
   FolderOpen,
   LineChart,
   PauseCircle,
@@ -29,6 +28,7 @@ import {
   fetchAlgorithms,
   fetchAttacks,
   fetchDatasetCatalog,
+  fetchGpuTelemetry,
   fetchLatestParallelTuning,
   fetchParallelTuning,
   fetchRun,
@@ -42,16 +42,20 @@ import {
   saveParallelTuning,
   startParallelTuning
 } from "@/lib/api";
-import { localizedDate } from "@/lib/i18n";
+import { localizedDate, localizedName } from "@/lib/i18n";
 import type { Language, Translation } from "@/lib/i18n";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type {
   AlgorithmVersion,
   AttackPreset,
   DemoRunRecord,
+  GpuTelemetry,
+  GpuTelemetryDevice,
+  GpuTelemetrySample,
   ParallelTuningEvent,
   ParallelTuningJob,
   RunPhaseState,
+  RunShardProgress,
   RunState,
   SavedExperimentConfig
 } from "@/lib/types";
@@ -85,6 +89,13 @@ type MaterializedStats = {
   root: string;
   cacheHits: number;
   latestDir: string;
+};
+
+type StageCellProgress = {
+  current: number;
+  total: number;
+  percent: number;
+  unit: string;
 };
 
 type ExecutionSummary = {
@@ -376,6 +387,13 @@ function attackMethod(attack: AttackPreset) {
   return attack.executionMethod || attack.method;
 }
 
+function displayMethodToken(method: string) {
+  if (method === "image_to_vedio") {
+    return "image_to_video";
+  }
+  return method;
+}
+
 function isViewpointTuningMethod(method: string) {
   return method.startsWith("3d_viewpoint_rerendering_");
 }
@@ -482,6 +500,26 @@ function attackTuningDisplayName(attack: AttackPreset | undefined, method: strin
     return ATTACK_DISPLAY_NAMES[attack.method].zh;
   }
   return attack?.name || method;
+}
+
+function attackCatalogDisplayName(language: Language, attack: AttackPreset) {
+  const display = ATTACK_DISPLAY_NAMES[attack.method];
+  if (display) {
+    return language === "zh" ? display.zh : display.en;
+  }
+  return localizedName(language, attack.id, attack.name);
+}
+
+function attackMethodDisplayName(language: Language, method: string) {
+  const viewpointName = viewpointDisplayName(method);
+  if (viewpointName) {
+    return viewpointName;
+  }
+  const display = ATTACK_DISPLAY_NAMES[method];
+  if (display) {
+    return language === "zh" ? display.zh : display.en;
+  }
+  return displayMethodToken(method);
 }
 
 function attackTuningRepresentativeMethod(method: string) {
@@ -1029,6 +1067,94 @@ function progressStepFromPhase(phase: RunPhaseState, label: string): ProgressSte
   };
 }
 
+function stageCellProgress(
+  stage: ExperimentStageTab | undefined,
+  shards: RunShardProgress[]
+): StageCellProgress {
+  const stageKey = stage?.key ?? "canonical";
+  const phaseKey = phaseKeyForStage(stageKey);
+  const unit = stageKey === "canonical" ? "images" : "cells";
+  if (!shards.length) {
+    const phaseProgress = stage?.phase?.cellProgress;
+    const fallbackCurrent = Number(phaseProgress?.current ?? 0);
+    const fallbackTotal = Number(phaseProgress?.total ?? 0);
+    return {
+      current: fallbackCurrent,
+      total: Math.max(fallbackCurrent, fallbackTotal),
+      percent: percent(fallbackCurrent, Math.max(fallbackCurrent, fallbackTotal)),
+      unit
+    };
+  }
+  const totals = shards.reduce(
+    (acc, shard) => {
+      const progressDoc = shardPhaseCellProgress(shard, phaseKey, stageKey);
+      acc.current += progressDoc.current;
+      acc.total += progressDoc.total;
+      return acc;
+    },
+    { current: 0, total: 0 }
+  );
+  const total = Math.max(totals.current, totals.total);
+  return {
+    current: totals.current,
+    total,
+    percent: percent(totals.current, total),
+    unit
+  };
+}
+
+function shardPhaseCellProgress(
+  shard: RunShardProgress,
+  phaseKey: RunPhaseState["key"],
+  stageKey: ExperimentStageKey
+) {
+  const phase = shard.phases?.find((item) => item.key === phaseKey);
+  const phaseProgress = phase?.cellProgress;
+  if (phaseProgress) {
+    const current = Math.max(0, Number(phaseProgress.current ?? 0));
+    const total = Math.max(current, Number(phaseProgress.total ?? 0));
+    return { current, total };
+  }
+  const counters = phase?.counters ?? {};
+  if (stageKey === "canonical") {
+    const current = Math.max(0, Number(counters.imagesDone ?? phase?.current ?? 0));
+    const total = Math.max(current, Number(shard.sampleCount ?? phase?.total ?? 0));
+    return { current: phase?.status === "succeeded" ? total : current, total };
+  }
+  const total = Math.max(0, Number(counters.phaseCellsTotal ?? shard.expectedCells ?? 0));
+  const sampleCount = Math.max(1, Number(shard.sampleCount ?? 0));
+  if (!counters.phaseCellsDone && !counters.cellsDone && !counters.resultUnitsDone) {
+    if (stageKey === "attack") {
+      const current = Math.floor(Number(counters.positiveImagesDone ?? 0) / sampleCount);
+      return { current: phase?.status === "succeeded" ? total : Math.min(current, total), total };
+    }
+    if (stageKey === "extract") {
+      const positive = Math.floor(Number(counters.positiveImagesDone ?? 0) / sampleCount);
+      const negative = Math.floor(Number(counters.negativeImagesDone ?? 0) / sampleCount);
+      const current = Math.min(positive, negative);
+      return { current: phase?.status === "succeeded" ? total : Math.min(current, total), total };
+    }
+    if (stageKey === "quality") {
+      const current = Math.floor(Number(counters.pairsDone ?? 0) / (sampleCount * 2));
+      return { current: phase?.status === "succeeded" ? total : Math.min(current, total), total };
+    }
+    if (stageKey === "watermark" && phase?.total) {
+      const ratio = Number(phase.current ?? 0) / Math.max(1, Number(phase.total));
+      const current = Math.floor(ratio * total);
+      return { current: phase?.status === "succeeded" ? total : Math.min(current, total), total };
+    }
+  }
+  const rawCurrent = Number(
+    counters.phaseCellsDone ??
+      counters.cellsDone ??
+      counters.resultUnitsDone ??
+      (phaseKey === shard.currentPhase ? shard.cellProgress?.current : 0) ??
+      0
+  );
+  const current = phase?.status === "succeeded" ? total : Math.max(0, rawCurrent);
+  return { current: Math.min(current, total), total };
+}
+
 function buildExperimentStagesFromRunState(
   runState: RunState,
   labels: Record<ExperimentStageKey, string>
@@ -1138,6 +1264,8 @@ export default function RunsPage() {
   const [busy, setBusy] = useState(false);
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(10);
   const [resourceNames, setResourceNames] = useState<Record<string, string>>({});
+  const [gpuTelemetry, setGpuTelemetry] = useState<GpuTelemetry | null>(null);
+  const [expandedShardIds, setExpandedShardIds] = useState<string[]>([]);
   const [tuningJob, setTuningJob] = useState<ParallelTuningJob | null>(null);
   const [tuningDialogOpen, setTuningDialogOpen] = useState(false);
   const [tuningWorkspaceOpen, setTuningWorkspaceOpen] = useState(false);
@@ -1203,9 +1331,13 @@ export default function RunsPage() {
     experimentStages.find((stage) => stage.key === selectedStageKey && stage.reached) ??
     experimentStages.find((stage) => stage.active) ??
     experimentStages[0];
-  const monitorMaterialized = useMemo(
-    () => materializedStatsFromRunState(runState, selectedStage?.phase),
-    [runState, selectedStage?.phase]
+  const selectedStageShards = useMemo(() => {
+    const phaseKey = phaseKeyForStage(selectedStage?.key ?? "canonical");
+    return (runState?.shards ?? []).filter((shard) => shard.currentPhase === phaseKey);
+  }, [runState?.shards, selectedStage?.key]);
+  const selectedStageProgress = useMemo(
+    () => stageCellProgress(selectedStage, runState?.shards ?? []),
+    [runState?.shards, selectedStage]
   );
   const tuningRunning = tuningJob?.status === "running";
   const tuningPausing = tuningJob?.status === "pausing";
@@ -1262,6 +1394,11 @@ export default function RunsPage() {
   const showTuningSection = tuningWorkspaceVisible;
   const showExperimentSection = experimentActive;
   const tuningStartDisabled = tuningBusy || tuningActive || effectiveTuningStages === 0;
+  const toggleExpandedShard = (shardId: string) => {
+    setExpandedShardIds((current) =>
+      current.includes(shardId) ? current.filter((item) => item !== shardId) : [...current, shardId]
+    );
+  };
 
   useEffect(() => {
     const activeStage = experimentStages.find((stage) => stage.active) ?? experimentStages.find((stage) => stage.reached);
@@ -1273,6 +1410,33 @@ export default function RunsPage() {
       setSelectedStageKey(activeStage.key);
     }
   }, [experimentStages, selectedStageKey, stageSelectionPinned]);
+
+  useEffect(() => {
+    if (!showExperimentSection || !monitorRun) {
+      setGpuTelemetry(null);
+      setExpandedShardIds([]);
+      return;
+    }
+    let cancelled = false;
+    const loadTelemetry = async () => {
+      try {
+        const nextTelemetry = await fetchGpuTelemetry();
+        if (!cancelled) {
+          setGpuTelemetry(nextTelemetry);
+        }
+      } catch {
+        if (!cancelled) {
+          setGpuTelemetry(null);
+        }
+      }
+    };
+    loadTelemetry();
+    const timer = window.setInterval(loadTelemetry, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [monitorRun?.id, showExperimentSection]);
 
   useEffect(() => {
     try {
@@ -1362,7 +1526,13 @@ export default function RunsPage() {
         );
       });
       attacks.forEach((attack) => {
-        nextResourceNames[attack.id] = attack.name;
+        const presetLabel = attackCatalogDisplayName(language, attack);
+        const methodLabel = attackMethodDisplayName(language, attack.method);
+        nextResourceNames[attack.id] = presetLabel;
+        nextResourceNames[attack.method] = methodLabel;
+        if (attack.executionMethod) {
+          nextResourceNames[attack.executionMethod] = attackMethodDisplayName(language, attack.executionMethod);
+        }
       });
       const watermarkOptions = buildWatermarkTuningOptions(algorithms);
       const attackOptions = buildAttackTuningOptions(attacks);
@@ -2168,13 +2338,11 @@ export default function RunsPage() {
               <section className="run-stage-detail-panel">
                 <div className="run-stage-detail-head">
                   <div>
-                    <span>{t.runs.stageProgress}</span>
+                    <span>{selectedStage?.phase?.key ?? selectedStage?.key ?? "n/a"}</span>
                     <strong>{selectedStage?.label ?? t.runs.waitingForStage}</strong>
                   </div>
-                  <small>{selectedStage?.active ? t.runs.stageActive : selectedStage?.completed ? t.runs.stageCompleted : t.runs.stageAvailable}</small>
                 </div>
-
-                {selectedStage ? <ProgressMeter step={selectedStage.step} /> : null}
+                <StageCellProgressMeter progress={selectedStageProgress} />
 
                 {selectedStage?.key === "summary" && inlineSummary ? (
                   <InlineRunSummary
@@ -2189,44 +2357,16 @@ export default function RunsPage() {
                   />
 	                ) : (
 	                  <PhaseDetailPanel
-	                    monitorRun={monitorRun}
+                      expandedShardIds={expandedShardIds}
+                      gpuTelemetry={gpuTelemetry}
+                      language={language}
+                      onToggleShard={toggleExpandedShard}
 	                    resourceNames={resourceNames}
+                      shards={selectedStageShards}
 	                    stage={selectedStage}
-	                    t={t}
 	                  />
 	                )}
               </section>
-
-	              <aside className="run-stage-side-panel">
-	                <div className="run-overview-title">
-	                  <span>{t.runs.currentExecution}</span>
-	                  <strong>{selectedStage?.phase?.status ?? selectedStage?.step.meta ?? t.runs.waitingForStage}</strong>
-	                </div>
-	                <div className="run-current-grid">
-	                  {phaseFieldRows(selectedStage?.key ?? "canonical", selectedStage?.phase).slice(0, 6).map(([label, raw]) => {
-	                    const rawValue = phaseValue(raw);
-	                    const value = typeof raw === "string" && resourceNames[raw] ? resourceNames[raw] : rawValue;
-	                    return <CurrentField key={label} label={label} raw={rawValue} value={value} />;
-	                  })}
-	                </div>
-	                <div className="run-stage-line">
-	                  <Clock3 size={15} />
-	                  <span>{selectedStage?.phase?.updatedAt ? localizedDate(language, selectedStage.phase.updatedAt) : t.runs.waitingForStage}</span>
-	                  <code>{selectedStage?.phase?.key ?? selectedStage?.key ?? "n/a"}</code>
-	                </div>
-
-                <div className="run-meta-grid run-monitor-meta-grid">
-                  <Metric label={t.common.config} value={monitorRun.configName} />
-                  <Metric label={t.runs.matrixCells} value={monitorRun.cells.toString()} />
-                  <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
-                  <Metric label={t.runs.updated} value={formatOptionalDate(monitorRun.updatedAt)} />
-                  <Metric label={t.runs.started} value={formatOptionalDate(monitorRun.startedAt)} />
-                  <Metric label={t.runs.finished} value={formatOptionalDate(monitorRun.finishedAt)} />
-                  <Metric label={t.runs.materializedRoot} value={monitorMaterialized?.root ?? "n/a"} />
-                  <Metric label={t.runs.latestMaterializedDir} value={monitorMaterialized?.latestDir ?? "n/a"} />
-                  <Metric label={t.runs.cacheHits} value={(monitorMaterialized?.cacheHits ?? 0).toString()} />
-                </div>
-              </aside>
             </div>
           </div>
         </section>
@@ -2839,59 +2979,568 @@ function phaseValue(value: unknown) {
   return JSON.stringify(value);
 }
 
-function phaseFieldRows(stageKey: ExperimentStageKey, phase?: RunPhaseState) {
-  const item = phase?.currentItem ?? {};
-  const counters = phase?.counters ?? {};
-  const refs = phase?.artifactRefs ?? {};
-  const rows: Array<[string, unknown]> = [];
-  if (stageKey === "canonical") {
-    rows.push(["当前数据集", item.datasetId], ["采样图片", item.sampleCount], ["已完成数据集", counters.datasetsDone], ["已采样图片", counters.imagesDone], ["输出 manifest", refs.latestManifest]);
-  } else if (stageKey === "watermark") {
-    rows.push(["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["水印方法", item.algorithmMethod], ["seed", item.seed], ["本组图片", item.processedImages], ["剩余图片", item.remainingImages], ["cache 复用", counters.cacheHits], ["输出 manifest", refs.latestManifest]);
-  } else if (stageKey === "attack") {
-    rows.push(["范围", item.scope], ["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["当前攻击", item.attackPresetId], ["攻击方法", item.attackMethod], ["强度", item.attackStrength], ["变体", item.variantKey], ["本次图片", item.processedImages], ["剩余图片", item.remainingImages], ["cache 复用", counters.cacheHits], ["输出 manifest", refs.latestManifest]);
-  } else if (stageKey === "extract") {
-    rows.push(["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["当前攻击", item.attackPresetId], ["变体", item.variantKey], ["正样本提取", item.positiveImages], ["负样本提取", item.negativeImages], ["剩余图片", item.remainingImages], ["输出 manifest", refs.latestManifest]);
-  } else if (stageKey === "quality") {
-    rows.push(["当前数据集", item.datasetId], ["当前水印", item.algorithmId], ["当前攻击", item.attackPresetId], ["变体", item.variantKey], ["本次 pair", item.pairCount], ["剩余 pair", item.remainingPairs], ["worker 数", counters.workerCount], ["失败单元", counters.failedUnits], ["输出 manifest", refs.latestManifest]);
-  } else {
-    rows.push(["result units", counters.resultUnitsDone], ["失败单元", counters.failedUnits], ["跳过单元", counters.skippedUnits], ["summary", refs.summary], ["最新 result unit", refs.latestResultUnit]);
-  }
-  return rows.filter(([, value]) => value !== undefined && value !== null && value !== "");
-}
-
 function PhaseDetailPanel({
   stage,
-  monitorRun,
+  language,
   resourceNames,
-  t
+  shards,
+  gpuTelemetry,
+  expandedShardIds,
+  onToggleShard
 }: {
   stage: ExperimentStageTab | undefined;
-  monitorRun: DemoRunRecord;
+  language: Language;
   resourceNames: Record<string, string>;
-  t: Translation;
+  shards: RunShardProgress[];
+  gpuTelemetry: GpuTelemetry | null;
+  expandedShardIds: string[];
+  onToggleShard: (shardId: string) => void;
 }) {
   const phase = stage?.phase;
-  const step = stage?.step;
-  const rows = phaseFieldRows(stage?.key ?? "canonical", phase);
   return (
     <>
-      <div className="run-count-grid run-stage-kpi-grid">
-        <Metric label="阶段状态" value={phase?.status ?? "pending"} />
-        <Metric label="阶段进度" value={`${step?.percent ?? phase?.percent ?? 0}%`} />
-        <Metric label="当前/总量" value={`${step?.current ?? phase?.current ?? 0}/${step?.total ?? phase?.total ?? 0}`} />
-        <Metric label={t.runs.worker} value={monitorRun.workerId ?? "n/a"} />
-      </div>
-      <div className="run-current-grid">
-        {rows.map(([label, raw]) => {
-          const rawValue = phaseValue(raw);
-          const display = typeof raw === "string" && resourceNames[raw] ? resourceNames[raw] : rawValue;
-          return <CurrentField key={label} label={label} raw={rawValue} value={display} />;
-        })}
-      </div>
       {phase?.error ? <div className="risk error">{phase.error}</div> : null}
+      <ShardProgressPanel
+        expandedShardIds={expandedShardIds}
+        gpuTelemetry={gpuTelemetry}
+        language={language}
+        onToggleShard={onToggleShard}
+        resourceNames={resourceNames}
+        shards={shards}
+        stageKey={stage?.key ?? "canonical"}
+      />
     </>
   );
+}
+
+function StageCellProgressMeter({ progress }: { progress: StageCellProgress }) {
+  return (
+    <div className="run-progress-meter run-stage-cell-meter">
+      <div className="run-progress-head">
+        <span>阶段总体进度</span>
+        <strong>{progress.current}/{progress.total} {progress.unit}</strong>
+      </div>
+      <div className="progress-track">
+        <div className="progress-bar" style={{ width: progressWidth(progress.percent) }} />
+      </div>
+    </div>
+  );
+}
+
+function ShardProgressPanel({
+  shards,
+  stageKey,
+  resourceNames,
+  language,
+  gpuTelemetry,
+  expandedShardIds,
+  onToggleShard
+}: {
+  shards: RunShardProgress[];
+  stageKey: ExperimentStageKey;
+  resourceNames: Record<string, string>;
+  language: Language;
+  gpuTelemetry: GpuTelemetry | null;
+  expandedShardIds: string[];
+  onToggleShard: (shardId: string) => void;
+}) {
+  if (!shards.length) {
+    return null;
+  }
+  const sorted = [...shards].sort((left, right) => left.index - right.index || left.id.localeCompare(right.id));
+  return (
+    <div className="run-shard-grid">
+      {sorted.map((shard) => (
+        <ShardProgressCard
+          key={shard.id}
+          expanded={expandedShardIds.includes(shard.id)}
+          gpuTelemetry={gpuTelemetry}
+          language={language}
+          onToggle={() => onToggleShard(shard.id)}
+          resourceNames={resourceNames}
+          shard={shard}
+          stageKey={stageKey}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ShardProgressCard({
+  shard,
+  stageKey,
+  resourceNames,
+  language,
+  gpuTelemetry,
+  expanded,
+  onToggle
+}: {
+  shard: RunShardProgress;
+  stageKey: ExperimentStageKey;
+  resourceNames: Record<string, string>;
+  language: Language;
+  gpuTelemetry: GpuTelemetry | null;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const item = shard.currentItem ?? {};
+  const imageProgress = shardImageProgress(shard, stageKey);
+  const cellProgress = normalizedShardProgress(
+    shardPhaseCellProgress(shard, phaseKeyForStage(stageKey), stageKey),
+    shard.expectedCells
+  );
+  const contextRows = shardContextRows(stageKey, item, resourceNames, language);
+  const gpu = gpuTelemetryForShard(shard, gpuTelemetry);
+  const gpuTitle = gpu?.name || shard.device || shard.id;
+  const gpuSubtitle = gpu ? `${shard.device} · GPU ${gpu.index}` : shard.device;
+  const gpuStats = formatGpuCardStats(gpu, language);
+  const toggleLabel = expanded ? "收起 GPU 曲线" : "展开 GPU 曲线";
+  return (
+    <div
+      aria-expanded={expanded}
+      className={expanded ? "run-shard-card expanded" : "run-shard-card"}
+      onClick={onToggle}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggle();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      title={toggleLabel}
+    >
+      <div className="run-shard-identity">
+        <div className="run-shard-card-head">
+          <div>
+            <span>{gpuSubtitle}</span>
+            <strong>{gpuTitle}</strong>
+          </div>
+          <small>{shard.status}</small>
+        </div>
+        <div className="run-shard-foot">
+          <span>{gpuStats.temperature}</span>
+          <code>{gpuStats.power}</code>
+        </div>
+      </div>
+      {contextRows.length ? (
+        <div className="run-shard-meta">
+          {contextRows.map(([label, value]) => (
+            <span key={label} title={value}>
+              <b>{label}</b>
+              <em>{value}</em>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="run-shard-progress-stack">
+        <ShardMiniProgress label="图片" progress={imageProgress} />
+        <ShardMiniProgress label="cell" progress={cellProgress} />
+      </div>
+      {expanded ? <GpuShardTelemetryPanel gpu={gpu} language={language} telemetry={gpuTelemetry} /> : null}
+    </div>
+  );
+}
+
+function ShardMiniProgress({
+  label,
+  progress
+}: {
+  label: string;
+  progress: { current: number; total: number; percent: number };
+}) {
+  return (
+    <div className="run-shard-progress">
+      <div>
+        <span>{label}</span>
+        <strong>{progress.current}/{progress.total}</strong>
+      </div>
+      <div className="progress-track">
+        <div className="progress-bar" style={{ width: progressWidth(progress.percent) }} />
+      </div>
+    </div>
+  );
+}
+
+function gpuIndexForShard(shard: RunShardProgress) {
+  const match = /^cuda:(\d+)$/.exec(shard.device);
+  if (match) {
+    return Number(match[1]);
+  }
+  const trailing = /cuda[_:-]?(\d+)/.exec(shard.id);
+  if (trailing) {
+    return Number(trailing[1]);
+  }
+  return shard.index;
+}
+
+function gpuTelemetryForShard(shard: RunShardProgress, telemetry: GpuTelemetry | null) {
+  const gpuIndex = gpuIndexForShard(shard);
+  return telemetry?.devices.find((device) => device.index === gpuIndex) ?? null;
+}
+
+function formatGpuCardStats(gpu: GpuTelemetryDevice | null, language: Language) {
+  const temperature =
+    gpu?.temperatureC == null
+      ? language === "zh"
+        ? "温度 n/a"
+        : "Temp n/a"
+      : language === "zh"
+      ? `温度 ${formatNumber(gpu.temperatureC)}°C`
+      : `Temp ${formatNumber(gpu.temperatureC)}°C`;
+  const powerDraw = gpu?.powerDrawW == null ? "n/a" : `${formatNumber(gpu.powerDrawW)}W`;
+  const powerLimit = gpu?.powerLimitW == null ? "" : ` / ${formatNumber(gpu.powerLimitW)}W`;
+  const power = language === "zh" ? `功率 ${powerDraw}${powerLimit}` : `Power ${powerDraw}${powerLimit}`;
+  return { power, temperature };
+}
+
+function GpuShardTelemetryPanel({
+  gpu,
+  telemetry,
+  language
+}: {
+  gpu: GpuTelemetryDevice | null;
+  telemetry: GpuTelemetry | null;
+  language: Language;
+}) {
+  if (!gpu || !telemetry?.available) {
+    return (
+      <div className="run-gpu-telemetry-panel">
+        <RunEmptyState
+          description="GPU telemetry 暂不可用，等待下一次 nvidia-smi 采样。"
+          title="等待 GPU 监控数据"
+          variant="chart"
+        />
+      </div>
+    );
+  }
+  const utilizationSeries = gpuMetricSeries(telemetry, gpu.index, "utilizationPercent");
+  const memorySeries = gpuMetricSeries(telemetry, gpu.index, "memoryUsedMiB");
+  const memoryLimit = gpu.memoryTotalMiB ?? Math.max(1, ...memorySeries.map((point) => point.value));
+  return (
+    <div className="run-gpu-telemetry-panel">
+      <GpuTelemetryChart
+        maxY={100}
+        points={utilizationSeries}
+        title={language === "zh" ? "GPU 使用率" : "GPU utilization"}
+        unit="%"
+        valueFormatter={(value) => `${formatNumber(value)}%`}
+      />
+      <GpuTelemetryChart
+        limitLabel={`${language === "zh" ? "显存上限" : "Memory limit"} ${formatMiB(memoryLimit)}`}
+        maxY={memoryLimit}
+        points={memorySeries}
+        title={language === "zh" ? "显存使用大小" : "Memory usage"}
+        unit="MiB"
+        valueFormatter={formatMiB}
+      />
+    </div>
+  );
+}
+
+function gpuMetricSeries(
+  telemetry: GpuTelemetry,
+  gpuIndex: number,
+  key: "utilizationPercent" | "memoryUsedMiB"
+) {
+  return telemetry.history
+    .map((sample) => {
+      const device = sample.devices.find((item) => item.index === gpuIndex);
+      const value = device?.[key];
+      return typeof value === "number" && Number.isFinite(value)
+        ? { epochMs: sample.epochMs, value }
+        : null;
+    })
+    .filter((point): point is { epochMs: number; value: number } => point !== null);
+}
+
+function GpuTelemetryChart({
+  title,
+  points,
+  maxY,
+  unit,
+  valueFormatter,
+  limitLabel
+}: {
+  title: string;
+  points: Array<{ epochMs: number; value: number }>;
+  maxY: number;
+  unit: string;
+  valueFormatter: (value: number) => string;
+  limitLabel?: string;
+}) {
+  const width = 520;
+  const height = 190;
+  const padding = { top: 18, right: 14, bottom: 28, left: 46 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const safeMaxY = Math.max(1, maxY);
+  const minTime = points[0]?.epochMs ?? 0;
+  const maxTime = points[points.length - 1]?.epochMs ?? minTime + 1;
+  const xFor = (epochMs: number) =>
+    padding.left + ((epochMs - minTime) / Math.max(1, maxTime - minTime)) * plotWidth;
+  const yFor = (value: number) =>
+    padding.top + plotHeight * (1 - Math.max(0, Math.min(value, safeMaxY)) / safeMaxY);
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(point.epochMs).toFixed(2)} ${yFor(point.value).toFixed(2)}`)
+    .join(" ");
+  const currentValue = points[points.length - 1]?.value;
+  const yTicks = [0, safeMaxY / 2, safeMaxY];
+  return (
+    <div className="run-gpu-chart">
+      <div className="run-gpu-chart-head">
+        <div>
+          <strong>{title}</strong>
+          {limitLabel ? <span>{limitLabel}</span> : <span>{unit}</span>}
+        </div>
+        <em>{currentValue == null ? "n/a" : valueFormatter(currentValue)}</em>
+      </div>
+      <svg aria-label={title} preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`}>
+        {yTicks.map((tick) => {
+          const y = yFor(tick);
+          return (
+            <g key={tick}>
+              <line className="run-gpu-grid-line" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+              <text className="run-gpu-axis-label" x={8} y={y + 4}>
+                {valueFormatter(tick)}
+              </text>
+            </g>
+          );
+        })}
+        {points.length > 1 ? <path className="run-gpu-line" d={linePath} /> : null}
+        {points.length === 1 ? (
+          <circle className="run-gpu-point" cx={xFor(points[0].epochMs)} cy={yFor(points[0].value)} r={3} />
+        ) : null}
+        <text className="run-gpu-time-label" x={padding.left} y={height - 7}>
+          {formatTelemetryTime(minTime)}
+        </text>
+        <text className="run-gpu-time-label end" x={width - padding.right} y={height - 7}>
+          {formatTelemetryTime(maxTime)}
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function formatMiB(value: number) {
+  return `${formatNumber(value)}MiB`;
+}
+
+function formatTelemetryTime(epochMs: number) {
+  if (!epochMs) {
+    return "n/a";
+  }
+  return new Date(epochMs).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+function normalizedShardProgress(
+  raw: { current: number; total: number } | undefined,
+  fallbackTotal: number
+) {
+  const current = Math.max(0, Number(raw?.current ?? 0));
+  const total = Math.max(current, Number(raw?.total ?? fallbackTotal ?? 0));
+  return {
+    current,
+    total,
+    percent: percent(current, total)
+  };
+}
+
+function numericProgressValue(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function shardImageProgress(shard: RunShardProgress, stageKey: ExperimentStageKey) {
+  const item = shard.currentItem ?? {};
+  const sampleTotal = numericProgressValue(shard.sampleCount);
+  let current: number | null = null;
+  let total = sampleTotal;
+
+  if (item.processedImages !== undefined) {
+    current = numericProgressValue(item.processedImages);
+  } else if (item.sampleCount !== undefined) {
+    current = numericProgressValue(item.sampleCount);
+  } else {
+    const pairedImages = Math.max(numericProgressValue(item.positiveImages), numericProgressValue(item.negativeImages));
+    if (pairedImages > 0) {
+      current = pairedImages;
+    } else if (item.pairCount !== undefined) {
+      current = numericProgressValue(item.pairCount);
+      if (stageKey === "quality") {
+        total = Math.max(total * 2, current);
+      }
+    }
+  }
+
+  if (current === null) {
+    const rawCurrent = numericProgressValue(shard.imageProgress?.current);
+    const rawTotal = numericProgressValue(shard.imageProgress?.total);
+    total = sampleTotal || rawTotal;
+    current = total > 0 && rawCurrent <= total ? rawCurrent : 0;
+  }
+
+  total = Math.max(total, current);
+  return {
+    current: total > 0 ? Math.min(current, total) : current,
+    total,
+    percent: percent(current, total)
+  };
+}
+
+const SHARD_ATTACK_PARAM_ORDER = [
+  "strength",
+  "step",
+  "scale",
+  "quality",
+  "vae_model_name",
+  "xy",
+  "correct_perspective"
+];
+
+function shardAttackLabel(item: Record<string, unknown>, resourceNames: Record<string, string>) {
+  const presetId = typeof item.attackPresetId === "string" ? item.attackPresetId : "";
+  const method = typeof item.attackMethod === "string" ? item.attackMethod : "";
+  if (presetId && resourceNames[presetId]) {
+    return resourceNames[presetId];
+  }
+  if (method && resourceNames[method]) {
+    return resourceNames[method];
+  }
+  return phaseValue(presetId || method);
+}
+
+function shardAttackVariantLabel(item: Record<string, unknown>, language: Language) {
+  const params = parseShardParamRecord(item.attackParams);
+  const fragments = formatShardParamFragments(params, language);
+  if (fragments.length > 0) {
+    return fragments.join(" · ");
+  }
+  if (item.attackStrength !== undefined && item.attackStrength !== null && item.attackStrength !== "") {
+    const label = language === "zh" ? "强度" : "Strength";
+    return `${label} ${formatShardParamValue(item.attackStrength, language)}`;
+  }
+  return language === "zh" ? "默认" : "Default";
+}
+
+function parseShardParamRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") {
+    return {};
+  }
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function formatShardParamFragments(params: Record<string, unknown>, language: Language) {
+  const keys = Object.keys(params).filter((key) => params[key] !== undefined && params[key] !== null && params[key] !== "");
+  const orderedKeys = [
+    ...SHARD_ATTACK_PARAM_ORDER.filter((key) => keys.includes(key)),
+    ...keys.filter((key) => !SHARD_ATTACK_PARAM_ORDER.includes(key)).sort()
+  ];
+  return orderedKeys.map((key) => `${shardParamLabel(key, language)} ${formatShardParamValue(params[key], language)}`);
+}
+
+function shardParamLabel(key: string, language: Language) {
+  const zh: Record<string, string> = {
+    correct_perspective: "透视校正",
+    quality: "质量",
+    scale: "倍率",
+    step: "步长",
+    strength: "强度",
+    vae_model_name: "VAE",
+    xy: "XY"
+  };
+  const en: Record<string, string> = {
+    correct_perspective: "Perspective",
+    quality: "Quality",
+    scale: "Scale",
+    step: "Step",
+    strength: "Strength",
+    vae_model_name: "VAE",
+    xy: "XY"
+  };
+  const labels = language === "zh" ? zh : en;
+  return labels[key] ?? key.replace(/_/g, " ");
+}
+
+function formatShardParamValue(value: unknown, language: Language): string {
+  if (typeof value === "number") {
+    return formatNumber(value);
+  }
+  if (typeof value === "boolean") {
+    return language === "zh" ? (value ? "开" : "关") : value ? "on" : "off";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => formatShardParamValue(item, language)).join("/");
+  }
+  if (typeof value === "string") {
+    return displayMethodToken(value);
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, nestedValue]) => `${shardParamLabel(key, language)} ${formatShardParamValue(nestedValue, language)}`)
+      .join(" · ");
+  }
+  return phaseValue(value);
+}
+
+function shardContextRows(
+  stageKey: ExperimentStageKey,
+  item: Record<string, unknown>,
+  resourceNames: Record<string, string>,
+  language: Language
+) {
+  const rows: Array<[string, unknown]> = [];
+  if (stageKey === "canonical") {
+    rows.push(["数据集", item.datasetId], ["样本", item.sampleCount]);
+  } else if (stageKey === "watermark") {
+    rows.push(["数据集", item.datasetId], ["水印", item.algorithmId], ["method", item.algorithmMethod], ["seed", item.seed]);
+  } else if (stageKey === "attack") {
+    rows.push(
+      ["数据集", item.datasetId],
+      ["水印", item.algorithmId],
+      ["攻击", shardAttackLabel(item, resourceNames)],
+      ["变体", shardAttackVariantLabel(item, language)]
+    );
+  } else if (stageKey === "extract") {
+    rows.push(
+      ["数据集", item.datasetId],
+      ["水印", item.algorithmId],
+      ["攻击", shardAttackLabel(item, resourceNames)],
+      ["变体", shardAttackVariantLabel(item, language)]
+    );
+  } else if (stageKey === "quality") {
+    rows.push(
+      ["数据集", item.datasetId],
+      ["水印", item.algorithmId],
+      ["攻击", shardAttackLabel(item, resourceNames)],
+      ["变体", shardAttackVariantLabel(item, language)]
+    );
+  } else {
+    rows.push(["状态", item.status], ["result", item.resultUnitCount]);
+  }
+  return rows
+    .map(([label, raw]) => {
+      const rawValue = phaseValue(raw);
+      const value = typeof raw === "string" && resourceNames[raw] ? resourceNames[raw] : rawValue;
+      return [label, value] as [string, string];
+    })
+    .filter(([, value]) => value !== "n/a");
 }
 
 function StageTimeline({
@@ -2929,7 +3578,7 @@ function StageTimeline({
           >
             <span>{index + 1}</span>
             <strong>{stage.label}</strong>
-            <small>{stage.step.meta}</small>
+            <small>{stage.phase?.status ?? "pending"}</small>
           </button>
         ))}
       </div>
@@ -3270,16 +3919,6 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div title={value}>
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function CurrentField({ label, raw, value }: { label: string; raw: string; value: string }) {
-  return (
-    <div className="run-current-field">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {raw && raw !== "n/a" && raw !== value ? <code>{raw}</code> : null}
     </div>
   );
 }
