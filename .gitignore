@@ -34,7 +34,7 @@
 *.zip
 
 # Local rendered/extracted image artifacts
-*.png
+# *.png
 *.jpg
 *.jpeg
 *.webp

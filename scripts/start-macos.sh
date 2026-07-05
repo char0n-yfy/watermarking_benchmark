@@ -44,7 +44,7 @@ bash scripts/bootstrap-python.sh
 PYTHON="${VENV_DIR}/bin/python"
 
 corepack enable
-corepack pnpm install
+CI="${CI:-true}" corepack pnpm install --frozen-lockfile
 
 stop_pid() {
   local name="$1"

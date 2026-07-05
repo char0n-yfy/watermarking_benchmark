@@ -61,7 +61,7 @@ if [[ ! -x "${PYTHON_EXE}" ]]; then
   "${PYTHON_BIN}" -m venv "${venv_args[@]}" "${VENV_DIR}"
 fi
 
-"${PYTHON_EXE}" -m pip install --upgrade pip setuptools wheel
+"${PYTHON_EXE}" -m pip install --upgrade pip "setuptools<82" wheel
 
 if [[ "${WM_BENCH_INSTALL_SHARP_DEPS:-1}" != "0" ]]; then
   "${PYTHON_EXE}" -m pip install -r requirements.txt -r requirements/sharp.txt
