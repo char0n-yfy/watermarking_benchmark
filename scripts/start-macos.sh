@@ -131,5 +131,5 @@ Logs:
   ${LOG_DIR}/web.log
 
 Stop (paste in project root):
-  for n in api worker web; do f="${PID_DIR}/${n}.pid"; if [ -f "${f}" ]; then pid="$(tr -d '[:space:]' < "${f}")"; if [ -n "${pid}" ] && [ "${pid}" -gt 0 ] 2>/dev/null; then kill "${pid}" 2>/dev/null; fi; rm -f "${f}"; fi; done; for p in ${WEB_PORT} ${API_PORT}; do lsof -ti "tcp:${p}" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; done; for pid in $(pgrep -f "local_worker.py|uvicorn app.main:app|@wm-bench/web dev|next dev" 2>/dev/null || true); do if ps -p "${pid}" -o command= 2>/dev/null | grep -Fq "${ROOT_DIR}"; then kill "${pid}" 2>/dev/null; fi; done
+  API_PORT=${API_PORT} WEB_PORT=${WEB_PORT} bash scripts/stop-macos.sh
 EOF

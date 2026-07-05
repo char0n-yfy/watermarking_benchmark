@@ -321,8 +321,6 @@ $CheckWebHost = if ($WebHost -eq "0.0.0.0") { "127.0.0.1" } else { $WebHost }
 Wait-HttpOk "API" "http://$CheckApiHost`:$ApiPort/health" (Join-Path $LogDir "api.err.log")
 Wait-HttpOk "Web UI" "http://$CheckWebHost`:$WebPort" (Join-Path $LogDir "web.err.log")
 
-$RootEscaped = [regex]::Escape($RootDir.Path)
-
 Write-Host "WM Bench local services started."
 Write-Host ""
 Write-Host "Web UI:     http://$CheckWebHost`:$WebPort"
@@ -332,4 +330,4 @@ Write-Host "Logs:"
 Write-Host "  $LogDir"
 Write-Host ""
 Write-Host "Stop (paste in project root PowerShell):"
-Write-Host "  foreach (`$n in 'api','worker','web') { `$f = Join-Path '$PidDir' (`"`$n.pid`"); if (Test-Path `$f) { `$id = Get-Content `$f -ErrorAction SilentlyContinue | Select-Object -First 1; if (`$id -match '^\d+$' -and [int]`$id -gt 0) { Stop-Process -Id ([int]`$id) -Force -ErrorAction SilentlyContinue }; Remove-Item `$f -Force -ErrorAction SilentlyContinue } }; Get-NetTCPConnection -LocalPort $WebPort,$ApiPort -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id `$_.OwningProcess -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { `$_.CommandLine -and `$_.CommandLine -match 'local_worker\.py|uvicorn app\.main:app|@wm-bench/web dev|next dev' -and `$_.CommandLine -match '$RootEscaped' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+Write-Host "  .\scripts\stop-windows.ps1 -ApiPort $ApiPort -WebPort $WebPort"

@@ -22,28 +22,21 @@ runs/        本地运行结果、日志和实验状态，默认不进入 Git
 
 源码仓库只保存代码、配置模板、脚本和小型元数据。真实数据集、模型权重、运行结果和缓存属于外部资源或本机运行产物，不应提交到 Git。
 
-## 快速启动
+## 一键启动与关闭
 
-macOS:
+| 平台 | 启动服务 | 关闭服务 |
+| --- | --- | --- |
+| macOS | `bash scripts/start-macos.sh` | `bash scripts/stop-macos.sh` |
+| Windows PowerShell | `.\scripts\start-windows.ps1` | `.\scripts\stop-windows.ps1` |
+| Linux / AutoDL | `bash scripts/deploy-autodl-linux.sh` | `bash scripts/deploy-autodl-linux.sh stop` |
 
-```bash
-bash scripts/start-macos.sh
-```
-
-Windows PowerShell:
+Windows 首次运行脚本时，如遇到执行策略限制，可以先在当前 PowerShell 会话执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\start-windows.ps1
 ```
 
-Linux / AutoDL:
-
-```bash
-bash scripts/deploy-autodl-linux.sh
-```
-
-启动后打开脚本输出的 Web URL。AutoDL 默认使用 `6006`，FastAPI 会在同一端口托管 `apps/web/out` 静态前端，浏览器和 API 保持同源访问。
+启动后打开脚本输出的 Web URL。AutoDL 默认使用 `6006`，FastAPI 会在同一端口托管 `apps/web/out` 静态前端，浏览器和 API 保持同源访问。关闭命令只停止当前项目启动的本地服务，不会删除数据集、权重或历史实验结果。
 
 ## 平台说明
 
@@ -57,12 +50,14 @@ macOS 本地开发默认端口：
 
 ```bash
 API_PORT=8001 WEB_PORT=3001 WM_BENCH_DEVICE=mps bash scripts/start-macos.sh
+API_PORT=8001 WEB_PORT=3001 bash scripts/stop-macos.sh
 ```
 
 Windows 本地开发默认端口同 macOS。可通过参数覆盖：
 
 ```powershell
 .\scripts\start-windows.ps1 -ApiPort 8001 -WebPort 3001 -Device cpu
+.\scripts\stop-windows.ps1 -ApiPort 8001 -WebPort 3001
 ```
 
 Windows 上如需更准确的 CPU 功耗读数，可安装 LibreHardwareMonitor，并在 `.env` 中设置 `WM_BENCH_LHM_PATH`。不需要该能力时可设置 `WM_BENCH_SKIP_LHM=1`。
@@ -278,32 +273,3 @@ AutoDL 状态检查：
 ```bash
 bash scripts/deploy-autodl-linux.sh status
 ```
-
-## 交付边界
-
-建议进入 GitHub 源码交付的内容：
-
-- `apps/`
-- `evaluator/`
-- `infra/`
-- `scripts/`
-- `docs/`
-- `requirements/`
-- `resources/README.md`
-- `resources/metadata/`
-- 配置模板、锁文件和项目说明
-
-不建议进入源码交付的内容：
-
-- `.env`、`.env.autodl`
-- `.venv/`
-- `node_modules/`
-- `.pnpm-store/`
-- `runs/`
-- `output/`
-- `resources/cache/`
-- 真实数据集和大型模型权重
-
-## 安全注意
-
-当前系统没有登录鉴权。不要把服务直接裸露给不可信公网用户。正式使用时优先选择 AutoDL 隧道、SSH 隧道、VPN，或带访问控制的反向代理。
