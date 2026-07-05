@@ -1336,6 +1336,51 @@ a.button {
   font-size: 12px;
 }
 
+.active-runs-table {
+  min-width: 920px;
+}
+
+.active-runs-table th:first-child,
+.active-runs-table td:first-child {
+  min-width: 260px;
+}
+
+.active-run-name,
+.active-run-stage {
+  display: block;
+  max-width: 100%;
+  color: var(--ink);
+  font-weight: 850;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.dashboard-progress-cell {
+  display: grid;
+  min-width: 190px;
+  gap: 6px;
+}
+
+.dashboard-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dashboard-progress-head span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.dashboard-progress-head strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .tuning-panel {
   margin-bottom: 12px;
 }

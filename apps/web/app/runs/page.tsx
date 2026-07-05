@@ -51,7 +51,6 @@ import type {
   DemoRunRecord,
   GpuTelemetry,
   GpuTelemetryDevice,
-  GpuTelemetrySample,
   ParallelTuningEvent,
   ParallelTuningJob,
   RunPhaseState,
@@ -73,6 +72,11 @@ type ProgressStep = {
 };
 
 type ExperimentStageKey = "canonical" | "watermark" | "attack" | "extract" | "quality" | "summary";
+
+type GpuTelemetryPoint = { epochMs: number; value: number };
+
+const GPU_TELEMETRY_VISIBLE_WINDOW_MS = 10 * 60 * 1000;
+const GPU_TELEMETRY_MAX_GAP_MS = 2 * 60 * 1000;
 
 type ExperimentStageTab = {
   key: ExperimentStageKey;
@@ -3243,15 +3247,55 @@ function gpuMetricSeries(
   gpuIndex: number,
   key: "utilizationPercent" | "memoryUsedMiB"
 ) {
-  return telemetry.history
+  const points = telemetry.history
     .map((sample) => {
       const device = sample.devices.find((item) => item.index === gpuIndex);
       const value = device?.[key];
-      return typeof value === "number" && Number.isFinite(value)
+      return typeof sample.epochMs === "number" &&
+        Number.isFinite(sample.epochMs) &&
+        typeof value === "number" &&
+        Number.isFinite(value)
         ? { epochMs: sample.epochMs, value }
         : null;
     })
-    .filter((point): point is { epochMs: number; value: number } => point !== null);
+    .filter((point): point is GpuTelemetryPoint => point !== null)
+    .sort((a, b) => a.epochMs - b.epochMs);
+  return latestGpuTelemetryWindow(points);
+}
+
+function latestGpuTelemetryWindow(points: GpuTelemetryPoint[]) {
+  if (points.length <= 1) {
+    return points;
+  }
+  const latestTime = points[points.length - 1].epochMs;
+  const windowStart = latestTime - GPU_TELEMETRY_VISIBLE_WINDOW_MS;
+  let segmentStart = 0;
+  for (let index = points.length - 1; index > 0; index -= 1) {
+    const current = points[index];
+    const previous = points[index - 1];
+    if (current.epochMs - previous.epochMs > GPU_TELEMETRY_MAX_GAP_MS) {
+      segmentStart = index;
+      break;
+    }
+  }
+  return points.slice(segmentStart).filter((point) => point.epochMs >= windowStart);
+}
+
+function gpuTelemetrySegments(points: GpuTelemetryPoint[]) {
+  if (!points.length) {
+    return [];
+  }
+  const segments: GpuTelemetryPoint[][] = [[points[0]]];
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index];
+    const previous = points[index - 1];
+    if (point.epochMs - previous.epochMs > GPU_TELEMETRY_MAX_GAP_MS) {
+      segments.push([point]);
+      continue;
+    }
+    segments[segments.length - 1].push(point);
+  }
+  return segments;
 }
 
 function GpuTelemetryChart({
@@ -3263,7 +3307,7 @@ function GpuTelemetryChart({
   limitLabel
 }: {
   title: string;
-  points: Array<{ epochMs: number; value: number }>;
+  points: GpuTelemetryPoint[];
   maxY: number;
   unit: string;
   valueFormatter: (value: number) => string;
@@ -3281,9 +3325,11 @@ function GpuTelemetryChart({
     padding.left + ((epochMs - minTime) / Math.max(1, maxTime - minTime)) * plotWidth;
   const yFor = (value: number) =>
     padding.top + plotHeight * (1 - Math.max(0, Math.min(value, safeMaxY)) / safeMaxY);
-  const linePath = points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(point.epochMs).toFixed(2)} ${yFor(point.value).toFixed(2)}`)
-    .join(" ");
+  const linePaths = gpuTelemetrySegments(points).map((segment) =>
+    segment
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(point.epochMs).toFixed(2)} ${yFor(point.value).toFixed(2)}`)
+      .join(" ")
+  );
   const currentValue = points[points.length - 1]?.value;
   const yTicks = [0, safeMaxY / 2, safeMaxY];
   return (
@@ -3307,7 +3353,9 @@ function GpuTelemetryChart({
             </g>
           );
         })}
-        {points.length > 1 ? <path className="run-gpu-line" d={linePath} /> : null}
+        {linePaths.map((linePath, index) =>
+          linePath ? <path className="run-gpu-line" d={linePath} key={`${title}-${index}`} /> : null
+        )}
         {points.length === 1 ? (
           <circle className="run-gpu-point" cx={xFor(points[0].epochMs)} cy={yFor(points[0].value)} r={3} />
         ) : null}

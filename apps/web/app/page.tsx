@@ -13,12 +13,8 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
-  fetchAlgorithms,
-  fetchAttacks,
-  fetchDatasets,
   fetchRuns,
   fetchRuntime,
-  fetchSavedConfigs,
   fetchSystemMetrics
 } from "@/lib/api";
 import {
@@ -27,12 +23,8 @@ import {
   summarizeRuns
 } from "@/lib/insights";
 import type {
-  AlgorithmVersion,
-  AttackPreset,
-  DatasetVersion,
   DemoRunRecord,
   RuntimeInfo,
-  SavedExperimentConfig,
   SystemMetrics
 } from "@/lib/types";
 
@@ -131,35 +123,39 @@ function GaugeCard({
   );
 }
 
+function DashboardProgress({
+  label,
+  progress
+}: {
+  label: string;
+  progress: { current: number; total: number; percent: number };
+}) {
+  return (
+    <div className="dashboard-progress-cell">
+      <div className="dashboard-progress-head">
+        <span>{label}</span>
+        <strong>{progress.current}/{progress.total}</strong>
+      </div>
+      <div className="progress-track">
+        <div className="progress-bar" style={{ width: `${progress.percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export default function ExperimentConsole() {
   const { t } = useLanguage();
-  const [configs, setConfigs] = useState<SavedExperimentConfig[]>([]);
   const [runs, setRuns] = useState<DemoRunRecord[]>([]);
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
-  const [datasets, setDatasets] = useState<DatasetVersion[]>([]);
-  const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>([]);
-  const [attacks, setAttacks] = useState<AttackPreset[]>([]);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(10);
   const [notice, setNotice] = useState("");
 
   const loadDashboard = async () => {
     try {
-      const [loadedConfigs, loadedRuns, loadedRuntime, loadedDatasets, loadedAlgorithms, loadedAttacks] =
-        await Promise.all([
-          fetchSavedConfigs(),
-          fetchRuns(),
-          fetchRuntime(),
-          fetchDatasets(),
-          fetchAlgorithms(),
-          fetchAttacks()
-        ]);
-      setConfigs(loadedConfigs);
+      const [loadedRuns, loadedRuntime] = await Promise.all([fetchRuns(), fetchRuntime()]);
       setRuns(loadedRuns);
       setRuntime(loadedRuntime);
-      setDatasets(loadedDatasets);
-      setAlgorithms(loadedAlgorithms);
-      setAttacks(loadedAttacks);
       setNotice("");
     } catch {
       setNotice("API 未启动或不可访问，请先启动 FastAPI 服务。");
@@ -193,10 +189,7 @@ export default function ExperimentConsole() {
   }, [autoRefreshSeconds]);
 
   const stats = useMemo(() => summarizeRuns(runs), [runs]);
-  const activeRows = useMemo(
-    () => buildActiveRunRows(runs, configs, datasets, algorithms, attacks),
-    [runs, configs, datasets, algorithms, attacks]
-  );
+  const activeRows = useMemo(() => buildActiveRunRows(runs), [runs]);
   const systemHealthy = Boolean(runtime) && !(runtime?.workers ?? []).some((worker) => worker.status === "error");
   const primaryGpu = systemMetrics?.gpu.devices[0] ?? null;
   const cpuTemperatureLabel =
@@ -261,15 +254,13 @@ export default function ExperimentConsole() {
           <Activity size={16} />
         </div>
         <div className="panel-body table-scroll">
-          <table className="table compact-table">
+          <table className="table compact-table active-runs-table">
             <thead>
               <tr>
-                <th>{t.runs.run}</th>
-                <th>{t.common.config}</th>
-                <th>{t.common.dataset}</th>
-                <th>{t.common.algorithm}</th>
-                <th>{t.common.attackPreset}</th>
-                <th>{t.common.progress}</th>
+                <th>实验名称</th>
+                <th>最高阶段</th>
+                <th>Cell 进度</th>
+                <th>阶段进度</th>
                 <th>{t.runs.status}</th>
                 <th>{t.console.startedAt}</th>
               </tr>
@@ -277,19 +268,16 @@ export default function ExperimentConsole() {
             <tbody>
               {activeRows.map((run) => (
                 <tr key={run.id}>
-                  <td>{run.id}</td>
-                  <td>{run.configName}</td>
-                  <td>{run.datasetLabel}</td>
-                  <td>{run.algorithmLabel}</td>
-                  <td>{run.attackLabel}</td>
                   <td>
-                    <div className="progress-cell">
-                      <div className="progress-track">
-                        <div className="progress-bar" style={{ width: `${run.progress}%` }} />
-                      </div>
-                      <span>{run.progress}%</span>
-                    </div>
+                    <strong className="active-run-name">{run.experimentName}</strong>
+                    <span className="table-subtext">{run.id}</span>
                   </td>
+                  <td>
+                    <span className="active-run-stage">{run.stageLabel}</span>
+                    <span className="table-subtext">{run.stageKey}</span>
+                  </td>
+                  <td><DashboardProgress label="Cell" progress={run.cellProgress} /></td>
+                  <td><DashboardProgress label="Stage" progress={run.phaseProgress} /></td>
                   <td>
                     <span className={statusBadgeClass(run.status)}>{t.common.status[run.status]}</span>
                   </td>

@@ -1,14 +1,4 @@
-import type {
-  AlgorithmVersion,
-  AttackPreset,
-  DatasetVersion,
-  DemoRunRecord,
-  RunAggregate,
-  RunResults,
-  RunStatus,
-  SavedExperimentConfig
-} from "./types";
-import { resolveWatermarkDisplayName } from "./watermark-display";
+import type { DemoRunRecord, RunAggregate, RunPhaseKey, RunPhaseState, RunResults, RunStatus } from "./types";
 
 export const terminalRunStatuses = new Set<RunStatus>([
   "succeeded",
@@ -25,16 +15,34 @@ export interface RunStats {
 
 export interface ActiveRunRow {
   id: string;
-  configName: string;
-  datasetLabel: string;
-  algorithmLabel: string;
-  attackLabel: string;
-  progress: number;
+  experimentName: string;
+  stageKey: RunPhaseKey | string;
+  stageLabel: string;
+  cellProgress: { current: number; total: number; percent: number };
+  phaseProgress: { current: number; total: number; percent: number };
   status: RunStatus;
   startedAt: string | null | undefined;
   updatedAt: string;
   cells: number;
 }
+
+const phaseOrder: RunPhaseKey[] = [
+  "canonical",
+  "watermark_embed",
+  "attack",
+  "watermark_extract",
+  "quality",
+  "summary"
+];
+
+const fallbackPhaseLabels: Record<RunPhaseKey, string> = {
+  canonical: "采样 canonical 数据集",
+  watermark_embed: "嵌入水印",
+  attack: "攻击",
+  watermark_extract: "提取",
+  quality: "评估质量",
+  summary: "汇总"
+};
 
 export interface RunLeaderboardRow {
   rank: number;
@@ -62,34 +70,21 @@ export function summarizeRuns(runs: DemoRunRecord[]): RunStats {
   };
 }
 
-export function buildActiveRunRows(
-  runs: DemoRunRecord[],
-  configs: SavedExperimentConfig[],
-  datasets: DatasetVersion[],
-  algorithms: AlgorithmVersion[],
-  attacks: AttackPreset[]
-): ActiveRunRow[] {
-  const configMap = new Map(configs.map((config) => [config.id, config]));
-  const datasetMap = new Map(datasets.map((dataset) => [dataset.id, dataset.name]));
-  const algorithmMap = new Map(
-    algorithms.map((algorithm) => [
-      algorithm.id,
-      resolveWatermarkDisplayName(algorithm.method ?? algorithm.id, algorithm.name)
-    ])
-  );
-  const attackMap = new Map(attacks.map((attack) => [attack.id, attack.name]));
-
+export function buildActiveRunRows(runs: DemoRunRecord[]): ActiveRunRow[] {
   return runs
     .filter((run) => run.status === "running" || run.status === "paused")
     .map((run) => {
-      const config = configMap.get(run.configId);
+      const stage = currentRunPhase(run);
+      const stageIndex = Math.max(0, phaseOrder.indexOf(stage.key as RunPhaseKey));
+      const phaseCurrent = stageIndex >= 0 ? stageIndex + 1 : 1;
+      const cellProgress = phaseCellProgress(run, stage);
       return {
         id: run.id,
-        configName: run.configName,
-        datasetLabel: labelFromIds(config?.selection.datasetIds ?? [], datasetMap),
-        algorithmLabel: labelFromIds(config?.selection.algorithmIds ?? [], algorithmMap),
-        attackLabel: labelFromIds(config?.selection.attackPresetIds ?? [], attackMap),
-        progress: run.progress,
+        experimentName: run.taskName || run.configName || run.id,
+        stageKey: stage.key,
+        stageLabel: stage.label || fallbackPhaseLabels[stage.key as RunPhaseKey] || stage.key,
+        cellProgress,
+        phaseProgress: progressDoc(phaseCurrent, phaseOrder.length),
         status: run.status,
         startedAt: run.startedAt,
         updatedAt: run.updatedAt,
@@ -172,17 +167,58 @@ export function statusBadgeClass(status: RunStatus): string {
   return "badge warn";
 }
 
-function labelFromIds(ids: string[], lookup: Map<string, string>): string {
-  if (ids.length === 0) {
-    return "n/a";
-  }
-  const first = lookup.get(ids[0]) ?? ids[0];
-  return ids.length === 1 ? first : `${first} +${ids.length - 1}`;
-}
-
 function mean(values: number[]): number | null {
   if (values.length === 0) {
     return null;
   }
   return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function currentRunPhase(run: DemoRunRecord): RunPhaseState {
+  const phases = run.phases ?? [];
+  const currentKey = run.currentPhase;
+  const explicit = phases.find((phase) => phase.key === currentKey);
+  if (explicit) {
+    return explicit;
+  }
+  for (const key of [...phaseOrder].reverse()) {
+    const phase = phases.find((item) => item.key === key);
+    if (phase && phase.status !== "pending") {
+      return phase;
+    }
+  }
+  const fallbackKey = (currentKey || "canonical") as RunPhaseKey;
+  return {
+    key: fallbackKey,
+    label: fallbackPhaseLabels[fallbackKey] ?? fallbackKey,
+    status: run.status,
+    current: 0,
+    total: 0,
+    percent: 0
+  };
+}
+
+function phaseCellProgress(run: DemoRunRecord, phase: RunPhaseState) {
+  const phaseCell = phase.cellProgress;
+  if (phaseCell && Number(phaseCell.total) > 0) {
+    return progressDoc(Number(phaseCell.current ?? 0), Number(phaseCell.total ?? 0));
+  }
+  const counters = phase.counters ?? {};
+  const counterCurrent = Number(counters.phaseCellsDone ?? counters.resultUnitsDone ?? 0);
+  const counterTotal = Number(counters.phaseCellsTotal ?? run.cells ?? 0);
+  if (counterTotal > 0) {
+    return progressDoc(counterCurrent, counterTotal);
+  }
+  return progressDoc(Math.round((Number(run.progress ?? 0) / 100) * Number(run.cells ?? 0)), Number(run.cells ?? 0));
+}
+
+function progressDoc(current: number, total: number) {
+  const safeCurrent = Math.max(0, Math.round(Number.isFinite(current) ? current : 0));
+  const safeTotal = Math.max(safeCurrent, Math.round(Number.isFinite(total) ? total : 0));
+  const percent = safeTotal > 0 ? Math.round((safeCurrent / safeTotal) * 100) : 0;
+  return {
+    current: safeCurrent,
+    total: safeTotal,
+    percent: Math.max(0, Math.min(100, percent))
+  };
 }

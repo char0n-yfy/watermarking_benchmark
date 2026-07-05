@@ -38,7 +38,7 @@ export function AppShell({ active, children }: { active: ActiveNav; children: Re
             <div className="brand-mark">
               <FlaskConical size={17} />
             </div>
-            <span>WM Bench</span>
+            <span>WaterPrism</span>
           </div>
           <nav className="nav">
             {nav.map((item) => {
