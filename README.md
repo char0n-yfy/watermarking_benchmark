@@ -1,26 +1,34 @@
-# Watermarking Benchmark
+# WaterPrism
 
-图像水印鲁棒性 Benchmark Web 系统。当前主运行形态是单机部署：FastAPI 提供资源目录、实验配置、运行队列和静态前端服务，本地 Worker 轮询队列并执行水印嵌入、攻击、检测和质量评估任务。
+**WaterPrism: 面向图像鲁棒水印的综合智能测评系统**
 
-正式实验推荐运行在 Linux / AutoDL。macOS 和 Windows 主要用于界面调试、资源管理、CPU 子集实验，部分 CUDA、3D/SHARP 或重型模型依赖可能不可用。
+WaterPrism 是一个面向图像鲁棒水印算法的综合测评平台。系统以 Web 界面组织数据集、水印算法、攻击方法、实验配置、运行队列和结果展示，由 FastAPI 提供后端服务，本地 Worker 执行水印嵌入、攻击、检测和质量评估任务。
+
+正式实验推荐运行在 Linux / AutoDL。macOS 和 Windows 可用于资源查看、配置编辑、界面验收和 CPU 子集实验；部分 CUDA、3D/SHARP 或大模型依赖在本地桌面系统上可能不可用。
+
+## 系统能力
+
+- 数据集、水印算法、攻击方法的统一资源目录。
+- Web 化实验配置、运行队列、Worker 心跳和运行状态监控。
+- 覆盖传统失真、消费级增强、物理信道、再生成、3D 视角重渲染等攻击类型。
+- 支持本地开发运行，也支持 AutoDL 单机生产式部署。
+- AutoDL 部署时前端静态页面由 FastAPI 同端口托管，只需要暴露一个服务端口。
 
 ## 目录结构
 
 ```text
 apps/
-  api/       FastAPI 后端服务
-  web/       Next.js 前端，生产构建输出到 apps/web/out
-  worker/    本地实验执行 Worker
-evaluator/   水印算法、攻击算法和评估逻辑
-infra/       AutoDL 部署与运行脚本
-scripts/     跨平台启动、依赖初始化、部署检查和维护脚本
-docs/        评分协议和开发规范
-resources/   数据集、权重、资源元数据入口
-requirements/ 可选或分层 Python 依赖
-runs/        本地运行结果、日志和实验状态，默认不进入 Git
+  api/        FastAPI 后端服务
+  web/        Next.js 前端，生产构建输出到 apps/web/out
+  worker/     本地实验执行 Worker
+evaluator/    水印算法、攻击算法和评估逻辑
+infra/        AutoDL 部署与运行脚本
+scripts/      跨平台启动、关闭、依赖初始化和检查脚本
+docs/         评分协议和开发规范
+resources/    数据集、权重和资源元数据入口
+requirements/ Python 分层依赖
+runs/         运行结果、日志和实验状态
 ```
-
-源码仓库只保存代码、配置模板、脚本和小型元数据。真实数据集、模型权重、运行结果和缓存属于外部资源或本机运行产物，不应提交到 Git。
 
 ## 一键启动与关闭
 
@@ -36,24 +44,24 @@ Windows 首次运行脚本时，如遇到执行策略限制，可以先在当前
 Set-ExecutionPolicy -Scope Process Bypass
 ```
 
-启动后打开脚本输出的 Web URL。AutoDL 默认使用 `6006`，FastAPI 会在同一端口托管 `apps/web/out` 静态前端，浏览器和 API 保持同源访问。关闭命令只停止当前项目启动的本地服务，不会删除数据集、权重或历史实验结果。
+启动后打开脚本输出的 Web URL。关闭命令只停止当前项目启动的本地服务，不会删除数据集、权重、日志或历史实验结果。
 
-## 平台说明
+## 平台入口
 
-macOS 本地开发默认端口：
+macOS 默认地址：
 
 - Web UI: `http://127.0.0.1:3000`
-- API: `http://127.0.0.1:8000`
+- API 健康检查: `http://127.0.0.1:8000/health`
 - 默认设备: `cpu`
 
-可通过环境变量覆盖：
+macOS 指定端口或设备：
 
 ```bash
 API_PORT=8001 WEB_PORT=3001 WM_BENCH_DEVICE=mps bash scripts/start-macos.sh
 API_PORT=8001 WEB_PORT=3001 bash scripts/stop-macos.sh
 ```
 
-Windows 本地开发默认端口同 macOS。可通过参数覆盖：
+Windows 默认地址同 macOS。Windows 指定端口或设备：
 
 ```powershell
 .\scripts\start-windows.ps1 -ApiPort 8001 -WebPort 3001 -Device cpu
@@ -61,6 +69,12 @@ Windows 本地开发默认端口同 macOS。可通过参数覆盖：
 ```
 
 Windows 上如需更准确的 CPU 功耗读数，可安装 LibreHardwareMonitor，并在 `.env` 中设置 `WM_BENCH_LHM_PATH`。不需要该能力时可设置 `WM_BENCH_SKIP_LHM=1`。
+
+AutoDL 推荐入口：
+
+```bash
+bash scripts/deploy-autodl-linux.sh
+```
 
 AutoDL 常用运维命令：
 
@@ -72,7 +86,21 @@ bash scripts/deploy-autodl-linux.sh restart
 bash scripts/deploy-autodl-linux.sh stop
 ```
 
-AutoDL 默认只暴露一个端口 `6006`。可以在 AutoDL 控制台创建自定义服务，也可以从本机建立 SSH 隧道：
+AutoDL 兼容底层入口：
+
+```bash
+bash infra/autodl/start.sh
+bash scripts/start-autodl-linux.sh
+```
+
+底层入口可以启动服务，但验收和日常运维建议使用 `scripts/deploy-autodl-linux.sh`，因为它同时提供 status、logs、tunnel、restart 和 stop 子命令。
+
+AutoDL 默认地址：
+
+- 服务器本机: `http://127.0.0.1:6006`
+- 健康检查: `http://127.0.0.1:6006/health`
+
+AutoDL 默认只需要暴露 `6006` 一个端口。可以在 AutoDL 控制台创建自定义服务，也可以从本机建立 SSH 隧道：
 
 ```bash
 ssh -L 6006:127.0.0.1:6006 root@<server-ip>
@@ -88,7 +116,7 @@ pnpm install --frozen-lockfile
 pnpm --filter @wm-bench/web build
 ```
 
-项目根目录的 `package.json` 声明 `pnpm@10.23.0`，锁文件为 `pnpm-lock.yaml`。不要提交 `package-lock.json`。
+项目根目录的 `package.json` 声明 `pnpm@10.23.0`，锁文件为 `pnpm-lock.yaml`。项目不使用 `package-lock.json`。
 
 Python 依赖由启动脚本自动准备。分层入口如下：
 
@@ -106,7 +134,7 @@ WM_BENCH_INSTALL_SHARP_DEPS=0 bash scripts/start-macos.sh
 
 AutoDL 可在 `.env.autodl` 中设置同名变量。
 
-## 资源目录
+## 资源准备
 
 默认资源位置：
 
@@ -123,11 +151,11 @@ AutoDL 默认路径见 `.env.autodl.example`：
 - 实验状态索引: `<运行结果目录>/_experiment_state`
 - 日志: `/root/autodl-tmp/wm-bench/runs/logs`
 
-攻击算法按 `evaluator/attacks/<folder>` 目录名分类展示。新增水印算法、攻击目录或资源元数据后，重启 API 可刷新资源目录。
+新增数据集、权重、水印算法、攻击目录或资源元数据后，重启 API 可刷新资源目录。
 
 ## 内置资源清单
 
-以下清单来自当前后端资源注册表和数据集目录配置。`ID` 是实验配置、API 和前端资源页使用的稳定键；真实可运行状态还取决于本机是否已安装对应数据集和权重。
+以下清单来自当前后端资源注册表和数据集目录配置。`ID` 是实验配置、API 和前端资源页使用的稳定键；真实可运行状态取决于本机是否已安装对应数据集和权重。
 
 内置数据集 14 项：
 
@@ -246,15 +274,23 @@ NEXT_PUBLIC_API_BASE_URL=
 
 `NEXT_PUBLIC_API_BASE_URL` 留空时，前端按同源 API 访问，适合 AutoDL 或反向代理部署。如果前端和 API 分开部署，需要设置为 API 公网地址，并在 `WM_BENCH_CORS_ORIGINS` 中加入前端 origin。
 
-## 验证
+## 验收检查
+
+建议按以下顺序验收：
+
+1. 服务可一键启动和关闭：macOS 使用 `scripts/start-macos.sh` / `scripts/stop-macos.sh`，Windows 使用 `scripts/start-windows.ps1` / `scripts/stop-windows.ps1`，AutoDL 使用 `scripts/deploy-autodl-linux.sh` / `scripts/deploy-autodl-linux.sh stop`。
+2. Web UI 可以打开，API 健康检查返回正常：本地开发默认 `http://127.0.0.1:8000/health`，AutoDL 默认 `http://127.0.0.1:6006/health`。
+3. 资源页可以展示内置数据集、水印算法和攻击列表，并能识别本机已安装的数据集和权重。
+4. 部署前检查返回 ready，或仅在缺少可选资源时给出可解释的 WARN。
+5. 前端生产构建通过。
+6. 资源目录单元测试通过。
+7. AutoDL 生产部署只暴露 `API_PORT` 一个端口，默认 `6006`，前端和 API 同源访问。
 
 部署前检查：
 
 ```bash
 python3 scripts/check-deploy-readiness.py
 ```
-
-该脚本会检查项目根目录、资源目录、数据集目录、权重目录、运行目录、实验状态目录、算法/攻击目录扫描和 Worker 心跳。服务运行后也可以访问 `/system/readiness` 查看同一份检查结果。
 
 前端生产构建：
 
@@ -273,3 +309,7 @@ AutoDL 状态检查：
 ```bash
 bash scripts/deploy-autodl-linux.sh status
 ```
+
+## 安全说明
+
+当前系统没有登录鉴权。不要把服务直接裸露给不可信公网用户。正式使用时优先选择 AutoDL 隧道、SSH 隧道、VPN，或带访问控制的反向代理。
