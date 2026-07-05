@@ -39,7 +39,7 @@ autodl_ensure_node() {
 }
 
 autodl_ensure_pnpm() {
-  local pnpm_version="${WM_BENCH_PNPM_VERSION:-9.15.0}"
+  local pnpm_version="${WM_BENCH_PNPM_VERSION:-10.23.0}"
 
   if command -v pnpm >/dev/null 2>&1; then
     return 0

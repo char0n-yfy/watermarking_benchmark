@@ -49,6 +49,7 @@
 __pycache__/
 *.pyc
 *.tsbuildinfo
+package-lock.json
 /runs/
 /tmp/
 node_modules/

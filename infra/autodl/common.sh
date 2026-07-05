@@ -23,6 +23,7 @@ autodl_load_env_file() {
     key="${key#"${key%%[![:space:]]*}"}"
     key="${key%"${key##*[![:space:]]}"}"
     [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key+x}" ]] && continue
 
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
@@ -67,7 +68,7 @@ autodl_load_env() {
   export WM_BENCH_AUTO_INSTALL_NODE="${WM_BENCH_AUTO_INSTALL_NODE:-1}"
   export WM_BENCH_AUTO_INSTALL_SCREEN="${WM_BENCH_AUTO_INSTALL_SCREEN:-1}"
   export WM_BENCH_NODE_VERSION="${WM_BENCH_NODE_VERSION:-20}"
-  export WM_BENCH_PNPM_VERSION="${WM_BENCH_PNPM_VERSION:-9.15.0}"
+  export WM_BENCH_PNPM_VERSION="${WM_BENCH_PNPM_VERSION:-10.23.0}"
   export WM_BENCH_LOG_DIR="${WM_BENCH_LOG_DIR:-${WM_BENCH_RUNS_ROOT}/logs}"
   export API_HOST="${API_HOST:-0.0.0.0}"
   export API_PORT="${API_PORT:-6006}"
