@@ -236,10 +236,10 @@ export function fetchRuns(options?: { scope?: "active" | "unfinished" }): Promis
   return requestJson<DemoRunRecord[]>(`/runs${query}`);
 }
 
-/** Open runs: running or paused only (no queued waiting list). */
+/** Open runs are filtered client-side so queued and resumable tasks stay visible. */
 export async function fetchManageableRuns(): Promise<DemoRunRecord[]> {
   try {
-    return await fetchRuns({ scope: "active" });
+    return await fetchRuns();
   } catch {
     return await fetchRuns();
   }

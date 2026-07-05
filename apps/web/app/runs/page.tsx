@@ -305,12 +305,16 @@ function badgeClass(status: DemoRunRecord["status"]) {
   return `badge status-badge status-${normalized} warn`;
 }
 
-function isActiveRun(status: DemoRunRecord["status"]) {
-  return status === "running" || status === "paused";
+function isInFlightRun(status: DemoRunRecord["status"]) {
+  return status === "queued" || status === "running";
 }
 
 function isResumableRun(status: DemoRunRecord["status"]) {
   return resumableStatuses.has(status);
+}
+
+function isManageableRun(status: DemoRunRecord["status"]) {
+  return isInFlightRun(status) || isResumableRun(status);
 }
 
 function isRestartableTerminalRun(status: DemoRunRecord["status"]) {
@@ -322,11 +326,11 @@ function isTerminalRun(status: DemoRunRecord["status"]) {
 }
 
 function isPausableRun(run: DemoRunRecord) {
-  return isActiveRun(run.status) && !run.cancelRequested;
+  return isInFlightRun(run.status) && !run.cancelRequested;
 }
 
 function isCancellableRun(run: DemoRunRecord) {
-  return isActiveRun(run.status) && run.stopIntent !== "cancel";
+  return (isInFlightRun(run.status) || run.status === "paused") && run.stopIntent !== "cancel";
 }
 
 function stopIntentNotice(
@@ -334,8 +338,12 @@ function stopIntentNotice(
   labels: {
     pauseRequestedNotice: string;
     cancelRequestedNotice: string;
+    stopSavedNotice: string;
   }
 ) {
+  if (run.status === "paused") {
+    return labels.stopSavedNotice;
+  }
   if (!run.cancelRequested) {
     return null;
   }
@@ -1483,7 +1491,7 @@ export default function RunsPage() {
       latestTuning = null;
     }
 
-    const manageableRuns = loadedRuns.filter((run) => isActiveRun(run.status));
+    const manageableRuns = loadedRuns.filter((run) => isManageableRun(run.status));
     setConfigs(loadedConfigs);
     setActiveRuns(manageableRuns);
     if (latestTuning) {
@@ -1580,7 +1588,7 @@ export default function RunsPage() {
     if (monitorRunId || startDialogOpen || lastSummary) {
       return;
     }
-    const runningRun = activeRuns.find((run) => run.status === "running" && !run.cancelRequested);
+    const runningRun = activeRuns.find((run) => isInFlightRun(run.status) && !run.cancelRequested);
     if (runningRun) {
       setMonitorRunId(runningRun.id);
       setMonitorRun(runningRun);
@@ -1718,10 +1726,10 @@ export default function RunsPage() {
           return;
         }
         const nextRun = await createRun(selectedConfig.id, trimmedName);
-	        setMonitorRunId(nextRun.id);
-	        setMonitorRun(nextRun);
-	        setRunState(null);
-	        setLastSummary(null);
+        setMonitorRunId(nextRun.id);
+        setMonitorRun(nextRun);
+        setRunState(null);
+        setLastSummary(null);
         setSelectedStageKey("canonical");
         setStageSelectionPinned(false);
         setStartDialogOpen(false);
@@ -1731,13 +1739,13 @@ export default function RunsPage() {
           setNotice(t.runs.resumeTaskRequired);
           return;
         }
-        const updated = isActiveRun(selectedResumeRun.status)
+        const updated = isInFlightRun(selectedResumeRun.status) && !selectedResumeRun.cancelRequested
           ? selectedResumeRun
           : await resumeRun(selectedResumeRun.id);
-	        setMonitorRunId(updated.id);
-	        setMonitorRun(updated);
-	        setRunState(null);
-	        setLastSummary(null);
+        setMonitorRunId(updated.id);
+        setMonitorRun(updated);
+        setRunState(null);
+        setLastSummary(null);
         setSelectedStageKey("canonical");
         setStageSelectionPinned(false);
         setStartDialogOpen(false);
@@ -1825,6 +1833,30 @@ export default function RunsPage() {
       const updated = await resumeRun(lastSummary.runId);
       setMonitorRunId(updated.id);
       setMonitorRun(updated);
+      setLastSummary(null);
+      setSelectedStageKey("canonical");
+      setStageSelectionPinned(false);
+      setStartDialogOpen(false);
+      setNotice(t.runs.resumedTaskNotice);
+      refreshBase().catch(() => undefined);
+    } catch {
+      setNotice(t.runs.resumeTaskFailed);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resumeCurrentRun = async () => {
+    if (!monitorRun || !isResumableRun(monitorRun.status)) {
+      return;
+    }
+    setBusy(true);
+    setNotice("");
+    try {
+      const updated = await resumeRun(monitorRun.id);
+      setMonitorRunId(updated.id);
+      setMonitorRun(updated);
+      setRunState(null);
       setLastSummary(null);
       setSelectedStageKey("canonical");
       setStageSelectionPinned(false);
@@ -1966,7 +1998,7 @@ export default function RunsPage() {
     try {
       const saved = await saveParallelTuning(tuningJob.id);
       setTuningNotice(
-        `已保存 ${saved.savedKeys.length} 个参数到 ${saved.envPath}，并已写入运行时配置，后续实验会直接使用。`
+        `已保存 ${saved.savedKeys.length} 个参数到 ${saved.envPath}，并已写入运行时配置，后续测评会直接使用。`
       );
       setTuningJob(await fetchParallelTuning(tuningJob.id));
     } catch (error) {
@@ -2057,7 +2089,7 @@ export default function RunsPage() {
     busy ||
     (startMode === "new"
       ? !selectedConfig || !taskNameInput.trim()
-      : !selectedResumeRun || !isActiveRun(selectedResumeRun.status));
+      : !selectedResumeRun || !isManageableRun(selectedResumeRun.status));
 
   return (
     <AppShell active="runs">
@@ -2145,7 +2177,7 @@ export default function RunsPage() {
               <p>
                 {tuningJob
                   ? `${tuningJob.id} · ${tuningJob.message ?? tuningJob.status}`
-                  : "在开始实验之外单独搜索 batch size 与 CPU worker 参数。"}
+                  : "在开始测评之外单独搜索 batch size 与 CPU worker 参数。"}
               </p>
             </div>
           </div>
@@ -2310,6 +2342,12 @@ export default function RunsPage() {
               </div>
               <div className="run-monitor-actions">
                 <span className={badgeClass(monitorRun.status)}>{runStatusLabel(monitorRun.status, statusLabels)}</span>
+                {isResumableRun(monitorRun.status) ? (
+                  <button className="button primary" disabled={busy} onClick={resumeCurrentRun} type="button">
+                    <RotateCcw size={15} />
+                    {t.runs.resumeFromCheckpoint}
+                  </button>
+                ) : null}
                 {isPausableRun(monitorRun) ? (
                   <button className="button" disabled={busy} onClick={pauseCurrentRun} type="button">
                     <PauseCircle size={15} />
@@ -2536,7 +2574,7 @@ export default function RunsPage() {
                   <div className="tuning-section-heading">
                     <div>
                       <h3>调参阶段</h3>
-                      <p>按调参完成后会写入的参数分项组织，便于确认每个阶段影响正式实验的哪一部分。</p>
+                      <p>按调参完成后会写入的参数分项组织，便于确认每个阶段影响正式测评的哪一部分。</p>
                     </div>
                     <span>{effectiveTuningStages} 阶段 · {effectiveTuningSegments} 分项</span>
                   </div>

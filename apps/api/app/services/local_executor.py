@@ -1617,7 +1617,10 @@ def _watermark_embed_record_matches(
 
 
 def _attack_record_matches(record: JsonDict, *, attack_name: str, params: JsonDict) -> bool:
-    return str(record.get("attack_name") or "") == attack_name and _record_params_match(record.get("params"), params)
+    return str(record.get("attack_name") or "") == attack_name and _record_params_include_expected(
+        record.get("params"),
+        params,
+    )
 
 
 def _valid_prefix_records(
@@ -2614,6 +2617,117 @@ def run_local_experiment(
         )
         return result_unit, result_unit_manifest
 
+    def restore_attack_state_from_materialized(state: MaterializedCellState) -> str:
+        """Hydrate a completed attack cell during resume before extraction exists."""
+        try:
+            attack_method = str(state.attack["method"])
+            record_matches = lambda record, method=attack_method, params=state.attack_params: (
+                _attack_record_matches(record, attack_name=method, params=params)
+            )
+            watermarked_inputs = _list_image_files(state.watermarked_dir)
+            if not watermarked_inputs:
+                return "none"
+            positive_attack_digest = _digest_from_sample_count_dir(state.attacked_dir)
+            _hydrate_prefix_records_from_compatible_dirs(
+                parent_dir=state.attacked_dir.parent,
+                target_dir=state.attacked_dir,
+                digest=positive_attack_digest,
+                manifest_name="attack_manifest.json",
+                expected_count=len(watermarked_inputs),
+                expected_input_paths=watermarked_inputs,
+                output_key="output_path",
+                input_key="input_path",
+                record_matches=record_matches,
+            )
+            cached_positive = _attack_results_from_manifest(
+                state.attacked_dir / "attack_manifest.json",
+                expected_count=len(watermarked_inputs),
+                record_matches=record_matches,
+            )
+            if cached_positive is None:
+                return "none"
+
+            state.positive_attack_results = cached_positive
+            _mark_state_operation_result(state, cached_positive)
+            if state.status != "succeeded":
+                return "none"
+
+            _hydrate_prefix_records_from_compatible_dirs(
+                parent_dir=state.negative_attacked_dir.parent,
+                target_dir=state.negative_attacked_dir,
+                digest=state.negative_attack_key,
+                manifest_name="attack_manifest.json",
+                expected_count=len(state.copied_samples),
+                expected_input_paths=state.copied_samples,
+                output_key="output_path",
+                input_key="input_path",
+                record_matches=record_matches,
+            )
+            cached_negative = _attack_results_from_manifest(
+                state.negative_attacked_dir / "attack_manifest.json",
+                expected_count=len(state.copied_samples),
+                record_matches=record_matches,
+            )
+            if cached_negative is not None:
+                state.negative_attack_results = cached_negative
+                _mark_state_operation_result(state, cached_negative)
+                negative_attack_cache[state.negative_attack_key] = {
+                    "outputDir": state.negative_attacked_dir,
+                    "results": cached_negative,
+                    "error": None,
+                }
+
+            positive_attack_status, positive_attack_error = _stage_status_and_error(
+                state.positive_attack_results,
+                fallback_error=state.error,
+                expected_count=len(watermarked_inputs),
+            )
+            positive_attack_manifest = state.variant_root / "positive_attacked" / "manifest.json"
+            _write_json(
+                positive_attack_manifest,
+                {
+                    "runId": request.run_id,
+                    "datasetId": state.dataset_id,
+                    "algorithmId": state.algorithm_id,
+                    "seed": state.seed,
+                    "attackPresetId": state.attack_id,
+                    "attackMethod": state.attack["method"],
+                    "attackStrength": state.strength,
+                    "attackParams": state.attack_params,
+                    "variantKey": state.variant_key,
+                    "sampleCount": len(watermarked_inputs),
+                    "materializedDir": str(state.attacked_dir),
+                    "negativeControlDir": str(state.negative_attacked_dir),
+                    "status": positive_attack_status,
+                    "error": positive_attack_error,
+                    "cellStatus": state.status,
+                    "cellError": state.error,
+                    "resumeRestored": True,
+                },
+            )
+            state_writer.upsert_tree_path(
+                dataset_id=state.dataset_id,
+                algorithm_id=state.algorithm_id,
+                seed=state.seed,
+                attack_id=state.attack_id,
+                variant_key=state.variant_key,
+                refs={
+                    "dir": str(state.variant_root),
+                    "positiveAttacked": {
+                        "manifest": str(positive_attack_manifest),
+                        "materializedDir": str(state.attacked_dir),
+                    },
+                    "negativeAttackedRef": str(state.negative_attacked_dir),
+                    "status": state.status,
+                    "resumeRestored": True,
+                },
+            )
+            if positive_attack_status != "succeeded":
+                return "none"
+            return "full" if cached_negative is not None and state.status == "succeeded" else "positive"
+        except Exception:
+            return "none"
+
     dataset_contexts: list[MaterializedDatasetContext] = []
     try:
         all_states: list[MaterializedCellState] = []
@@ -3184,19 +3298,41 @@ def run_local_experiment(
         # backends are grouped across all datasets/algorithms/seeds so each backend is
         # loaded once for the whole run.
         if stop_status is None and all_states:
+            restored_attack_states: list[MaterializedCellState] = []
+            attack_pending_states: list[MaterializedCellState] = []
+            precounted_attack_cell_keys: set[str] = set()
+            if request.resume:
+                for state in all_states:
+                    restore_status = restore_attack_state_from_materialized(state)
+                    if restore_status in {"full", "positive"}:
+                        restored_attack_states.append(state)
+                        precounted_attack_cell_keys.add(state.cell_key)
+                    if restore_status != "full":
+                        attack_pending_states.append(state)
+            else:
+                attack_pending_states = list(all_states)
+
             unique_negative_attack_keys = {state.negative_attack_key: state for state in all_states}
             attack_total_images = sum(len(state.copied_samples) for state in unique_negative_attack_keys.values())
             attack_total_images += sum(len(state.copied_samples) for state in all_states)
-            attack_images_done = 0
-            positive_attack_images_done = 0
-            negative_attack_images_done = 0
-            attack_cache_hits = 0
+            restored_negative_attack_keys = {
+                state.negative_attack_key
+                for state in restored_attack_states
+                if state.negative_attack_results
+            }
+            positive_attack_images_done = sum(len(state.positive_attack_results) for state in restored_attack_states)
+            negative_attack_images_done = sum(
+                len(next(state.negative_attack_results for state in restored_attack_states if state.negative_attack_key == key))
+                for key in restored_negative_attack_keys
+            )
+            attack_images_done = positive_attack_images_done + negative_attack_images_done
+            attack_cache_hits = attack_images_done
             attack_scene_cache_hits = 0
             attack_backend_done = 0
-            attack_cells_done = len(result_units)
-            counted_negative_attack_keys: set[str] = set()
+            attack_cells_done = len(result_units) + len(precounted_attack_cell_keys)
+            counted_negative_attack_keys: set[str] = set(restored_negative_attack_keys)
             attack_model_groups: dict[str, list[MaterializedCellState]] = {}
-            for state in all_states:
+            for state in attack_pending_states:
                 model_key = _attack_model_cache_key(state.attack["method"], state.attack_params, request.device)
                 attack_model_groups.setdefault(model_key, []).append(state)
             state_writer.phase_start(
@@ -3205,15 +3341,17 @@ def run_local_experiment(
                 current_item={
                     "attackBackendCount": len(attack_model_groups),
                     "variantCount": len(all_states),
+                    "restoredCells": len(restored_attack_states),
                 },
                 counters={
-                    "imagesDone": 0,
+                    "imagesDone": attack_images_done,
                     "backendDone": 0,
-                    "cacheHits": 0,
-                    "artifactCacheHits": 0,
+                    "cacheHits": attack_cache_hits,
+                    "artifactCacheHits": attack_cache_hits,
                     "sceneCacheHits": 0,
-                    "positiveImagesDone": 0,
-                    "negativeImagesDone": 0,
+                    "positiveImagesDone": positive_attack_images_done,
+                    "negativeImagesDone": negative_attack_images_done,
+                    "restoredCells": len(restored_attack_states),
                     "phaseCellsDone": attack_cells_done,
                     "phaseCellsTotal": expected_cells,
                 },
@@ -3550,60 +3688,34 @@ def run_local_experiment(
                         for state in runtime_states:
                             if stop_status is not None or poll_stop():
                                 break
+                            positive_cell_precounted = (
+                                state.cell_key in precounted_attack_cell_keys and bool(state.positive_attack_results)
+                            )
                             try:
-                                watermarked_inputs = _list_image_files(state.watermarked_dir)
-                                positive_attack_digest = _digest_from_sample_count_dir(state.attacked_dir)
-                                positive_record_matches = lambda record, method=str(state.attack["method"]), params=state.attack_params: (
-                                    _attack_record_matches(record, attack_name=method, params=params)
-                                )
-                                _hydrate_prefix_records_from_compatible_dirs(
-                                    parent_dir=state.attacked_dir.parent,
-                                    target_dir=state.attacked_dir,
-                                    digest=positive_attack_digest,
-                                    manifest_name="attack_manifest.json",
-                                    expected_count=len(watermarked_inputs),
-                                    expected_input_paths=watermarked_inputs,
-                                    output_key="output_path",
-                                    input_key="input_path",
-                                    record_matches=positive_record_matches,
-                                )
-                                cached_positive = _attack_results_from_manifest(
-                                    state.attacked_dir / "attack_manifest.json",
-                                    expected_count=len(watermarked_inputs),
-                                    record_matches=positive_record_matches,
-                                )
-                                if cached_positive is not None:
-                                    attack_cache_hits += len(cached_positive)
-                                    _record_reused_attack(
-                                        paths=paths,
-                                        run_id=request.run_id,
-                                        cell_key=state.cell_key,
-                                        runtime_stage="attack",
-                                        dataset_id=state.dataset_id,
-                                        algorithm_id=state.algorithm_id,
-                                        attack_id=state.attack_id,
-                                        attack=state.attack,
-                                        attack_params=state.attack_params,
-                                        strength=state.strength,
-                                        seed=state.seed,
-                                        label=1,
-                                        input_dir=state.watermarked_dir,
-                                        output_dir=state.attacked_dir,
-                                        results=cached_positive,
-                                        device=request.device,
-                                        cache_key=state.cell_key,
+                                if not positive_cell_precounted:
+                                    watermarked_inputs = _list_image_files(state.watermarked_dir)
+                                    positive_attack_digest = _digest_from_sample_count_dir(state.attacked_dir)
+                                    positive_record_matches = lambda record, method=str(state.attack["method"]), params=state.attack_params: (
+                                        _attack_record_matches(record, attack_name=method, params=params)
                                     )
-                                    state.positive_attack_results = cached_positive
-                                    _mark_state_operation_result(state, cached_positive)
-                                else:
-                                    prefix_positive = _attack_prefix_from_manifest(
+                                    _hydrate_prefix_records_from_compatible_dirs(
+                                        parent_dir=state.attacked_dir.parent,
+                                        target_dir=state.attacked_dir,
+                                        digest=positive_attack_digest,
+                                        manifest_name="attack_manifest.json",
+                                        expected_count=len(watermarked_inputs),
+                                        expected_input_paths=watermarked_inputs,
+                                        output_key="output_path",
+                                        input_key="input_path",
+                                        record_matches=positive_record_matches,
+                                    )
+                                    cached_positive = _attack_results_from_manifest(
                                         state.attacked_dir / "attack_manifest.json",
                                         expected_count=len(watermarked_inputs),
                                         record_matches=positive_record_matches,
                                     )
-                                    if prefix_positive:
-                                        prefix_count = len(prefix_positive)
-                                        attack_cache_hits += prefix_count
+                                    if cached_positive is not None:
+                                        attack_cache_hits += len(cached_positive)
                                         _record_reused_attack(
                                             paths=paths,
                                             run_id=request.run_id,
@@ -3619,105 +3731,135 @@ def run_local_experiment(
                                             label=1,
                                             input_dir=state.watermarked_dir,
                                             output_dir=state.attacked_dir,
-                                            results=prefix_positive,
+                                            results=cached_positive,
                                             device=request.device,
                                             cache_key=state.cell_key,
-                                            image_paths=watermarked_inputs[:prefix_count],
                                         )
-                                        suffix_inputs = watermarked_inputs[prefix_count:]
-                                        suffix_input_dir = _prepare_subset_input_dir(
-                                            state.watermarked_dir,
-                                            suffix_inputs,
-                                            state.attacked_dir
-                                            / INTERMEDIATE_ARTIFACT_DIR
-                                            / f"attack_suffix_{prefix_count}",
-                                        )
-                                        _reset_gpu_peak(request.device)
-                                        suffix_started = time.perf_counter()
-                                        raw_suffix = run_attack_dir_with_attack(
-                                            AttackJob(
-                                                run_id=request.run_id,
-                                                attack_name=state.attack["method"],
-                                                params=state.attack_params,
-                                                input_dir=suffix_input_dir,
-                                                output_dir=state.attacked_dir,
-                                                device=request.device,
-                                                seed=state.seed + prefix_count,
-                                            ),
-                                            attack_instance,
-                                        )
-                                        suffix_elapsed_ms = (time.perf_counter() - suffix_started) * 1000
-                                        suffix_results = _retarget_attack_results(
-                                            raw_suffix,
-                                            subset_input_dir=suffix_input_dir,
-                                            original_input_root=state.watermarked_dir,
-                                        )
-                                        combined_positive = [*prefix_positive, *suffix_results]
-                                        _write_attack_manifest(
-                                            state.attacked_dir / "attack_manifest.json",
-                                            combined_positive,
-                                        )
-                                        _record_attack_results(
-                                            paths,
-                                            run_id=request.run_id,
-                                            cell_key=state.cell_key,
-                                            stage="attack",
-                                            dataset_id=state.dataset_id,
-                                            algorithm_id=state.algorithm_id,
-                                            attack_id=state.attack_id,
-                                            attack_method=state.attack["method"],
-                                            attack_strength=state.strength,
-                                            attack_params=state.attack_params,
-                                            seed=state.seed,
-                                            label=1,
-                                            input_root=state.watermarked_dir,
-                                            results=suffix_results,
-                                            cache_hit=False,
-                                        )
-                                        suffix_error = "; ".join(
-                                            result.error for result in suffix_results if getattr(result, "error", None)
-                                        )
-                                        _record_runtime_profile(
-                                            paths,
-                                            run_id=request.run_id,
-                                            cell_key=state.cell_key,
-                                            stage="attack",
-                                            method=state.attack["method"],
-                                            device=request.device,
-                                            elapsed_ms=suffix_elapsed_ms,
-                                            image_paths=suffix_inputs,
-                                            status="failed" if suffix_error else "succeeded",
-                                            error=suffix_error or None,
-                                            metadata={
-                                                "attackParams": state.attack_params,
-                                                "partialFill": True,
-                                                "reusedSamples": prefix_count,
-                                                "pendingSamples": len(suffix_inputs),
-                                                "materializedDir": str(state.attacked_dir),
-                                                "execution": summarize_execution_profiles(suffix_results),
-                                            },
-                                        )
-                                        shutil.rmtree(suffix_input_dir, ignore_errors=True)
-                                        state.positive_attack_results = combined_positive
-                                        attack_scene_cache_hits += _scene_cache_hit_count(suffix_results)
-                                        _mark_state_operation_result(state, combined_positive)
+                                        state.positive_attack_results = cached_positive
+                                        _mark_state_operation_result(state, cached_positive)
                                     else:
-                                        _clean_output_dir(state.attacked_dir)
-                                        _attack_instance, positive_attack = attack_stage.positive(
-                                            cell_key=state.cell_key,
-                                            dataset_id=state.dataset_id,
-                                            algorithm_id=state.algorithm_id,
-                                            attack_id=state.attack_id,
-                                            attack=state.attack,
-                                            attack_params=state.attack_params,
-                                            strength=state.strength,
-                                            seed=state.seed,
-                                            input_dir=state.watermarked_dir,
-                                            output_dir=state.attacked_dir,
+                                        prefix_positive = _attack_prefix_from_manifest(
+                                            state.attacked_dir / "attack_manifest.json",
+                                            expected_count=len(watermarked_inputs),
+                                            record_matches=positive_record_matches,
                                         )
-                                        state.positive_attack_results = positive_attack.results
-                                        attack_scene_cache_hits += _scene_cache_hit_count(positive_attack.results)
-                                        _mark_state_operation_result(state, positive_attack.results)
+                                        if prefix_positive:
+                                            prefix_count = len(prefix_positive)
+                                            attack_cache_hits += prefix_count
+                                            _record_reused_attack(
+                                                paths=paths,
+                                                run_id=request.run_id,
+                                                cell_key=state.cell_key,
+                                                runtime_stage="attack",
+                                                dataset_id=state.dataset_id,
+                                                algorithm_id=state.algorithm_id,
+                                                attack_id=state.attack_id,
+                                                attack=state.attack,
+                                                attack_params=state.attack_params,
+                                                strength=state.strength,
+                                                seed=state.seed,
+                                                label=1,
+                                                input_dir=state.watermarked_dir,
+                                                output_dir=state.attacked_dir,
+                                                results=prefix_positive,
+                                                device=request.device,
+                                                cache_key=state.cell_key,
+                                                image_paths=watermarked_inputs[:prefix_count],
+                                            )
+                                            suffix_inputs = watermarked_inputs[prefix_count:]
+                                            suffix_input_dir = _prepare_subset_input_dir(
+                                                state.watermarked_dir,
+                                                suffix_inputs,
+                                                state.attacked_dir
+                                                / INTERMEDIATE_ARTIFACT_DIR
+                                                / f"attack_suffix_{prefix_count}",
+                                            )
+                                            _reset_gpu_peak(request.device)
+                                            suffix_started = time.perf_counter()
+                                            raw_suffix = run_attack_dir_with_attack(
+                                                AttackJob(
+                                                    run_id=request.run_id,
+                                                    attack_name=state.attack["method"],
+                                                    params=state.attack_params,
+                                                    input_dir=suffix_input_dir,
+                                                    output_dir=state.attacked_dir,
+                                                    device=request.device,
+                                                    seed=state.seed + prefix_count,
+                                                ),
+                                                attack_instance,
+                                            )
+                                            suffix_elapsed_ms = (time.perf_counter() - suffix_started) * 1000
+                                            suffix_results = _retarget_attack_results(
+                                                raw_suffix,
+                                                subset_input_dir=suffix_input_dir,
+                                                original_input_root=state.watermarked_dir,
+                                            )
+                                            combined_positive = [*prefix_positive, *suffix_results]
+                                            _write_attack_manifest(
+                                                state.attacked_dir / "attack_manifest.json",
+                                                combined_positive,
+                                            )
+                                            _record_attack_results(
+                                                paths,
+                                                run_id=request.run_id,
+                                                cell_key=state.cell_key,
+                                                stage="attack",
+                                                dataset_id=state.dataset_id,
+                                                algorithm_id=state.algorithm_id,
+                                                attack_id=state.attack_id,
+                                                attack_method=state.attack["method"],
+                                                attack_strength=state.strength,
+                                                attack_params=state.attack_params,
+                                                seed=state.seed,
+                                                label=1,
+                                                input_root=state.watermarked_dir,
+                                                results=suffix_results,
+                                                cache_hit=False,
+                                            )
+                                            suffix_error = "; ".join(
+                                                result.error for result in suffix_results if getattr(result, "error", None)
+                                            )
+                                            _record_runtime_profile(
+                                                paths,
+                                                run_id=request.run_id,
+                                                cell_key=state.cell_key,
+                                                stage="attack",
+                                                method=state.attack["method"],
+                                                device=request.device,
+                                                elapsed_ms=suffix_elapsed_ms,
+                                                image_paths=suffix_inputs,
+                                                status="failed" if suffix_error else "succeeded",
+                                                error=suffix_error or None,
+                                                metadata={
+                                                    "attackParams": state.attack_params,
+                                                    "partialFill": True,
+                                                    "reusedSamples": prefix_count,
+                                                    "pendingSamples": len(suffix_inputs),
+                                                    "materializedDir": str(state.attacked_dir),
+                                                    "execution": summarize_execution_profiles(suffix_results),
+                                                },
+                                            )
+                                            shutil.rmtree(suffix_input_dir, ignore_errors=True)
+                                            state.positive_attack_results = combined_positive
+                                            attack_scene_cache_hits += _scene_cache_hit_count(suffix_results)
+                                            _mark_state_operation_result(state, combined_positive)
+                                        else:
+                                            _clean_output_dir(state.attacked_dir)
+                                            _attack_instance, positive_attack = attack_stage.positive(
+                                                cell_key=state.cell_key,
+                                                dataset_id=state.dataset_id,
+                                                algorithm_id=state.algorithm_id,
+                                                attack_id=state.attack_id,
+                                                attack=state.attack,
+                                                attack_params=state.attack_params,
+                                                strength=state.strength,
+                                                seed=state.seed,
+                                                input_dir=state.watermarked_dir,
+                                                output_dir=state.attacked_dir,
+                                            )
+                                            state.positive_attack_results = positive_attack.results
+                                            attack_scene_cache_hits += _scene_cache_hit_count(positive_attack.results)
+                                            _mark_state_operation_result(state, positive_attack.results)
                             except Exception as exc:
                                 state.status = "failed"
                                 state.error = f"{type(exc).__name__}: {exc}"
@@ -3766,9 +3908,11 @@ def run_local_experiment(
                                 },
                             )
                             positive_image_count = len(_list_image_files(state.watermarked_dir))
-                            attack_images_done += positive_image_count
-                            positive_attack_images_done += positive_image_count
-                            attack_cells_done += 1
+                            positive_progress_images = 0 if positive_cell_precounted else positive_image_count
+                            if not positive_cell_precounted:
+                                attack_images_done += positive_image_count
+                                positive_attack_images_done += positive_image_count
+                                attack_cells_done += 1
                             state_writer.phase_advance(
                                 "attack",
                                 current=attack_images_done,
@@ -3783,6 +3927,7 @@ def run_local_experiment(
                                     "attackParams": state.attack_params,
                                     "variantKey": state.variant_key,
                                     "processedImages": positive_image_count,
+                                    "countedImages": positive_progress_images,
                                     "remainingImages": max(0, attack_total_images - attack_images_done),
                                     "materializedDir": str(state.attacked_dir),
                                 },

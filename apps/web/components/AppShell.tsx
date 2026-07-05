@@ -5,7 +5,6 @@ import {
   Activity,
   Boxes,
   Database,
-  FlaskConical,
   Images,
   Languages,
   LayoutDashboard,
@@ -36,7 +35,7 @@ export function AppShell({ active, children }: { active: ActiveNav; children: Re
         <div className="sidebar-main">
           <div className="brand">
             <div className="brand-mark">
-              <FlaskConical size={17} />
+              <img alt="" aria-hidden="true" className="brand-logo" src="/waterprism-logo.png" />
             </div>
             <span>WaterPrism</span>
           </div>

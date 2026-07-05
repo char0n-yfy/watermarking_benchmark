@@ -742,11 +742,11 @@ function resourcePurposeSummary(resource: BrowserResource, language: "zh" | "en"
   const fallback =
     resource.type === "datasets"
       ? language === "zh"
-        ? "用于基准实验的数据集资源，可按精简包或自定义采样下载。"
+        ? "用于基准测评的数据集资源，可按精简包或自定义采样下载。"
         : "Dataset resource for benchmark runs, available as compact or custom sampled downloads."
       : resource.type === "watermarks"
         ? language === "zh"
-          ? "水印算法资源，可在实验配置中与数据集和攻击组合使用。"
+          ? "水印算法资源，可在测评配置中与数据集和攻击组合使用。"
           : "Watermark algorithm resource for pairing with datasets and attacks in experiment configs."
         : language === "zh"
           ? "攻击算法资源，按攻击文件夹和方法聚合，便于选择执行强度和权重状态。"
@@ -2138,7 +2138,7 @@ function attackResourceMappings(category: string, method: string, language: "zh"
         one: `${VIEWPOINT_MAX_DISPARITY_LEVELS[2]}`,
         note:
           language === "zh"
-            ? "0.5 对应 0.02；look-at mode 在实验配置页继续细分，phase 运行时随机抽样。"
+            ? "0.5 对应 0.02；look-at mode 在测评配置页继续细分，phase 运行时随机抽样。"
             : "0.5 maps to 0.02; look-at mode remains configurable in the experiment page, while phase is sampled at runtime."
       }
     ];
@@ -2205,7 +2205,7 @@ function attackResourceMappings(category: string, method: string, language: "zh"
           one: "strong",
           note:
             language === "zh"
-              ? "实验配置页按 0-1 轴生成档位，执行时映射到 CEW 编辑强度。"
+              ? "测评配置页按 0-1 轴生成档位，执行时映射到 CEW 编辑强度。"
               : "Experiment configuration generates 0-1 levels and maps them to CEW edit strength."
         }
       ];
@@ -2263,7 +2263,7 @@ function attackResourceNotes(category: string, method: string, language: "zh" | 
   if (category === "physical_channel_attacks") {
     return [
       language === "zh"
-        ? "透视矫正可在实验配置页选择：开启、不开启，或两者都跑。"
+        ? "透视矫正可在测评配置页选择：开启、不开启，或两者都跑。"
         : "Perspective correction can be configured as enabled, disabled, or both."
     ];
   }
@@ -2277,7 +2277,7 @@ function attackResourceNotes(category: string, method: string, language: "zh" | 
   if (method === REGENERATION_VAE_METHOD) {
     return [
       language === "zh"
-        ? "当前前端只开放 quality 1-6，与实验配置页面保持一致。"
+        ? "当前前端只开放 quality 1-6，与测评配置页面保持一致。"
         : "The UI exposes quality 1-6 only, matching the experiment configuration page."
     ];
   }

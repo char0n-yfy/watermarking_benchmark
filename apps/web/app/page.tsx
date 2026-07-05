@@ -204,9 +204,16 @@ export default function ExperimentConsole() {
       systemMetrics?.memory.totalBytes != null && systemMetrics?.memory.usedBytes != null
         ? systemMetrics.memory.totalBytes - systemMetrics.memory.usedBytes
         : null
-    );
+  );
   return (
     <AppShell active="console">
+      <section className="console-project-banner" aria-label={t.console.projectName}>
+        <img alt="WaterPrism logo" src="/waterprism-logo.png" />
+        <div>
+          <h1>{t.console.projectName}</h1>
+        </div>
+      </section>
+
       <div className="topbar console-topbar">
         <div className="title-block console-title">
           <h1>{t.console.title}</h1>
@@ -257,7 +264,7 @@ export default function ExperimentConsole() {
           <table className="table compact-table active-runs-table">
             <thead>
               <tr>
-                <th>实验名称</th>
+                <th>测评名称</th>
                 <th>最高阶段</th>
                 <th>Cell 进度</th>
                 <th>阶段进度</th>

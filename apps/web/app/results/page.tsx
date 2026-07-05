@@ -244,7 +244,10 @@ export default function ResultsPage() {
     [qualityAvailableCurvePoints]
   );
   const qualityAttackOptionIds = useMemo(
-    () => buildQualityAttackOptions(qualityAvailableCurvePoints).map((item) => item.attackPresetId),
+    () =>
+      buildQualityAttackOptions(qualityAvailableCurvePoints)
+        .filter((item) => !isIdentityAttackOption(item))
+        .map((item) => item.attackPresetId),
     [qualityAvailableCurvePoints]
   );
   const attackDatasetOptionIds = useMemo(
@@ -508,7 +511,7 @@ export default function ResultsPage() {
           loadingTitle: "正在读取运行结果",
           loadingBody: "如果 worker 正在执行，结果会在运行完成后出现。",
           title: "暂无可展示的真实结果",
-          body: "请先创建实验配置，在运行页提交并启动 worker。完成后这里会显示 WRS、覆盖率、曲线和调试单元。",
+          body: "请先创建测评配置，在运行页提交并启动 worker。完成后这里会显示 WRS、覆盖率、曲线和调试单元。",
           openRuns: "去运行页",
           openConfigs: "去配置页"
         }
@@ -610,15 +613,15 @@ export default function ResultsPage() {
       <section className="results-summary-grid">
         <SummaryCard
           iconKind="experiment"
-          iconTitle={uiText("可追踪的实验运行实例", "Traceable experiment run")}
-          label={language === "zh" ? "实验名称" : "Experiment"}
+          iconTitle={uiText("可追踪的测评运行实例", "Traceable experiment run")}
+          label={language === "zh" ? "测评名称" : "Experiment"}
           meta={summary.experimentMeta}
           value={summary.experimentName}
         />
         <SummaryCard
           iconKind="status"
-          iconTitle={uiText("实验运行状态与完成进度", "Run status and completion progress")}
-          label={language === "zh" ? "实验状态" : "Status"}
+          iconTitle={uiText("测评运行状态与完成进度", "Run status and completion progress")}
+          label={language === "zh" ? "测评状态" : "Status"}
           meta={summary.statusMeta}
           value={summary.statusLabel}
         />
@@ -1214,7 +1217,7 @@ export default function ResultsPage() {
       .sort(qualityCurvePointSort);
     const datasetOptions = buildQualityDatasetOptions(allCurvePoints);
     const algorithmOptions = buildQualityAlgorithmOptions(allCurvePoints, resourceAlgorithmNames);
-    const attackOptions = buildQualityAttackOptions(allCurvePoints);
+    const attackOptions = buildQualityAttackOptions(allCurvePoints).filter((item) => !isIdentityAttackOption(item));
     const selectedDatasetSet = new Set(qualityDatasetIds);
     const selectedAlgorithmSet = new Set(qualityAlgorithmIds);
     const selectedAttackSet = new Set(qualityAttackIds);
@@ -1636,7 +1639,7 @@ export default function ResultsPage() {
             <Gauge size={16} />
           </div>
           <div className="panel-note">
-            {attackSummaries.length} {uiText("个有实验结果的攻击方法", "attack methods with experiment results")}
+            {attackSummaries.length} {uiText("个有测评结果的攻击方法", "attack methods with experiment results")}
             {selectedAlgorithmIds.length ? ` / ${scoreRows.length} ${uiText("个已选水印算法", "selected watermark algorithms")}` : ""}
           </div>
           <div className="panel-body quality-attack-grid">
@@ -3019,7 +3022,7 @@ function friendlyExperimentName(rawName: string, datasetLabel: string, maxSample
   }
   const datasetName = friendlyDatasetName(datasetLabel);
   if (language === "zh") {
-    return `${datasetName} ${maxSamples.toLocaleString()} 张图片实验`;
+    return `${datasetName} ${maxSamples.toLocaleString()} 张图片测评`;
   }
   return `${datasetName} ${maxSamples.toLocaleString()}-image experiment`;
 }
@@ -3137,9 +3140,9 @@ function buildRunSummary(
         : datasetLabel,
     watermarkValue: formatCatalogRatio(usedAlgorithmCount, catalog.algorithms),
     watermarkMeta:
-      language === "zh" ? "本实验选用的水印算法数" : "Watermark algorithms selected in this run",
+      language === "zh" ? "本测评选用的水印算法数" : "Watermark algorithms selected in this run",
     attackValue: formatCatalogRatio(usedAttackCount, totalAttackCount),
-    attackMeta: language === "zh" ? "本实验选用的攻击算法数" : "Attack algorithms selected in this run"
+    attackMeta: language === "zh" ? "本测评选用的攻击算法数" : "Attack algorithms selected in this run"
   };
 }
 
