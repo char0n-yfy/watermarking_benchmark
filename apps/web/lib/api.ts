@@ -272,8 +272,12 @@ export function fetchBenchmarkProtocols(): Promise<BenchmarkProtocol[]> {
   return requestJson<BenchmarkProtocol[]>("/benchmark-protocols");
 }
 
-export function fetchLeaderboard(protocolId = "wrs-v2-detection-v1"): Promise<LeaderboardResponse> {
-  return requestJson<LeaderboardResponse>(`/leaderboard?protocol_id=${encodeURIComponent(protocolId)}`);
+export function fetchLeaderboard(protocolId = "wrs-v2-detection-v1", runId?: string): Promise<LeaderboardResponse> {
+  const params = new URLSearchParams({ protocol_id: protocolId });
+  if (runId) {
+    params.set("run_id", runId);
+  }
+  return requestJson<LeaderboardResponse>(`/leaderboard?${params.toString()}`);
 }
 
 export function pauseRun(runId: string): Promise<DemoRunRecord> {

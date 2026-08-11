@@ -542,11 +542,12 @@ def create_app() -> FastAPI:
     @app.get("/leaderboard")
     def get_leaderboard(
         protocol_id: Optional[str] = Query(default=None),
+        run_id: Optional[str] = Query(default=None),
     ) -> object:
-        if protocol_id is None and web_out.exists():
+        if protocol_id is None and run_id is None and web_out.exists():
             return exported_page_response("leaderboard")
         try:
-            return service.list_leaderboard(protocol_id or PROTOCOL_ID)
+            return service.list_leaderboard(protocol_id or PROTOCOL_ID, run_id=run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

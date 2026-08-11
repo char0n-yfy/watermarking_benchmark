@@ -151,6 +151,8 @@ class ExperimentServiceTest(unittest.TestCase):
             finished = service.execute_run(run["id"])
             results = service.get_run_results(run["id"])
             score = service.get_run_score(run["id"])
+            dashboard_cache_path = service._dashboard_cache_path(run["id"])
+            dashboard_score_cache_path = service._dashboard_score_cache_path(run["id"])
 
             self.assertEqual(finished["status"], "succeeded")
             self.assertEqual(finished["completedProgress"], 100)
@@ -178,6 +180,27 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(results["aggregates"], [])
             self.assertEqual(results["score"]["protocolId"], PROTOCOL_ID)
             self.assertEqual(score["score"]["status"], "provisional")
+            self.assertTrue(dashboard_cache_path.exists())
+            self.assertTrue(dashboard_score_cache_path.exists())
+
+            restarted_service = ExperimentService(
+                resources_root=root / "resources",
+                runs_root=root / "runs",
+            )
+            with patch.object(
+                restarted_service,
+                "_get_or_build_dashboard_results",
+                side_effect=AssertionError("compact score cache was not reused"),
+            ):
+                cached_score = restarted_service.get_run_score(run["id"])
+            with patch.object(
+                restarted_service,
+                "_build_run_results",
+                side_effect=AssertionError("persistent dashboard cache was not reused"),
+            ):
+                cached_results = restarted_service.get_run_results(run["id"])
+            self.assertEqual(cached_results["resultUnits"], results["resultUnits"])
+            self.assertEqual(cached_score["score"], score["score"])
             self.assertNotIn("score", results["summary"])
             self.assertNotIn("aggregates", results["summary"])
             self.assertEqual(service.list_benchmark_protocols()[0]["id"], PROTOCOL_ID)

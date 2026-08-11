@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 import os
 import threading
 from contextlib import contextmanager
@@ -32,6 +33,10 @@ HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
 WORKER_HEARTBEAT_RETENTION_SECONDS = 3600
 EXPERIMENT_STATE_DIR = "_experiment_state"
 RUN_RECORD_NAME = "run_record.json"
+DASHBOARD_CACHE_SCHEMA_VERSION = 1
+DASHBOARD_CACHE_DIR = "dashboard-results"
+DASHBOARD_CACHE_NAME = "results.v1.json.gz"
+DASHBOARD_SCORE_CACHE_NAME = "score.v1.json.gz"
 
 
 def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +118,18 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     os.replace(tmp_path, path)
 
 
+def _write_json_gzip_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with gzip.open(tmp_path, "wt", encoding="utf-8", compresslevel=6) as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"), default=str)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
 def _read_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -152,6 +169,7 @@ class ExperimentService:
         self._cache_lock = threading.Lock()
         self._result_units_cache: dict[str, tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
         self._score_cache: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+        self._dashboard_cache_locks: dict[str, threading.Lock] = {}
 
     def _initialize_file_state(self) -> None:
         for directory in (self.runs_root, self.configs_dir, self.runs_dir, self.heartbeats_dir):
@@ -742,6 +760,7 @@ class ExperimentService:
             "updatedAt": updated_at,
             "startedAt": self._first_string(summary.get("startedAt"), state.get("startedAt"), plan.get("startedAt"), None),
             "finishedAt": self._first_string(summary.get("finishedAt"), state.get("finishedAt"), status_doc.get("finishedAt"), None),
+            "selection": selection,
         }
         return self._enrich_run_with_state(run)
 
@@ -952,7 +971,24 @@ class ExperimentService:
         return scored_units
 
     def get_run_results(self, run_id: str) -> dict[str, Any]:
+        return self._get_or_build_dashboard_results(run_id)
+
+    def _get_or_build_dashboard_results(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
+        cached = self._read_dashboard_cache(run)
+        if cached is not None:
+            return cached
+        cache_lock = self._dashboard_cache_lock(str(run["id"]))
+        with cache_lock:
+            run = self.get_run(run_id)
+            cached = self._read_dashboard_cache(run)
+            if cached is not None:
+                return cached
+            results = self._build_run_results(run)
+            self._write_dashboard_cache(run, results)
+            return results
+
+    def _build_run_results(self, run: dict[str, Any]) -> dict[str, Any]:
         summary_path, summary_exists, summary = self._read_run_summary(run)
         result_units = self._list_run_result_units_for_run(run)
         score = self._score_for_run(run, summary, result_units)
@@ -969,25 +1005,128 @@ class ExperimentService:
 
     def get_run_score(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)
-        summary_path = Path(run["artifactRoot"]) / "run_summary.json"
-        summary_exists = summary_path.exists()
-        signature = self._run_artifact_signature(run, include_summary=True)
-        with self._cache_lock:
-            cached = self._score_cache.get(str(run["id"]))
-            if cached is not None and cached[0] == signature:
-                return {
-                    "run": run,
-                    "score": cached[1],
-                    "summaryPath": str(summary_path),
-                    "summaryExists": summary_exists,
-                }
-        summary_path, summary_exists, summary = self._read_run_summary(run)
-        return {
-            "run": run,
-            "score": self._score_for_run(run, summary),
-            "summaryPath": str(summary_path),
-            "summaryExists": summary_exists,
+        cached_score = self._read_dashboard_score_cache(run)
+        if cached_score is not None:
+            return cached_score
+        results = self._get_or_build_dashboard_results(run_id)
+        score_response = {
+            "run": results["run"],
+            "score": results["score"],
+            "summaryPath": results["summaryPath"],
+            "summaryExists": results["summaryExists"],
+            "summary": results.get("summary"),
+            "aggregates": results.get("aggregates", []),
         }
+        self._write_dashboard_score_cache(results["run"], score_response)
+        return score_response
+
+    def _dashboard_cache_lock(self, run_id: str) -> threading.Lock:
+        with self._cache_lock:
+            return self._dashboard_cache_locks.setdefault(run_id, threading.Lock())
+
+    def _dashboard_cache_path(self, run_id: str) -> Path:
+        return self.resources_root / "cache" / DASHBOARD_CACHE_DIR / safe_segment(run_id) / DASHBOARD_CACHE_NAME
+
+    def _dashboard_score_cache_path(self, run_id: str) -> Path:
+        return self.resources_root / "cache" / DASHBOARD_CACHE_DIR / safe_segment(run_id) / DASHBOARD_SCORE_CACHE_NAME
+
+    def _dashboard_source_signature(self, run: dict[str, Any]) -> list[list[Any]]:
+        signature = self._run_artifact_signature(run, include_summary=True)
+        return [list(part) for part in signature[1:]]
+
+    def _read_dashboard_cache(self, run: dict[str, Any]) -> dict[str, Any] | None:
+        path = self._dashboard_cache_path(str(run["id"]))
+        if not path.exists():
+            return None
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                envelope = json.load(handle)
+        except (OSError, EOFError, json.JSONDecodeError):
+            return None
+        if not isinstance(envelope, dict):
+            return None
+        if envelope.get("schemaVersion") != DASHBOARD_CACHE_SCHEMA_VERSION:
+            return None
+        if envelope.get("scoringProtocol") != PROTOCOL_ID:
+            return None
+        if envelope.get("sourceSignature") != self._dashboard_source_signature(run):
+            return None
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("score"), dict):
+            return None
+        current_payload = {
+            **payload,
+            "run": run,
+            "summaryPath": str(Path(run["artifactRoot"]) / "run_summary.json"),
+            "summaryExists": (Path(run["artifactRoot"]) / "run_summary.json").exists(),
+        }
+        summary = current_payload.get("summary")
+        if isinstance(summary, dict):
+            current_payload["summary"] = {
+                **summary,
+                "runId": run["id"],
+                "status": run["status"],
+                "progress": run["progress"],
+                "completedProgress": run["completedProgress"],
+                "progressKind": summary.get("progressKind") or run["progressKind"],
+            }
+        return current_payload
+
+    def _write_dashboard_cache(self, run: dict[str, Any], payload: dict[str, Any]) -> None:
+        envelope = {
+            "schemaVersion": DASHBOARD_CACHE_SCHEMA_VERSION,
+            "scoringProtocol": PROTOCOL_ID,
+            "sourceSignature": self._dashboard_source_signature(run),
+            "payload": payload,
+        }
+        _write_json_gzip_atomic(self._dashboard_cache_path(str(run["id"])), envelope)
+
+    def _read_dashboard_score_cache(self, run: dict[str, Any]) -> dict[str, Any] | None:
+        path = self._dashboard_score_cache_path(str(run["id"]))
+        if not path.exists():
+            return None
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                envelope = json.load(handle)
+        except (OSError, EOFError, json.JSONDecodeError):
+            return None
+        if not isinstance(envelope, dict):
+            return None
+        if envelope.get("schemaVersion") != DASHBOARD_CACHE_SCHEMA_VERSION:
+            return None
+        if envelope.get("scoringProtocol") != PROTOCOL_ID:
+            return None
+        if envelope.get("sourceSignature") != self._dashboard_source_signature(run):
+            return None
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("score"), dict):
+            return None
+        current_payload = {
+            **payload,
+            "run": run,
+            "summaryPath": str(Path(run["artifactRoot"]) / "run_summary.json"),
+            "summaryExists": (Path(run["artifactRoot"]) / "run_summary.json").exists(),
+        }
+        summary = current_payload.get("summary")
+        if isinstance(summary, dict):
+            current_payload["summary"] = {
+                **summary,
+                "runId": run["id"],
+                "status": run["status"],
+                "progress": run["progress"],
+                "completedProgress": run["completedProgress"],
+                "progressKind": summary.get("progressKind") or run["progressKind"],
+            }
+        return current_payload
+
+    def _write_dashboard_score_cache(self, run: dict[str, Any], payload: dict[str, Any]) -> None:
+        envelope = {
+            "schemaVersion": DASHBOARD_CACHE_SCHEMA_VERSION,
+            "scoringProtocol": PROTOCOL_ID,
+            "sourceSignature": self._dashboard_source_signature(run),
+            "payload": payload,
+        }
+        _write_json_gzip_atomic(self._dashboard_score_cache_path(str(run["id"])), envelope)
 
     def _read_run_summary(self, run: dict[str, Any]) -> tuple[Path, bool, dict[str, Any] | None]:
         summary_path = Path(run["artifactRoot"]) / "run_summary.json"
@@ -1063,11 +1202,12 @@ class ExperimentService:
     def list_benchmark_protocols(self) -> list[dict[str, Any]]:
         return benchmark_protocols()
 
-    def list_leaderboard(self, protocol_id: str = PROTOCOL_ID) -> dict[str, Any]:
+    def list_leaderboard(self, protocol_id: str = PROTOCOL_ID, run_id: str | None = None) -> dict[str, Any]:
         if protocol_id != PROTOCOL_ID and protocol_id not in LEGACY_PROTOCOL_IDS:
             raise KeyError(f"Unknown benchmark protocol: {protocol_id}")
         rows: list[dict[str, Any]] = []
-        for run in self.list_runs():
+        runs = [self.get_run(run_id)] if run_id else self.list_runs()
+        for run in runs:
             if run["status"] not in {"succeeded", "partially_failed"}:
                 continue
             score_response = self.get_run_score(run["id"])
@@ -1088,6 +1228,7 @@ class ExperimentService:
             row["rank"] = index
         return {
             "protocol": benchmark_protocols()[0],
+            "runId": run_id,
             "rows": rows,
             "officialRows": [row for row in rows if row.get("officialEligible")],
             "provisionalRows": [row for row in rows if not row.get("officialEligible")],

@@ -203,6 +203,7 @@ export interface DemoRunRecord {
   createdAt?: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  selection?: ExperimentSelection;
   currentPhase?: string | null;
   phases?: RunPhaseState[];
   runStatePath?: string;
@@ -429,6 +430,8 @@ export interface RunScoreResponse {
   score: BenchmarkScore;
   summaryPath: string;
   summaryExists: boolean;
+  summary?: Record<string, unknown> | null;
+  aggregates?: RunAggregate[];
 }
 
 export interface BenchmarkProtocol {
@@ -445,6 +448,7 @@ export interface BenchmarkProtocol {
 
 export interface LeaderboardResponse {
   protocol: BenchmarkProtocol;
+  runId?: string | null;
   rows: BenchmarkLeaderboardRow[];
   officialRows: BenchmarkLeaderboardRow[];
   provisionalRows: BenchmarkLeaderboardRow[];

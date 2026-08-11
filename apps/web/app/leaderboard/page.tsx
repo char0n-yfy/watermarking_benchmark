@@ -6,9 +6,9 @@ import { AppShell } from "@/components/AppShell";
 import { curveDomainColor } from "@/components/RobustnessCurve";
 import { useLanguage } from "@/components/LanguageProvider";
 import { chartBarFill } from "@/lib/chart-colors";
-import { fetchAlgorithms, fetchLeaderboard } from "@/lib/api";
+import { fetchAlgorithms, fetchLeaderboard, fetchRuns } from "@/lib/api";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
-import type { AlgorithmVersion, BenchmarkLeaderboardRow, LeaderboardResponse } from "@/lib/types";
+import type { AlgorithmVersion, BenchmarkLeaderboardRow, DemoRunRecord, LeaderboardResponse } from "@/lib/types";
 
 type RankingMetric = "robustness" | "complexity" | "fidelity" | "composite";
 
@@ -23,17 +23,25 @@ export default function LeaderboardPage() {
   const { language, t } = useLanguage();
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
   const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>([]);
+  const [runs, setRuns] = useState<DemoRunRecord[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>("composite");
   const [selectedRankingRow, setSelectedRankingRow] = useState<BenchmarkLeaderboardRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchLeaderboard(), fetchAlgorithms().catch(() => [] as AlgorithmVersion[])])
-      .then(([nextLeaderboard, nextAlgorithms]) => {
+    Promise.all([fetchRuns(), fetchAlgorithms().catch(() => [] as AlgorithmVersion[])])
+      .then(([nextRuns, nextAlgorithms]) => {
         if (cancelled) {
           return;
         }
-        setLeaderboard(nextLeaderboard);
+        const leaderboardRuns = nextRuns.filter(
+          (run) => run.status === "succeeded" || run.status === "partially_failed"
+        );
+        setRuns(leaderboardRuns);
+        setSelectedRunId((current) =>
+          current && leaderboardRuns.some((run) => run.id === current) ? current : (leaderboardRuns[0]?.id ?? "")
+        );
         setAlgorithms(nextAlgorithms);
       })
       .catch(() => {
@@ -42,7 +50,32 @@ export default function LeaderboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [language]);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setLeaderboard(null);
+      setSelectedRankingRow(null);
+      return;
+    }
+    let cancelled = false;
+    setLeaderboard(null);
+    setSelectedRankingRow(null);
+    fetchLeaderboard("wrs-v2-detection-v1", selectedRunId)
+      .then((nextLeaderboard) => {
+        if (!cancelled) {
+          setLeaderboard(nextLeaderboard);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLeaderboard(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId]);
 
   const rows = leaderboard?.rows ?? [];
   const algorithmNames = useMemo(() => buildAlgorithmNames(algorithms), [algorithms]);
@@ -56,6 +89,19 @@ export default function LeaderboardPage() {
           <p>{t.leaderboard.subtitle}</p>
         </div>
         <div className="toolbar">
+          <select
+            aria-label={language === "zh" ? "选择实验" : "Select experiment"}
+            className="run-result-select"
+            disabled={runs.length === 0}
+            onChange={(event) => setSelectedRunId(event.target.value)}
+            value={selectedRunId}
+          >
+            {runs.map((run) => (
+              <option key={run.id} value={run.id}>
+                {leaderboardRunLabel(run, language)} / {run.status}
+              </option>
+            ))}
+          </select>
           <button className="button" disabled={rows.length === 0} onClick={() => exportLeaderboardCsv(rows)} type="button">
             <Download size={16} />
             {t.results.exportCsv}
@@ -85,15 +131,11 @@ export default function LeaderboardPage() {
             </div>
             <div className="panel-body metric-list">
               <div className="metric-row">
-                <span>WRS-v2</span>
-                <strong>{selectedRankingRow.wrs == null ? "n/a" : selectedRankingRow.wrs.toFixed(1)}</strong>
-              </div>
-              <div className="metric-row">
                 <span>{language === "zh" ? "鲁棒性" : "Robustness"}</span>
                 <strong>{formatPercent(robustnessScore(selectedRankingRow))}</strong>
               </div>
               <div className="metric-row">
-                <span>{t.results.cleanFidelity}</span>
+                <span>{language === "zh" ? "自身保真度" : "Intrinsic fidelity"}</span>
                 <strong>{formatPercent(normalizedFidelityScore(selectedRankingRow, rows))}</strong>
               </div>
               <div className="metric-row">
@@ -106,6 +148,20 @@ export default function LeaderboardPage() {
       </section>
     </AppShell>
   );
+}
+
+function leaderboardRunLabel(run: DemoRunRecord, language: string): string {
+  const rawName = run.taskName?.trim() || run.configName?.trim() || run.id;
+  if (!/^Imported run\b/i.test(rawName)) {
+    return rawName;
+  }
+  const datasetIds = run.selection?.datasetIds ?? [];
+  const dataset = datasetIds.length === 1 && datasetIds[0].toLowerCase() === "imagenet" ? "ImageNet" : datasetIds[0] || "dataset";
+  const sampleCount = Number(run.selection?.maxSamples ?? 0);
+  if (sampleCount <= 0) {
+    return rawName;
+  }
+  return language === "zh" ? `${dataset} ${sampleCount.toLocaleString()} 张图片测评` : `${dataset} ${sampleCount.toLocaleString()}-image experiment`;
 }
 
 function AlgorithmEvaluationRanking({

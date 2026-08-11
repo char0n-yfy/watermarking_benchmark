@@ -208,6 +208,12 @@ class ApiRoutesTest(unittest.TestCase):
             leaderboard_response = client.get(f"/leaderboard?protocol_id={PROTOCOL_ID}")
             self.assertEqual(leaderboard_response.status_code, 200)
             self.assertEqual(leaderboard_response.json()["protocol"]["id"], PROTOCOL_ID)
+            filtered_leaderboard_response = client.get(
+                f"/leaderboard?protocol_id={PROTOCOL_ID}&run_id={run_id}"
+            )
+            self.assertEqual(filtered_leaderboard_response.status_code, 200)
+            self.assertEqual(filtered_leaderboard_response.json()["runId"], run_id)
+            self.assertEqual(filtered_leaderboard_response.json()["rows"], [])
             legacy_leaderboard_response = client.get("/leaderboard?protocol_id=waves-official-detection-v1")
             self.assertEqual(legacy_leaderboard_response.status_code, 200)
             self.assertEqual(legacy_leaderboard_response.json()["protocol"]["id"], PROTOCOL_ID)

@@ -434,7 +434,9 @@ export default function ResultsPage() {
             run: scoreResponse.run,
             score: scoreResponse.score,
             summaryPath: scoreResponse.summaryPath,
-            summaryExists: scoreResponse.summaryExists
+            summaryExists: scoreResponse.summaryExists,
+            summary: scoreResponse.summary,
+            aggregates: scoreResponse.aggregates ?? []
           }));
           setActiveInsight({
             kind: "run",
@@ -3032,6 +3034,12 @@ function friendlyRunRecordName(run: DemoRunRecord, language: string): string {
   if (!/^Imported run\b/i.test(rawName)) {
     return rawName;
   }
+  const selectedDatasetIds = run.selection?.datasetIds ?? [];
+  const selectedDataset = selectedDatasetIds.length === 1 ? selectedDatasetIds[0] : "dataset";
+  const selectedSampleCount = Number(run.selection?.maxSamples ?? 0);
+  if (selectedSampleCount > 0) {
+    return friendlyExperimentName(rawName, selectedDataset, selectedSampleCount, language);
+  }
   const canonicalPhase = run.phases?.find((phase) => phase.key === "canonical");
   const currentItem = canonicalPhase?.currentItem;
   const datasetId = typeof currentItem?.datasetId === "string" ? currentItem.datasetId : "dataset";
@@ -3057,6 +3065,9 @@ function countUsedBenchmarkAttacks(
 ) {
   const presetIdsFromSelection = selectionAttackPresetIds(selection);
   if (presetIdsFromSelection.length > 0) {
+    if (attacks.length === 0) {
+      return countBenchmarkAttackTypesFromMethods(presetIdsFromSelection.map(attackPresetIdToMethod));
+    }
     return countSelectedBenchmarkAttackTypes(attacks, presetIdsFromSelection);
   }
 
@@ -3075,7 +3086,14 @@ function countUsedBenchmarkAttacks(
   const presetIdsFromUnits = Array.from(
     new Set(units.map((unit) => unit.attackPresetId).filter((attackId) => attackId && !isBaselineAttackId(attackId)))
   );
+  if (attacks.length === 0) {
+    return countBenchmarkAttackTypesFromMethods(presetIdsFromUnits.map(attackPresetIdToMethod));
+  }
   return countSelectedBenchmarkAttackTypes(attacks, presetIdsFromUnits);
+}
+
+function attackPresetIdToMethod(presetId: string) {
+  return presetId.replace(/^atk-/, "").replaceAll("-", "_");
 }
 
 function buildRunSummary(
