@@ -9,6 +9,7 @@ import {
   Info,
   PlayCircle,
   RefreshCw,
+  Search,
   SlidersHorizontal,
   Trophy
 } from "lucide-react";
@@ -206,11 +207,13 @@ export default function ResultsPage() {
   const [activeInsight, setActiveInsight] = useState<ChartInsight | null>(null);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingFullResults, setLoadingFullResults] = useState(false);
   const [activeTab, setActiveTab] = useState<ResultsTab>("overview");
+  const [overviewAlgorithmExpanded, setOverviewAlgorithmExpanded] = useState(false);
   const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<string[]>([]);
   const [attackDatasetIds, setAttackDatasetIds] = useState<string[]>([]);
   const [attackAttackIds, setAttackAttackIds] = useState<string[]>([]);
-  const [activeAttackSelectorKey, setActiveAttackSelectorKey] = useState<AttackSelectorKey | null>("attack");
+  const [activeAttackSelectorKey, setActiveAttackSelectorKey] = useState<AttackSelectorKey | null>(null);
   const [attackHeatmapMetric, setAttackHeatmapMetric] = useState<AttackHeatmapMetric>("tpr");
   const [attackHeatmapRowMode, setAttackHeatmapRowMode] = useState<AttackHeatmapRowMode>("category");
   const [selectedAttackHeatmapCell, setSelectedAttackHeatmapCell] = useState<AttackHeatmapCell | null>(null);
@@ -218,7 +221,8 @@ export default function ResultsPage() {
   const [qualityDatasetIds, setQualityDatasetIds] = useState<string[]>([]);
   const [qualityAlgorithmIds, setQualityAlgorithmIds] = useState<string[]>([]);
   const [qualityAttackIds, setQualityAttackIds] = useState<string[]>([]);
-  const [activeQualitySelectorKey, setActiveQualitySelectorKey] = useState<QualitySelectorKey | null>("attack");
+  const [activeQualitySelectorKey, setActiveQualitySelectorKey] = useState<QualitySelectorKey | null>(null);
+  const [qualityLegendQuery, setQualityLegendQuery] = useState("");
 
   const legacyRanking = useMemo(() => rankAggregates(results?.aggregates ?? []), [results]);
   const scoreRows = score?.leaderboardRows ?? EMPTY_SCORE_ROWS;
@@ -332,9 +336,9 @@ export default function ResultsPage() {
     const fallback =
       qualityAttackFilter !== "all" && qualityAttackOptionIds.includes(qualityAttackFilter)
         ? [qualityAttackFilter]
-        : qualityAttackOptionIds;
+        : defaultQualityAttackIds(qualityAvailableCurvePoints);
     setQualityAttackIds((current) => reconcileQualitySelection(current, qualityAttackOptionIds, fallback));
-  }, [qualityAttackFilter, qualityAttackOptionIds]);
+  }, [qualityAttackFilter, qualityAttackOptionIds, qualityAvailableCurvePoints]);
 
   useEffect(() => {
     let cancelled = false;
@@ -375,10 +379,12 @@ export default function ResultsPage() {
       setResults(null);
       setScore(null);
       setLoading(false);
+      setLoadingFullResults(false);
       return;
     }
     let cancelled = false;
     setNotice("");
+    setLoadingFullResults(true);
     const selectedRun = runs.find((run) => run.id === selectedRunId);
     if (selectedRun) {
       setResults((current) =>
@@ -421,6 +427,7 @@ export default function ResultsPage() {
         .finally(() => {
           if (!cancelled) {
             setLoading(false);
+            setLoadingFullResults(false);
           }
         });
     };
@@ -561,11 +568,11 @@ export default function ResultsPage() {
 
   return (
     <AppShell active="results">
-      <div className="topbar">
+      <div className="topbar results-page-topbar">
         <div className="title-block">
           <h1>{t.results.title}</h1>
         </div>
-        <div className="toolbar">
+        <div className="toolbar results-page-toolbar">
           <select
             aria-label="Select run result"
             className="run-result-select"
@@ -573,10 +580,10 @@ export default function ResultsPage() {
             onChange={(event) => setSelectedRunId(event.target.value)}
             value={selectedRunId}
           >
-            {runs.length === 0 ? <option value="">No runs</option> : null}
+            {runs.length === 0 ? <option value="">{uiText("暂无运行", "No runs")}</option> : null}
             {runs.map((run) => (
               <option key={run.id} value={run.id}>
-                {friendlyRunRecordName(run, language).slice(0, 72)} / {run.status}
+                {friendlyRunRecordName(run, language).slice(0, 58)} · {(t.common.status as Record<string, string>)[run.status] ?? run.status}
               </option>
             ))}
           </select>
@@ -633,7 +640,7 @@ export default function ResultsPage() {
           label={language === "zh" ? "数据集" : "Datasets"}
           meta={summary.datasetMeta}
           showMeta={false}
-          value={summary.datasetValue}
+          value={loadingFullResults && results.resultUnits.length === 0 ? uiText("读取中…", "Loading…") : summary.datasetValue}
         />
         <SummaryCard
           iconKind="watermark"
@@ -641,7 +648,7 @@ export default function ResultsPage() {
           label={language === "zh" ? "水印算法" : "Watermarks"}
           meta={summary.watermarkMeta}
           showMeta={false}
-          value={summary.watermarkValue}
+          value={loadingFullResults && results.resultUnits.length === 0 ? uiText("读取中…", "Loading…") : summary.watermarkValue}
         />
         <SummaryCard
           iconKind="attack"
@@ -649,7 +656,7 @@ export default function ResultsPage() {
           label={language === "zh" ? "攻击算法" : "Attacks"}
           meta={summary.attackMeta}
           showMeta={false}
-          value={summary.attackValue}
+          value={loadingFullResults && results.resultUnits.length === 0 ? uiText("读取中…", "Loading…") : summary.attackValue}
         />
       </section>
 
@@ -679,12 +686,14 @@ export default function ResultsPage() {
           qualityAvailableCurvePoints={qualityAvailableCurvePoints}
           resourceAlgorithmNames={resourceAlgorithmNames}
           overviewDetailRadars={overviewDetailRadars}
+          overviewAlgorithmExpanded={overviewAlgorithmExpanded}
           overviewMainRadarCategories={overviewMainRadarCategories}
           overviewMainRadarSeries={overviewMainRadarSeries}
           results={results}
           score={score}
           scoreRows={selectedScoreRows}
           selectedAlgorithmIds={selectedAlgorithmIds}
+          setOverviewAlgorithmExpanded={setOverviewAlgorithmExpanded}
           setSelectedAlgorithmIds={setSelectedAlgorithmIds}
         />
       ) : null}
@@ -698,6 +707,7 @@ export default function ResultsPage() {
           attackHeatmapRowMode={attackHeatmapRowMode}
           resourceAlgorithmNames={resourceAlgorithmNames}
           resourceAttackNames={resourceAttackNames}
+          registeredAttackCount={resourceCatalogCounts.attacks}
           score={score}
           selectedAttackHeatmapCell={selectedAttackHeatmapCell}
           setActiveSelectorKey={setActiveAttackSelectorKey}
@@ -715,6 +725,8 @@ export default function ResultsPage() {
           qualityAlgorithmIds={qualityAlgorithmIds}
           qualityAttackIds={qualityAttackIds}
           qualityDatasetIds={qualityDatasetIds}
+          qualityLegendQuery={qualityLegendQuery}
+          registeredAttackCount={resourceCatalogCounts.attacks}
           resourceAlgorithmNames={resourceAlgorithmNames}
           resourceAttackNames={resourceAttackNames}
           results={results}
@@ -727,6 +739,7 @@ export default function ResultsPage() {
           setQualityAttackFilter={setQualityAttackFilter}
           setQualityAttackIds={setQualityAttackIds}
           setQualityDatasetIds={setQualityDatasetIds}
+          setQualityLegendQuery={setQualityLegendQuery}
         />
       ) : null}
 
@@ -769,12 +782,14 @@ export default function ResultsPage() {
     qualityAvailableCurvePoints,
     resourceAlgorithmNames,
     overviewDetailRadars,
+    overviewAlgorithmExpanded,
     overviewMainRadarCategories,
     overviewMainRadarSeries,
     results,
     score,
     scoreRows,
     selectedAlgorithmIds,
+    setOverviewAlgorithmExpanded,
     setSelectedAlgorithmIds
   }: {
     algorithmIds: string[];
@@ -783,12 +798,14 @@ export default function ResultsPage() {
     qualityAvailableCurvePoints: BenchmarkCurvePoint[];
     resourceAlgorithmNames: Record<string, string>;
     overviewDetailRadars: ReturnType<typeof buildOverviewDetailRadars>;
+    overviewAlgorithmExpanded: boolean;
     overviewMainRadarCategories: ReturnType<typeof buildMainOverviewRadarTemplate>;
     overviewMainRadarSeries: ReturnType<typeof buildMainOverviewRadarSeries>;
     results: RunResults | null;
     score: BenchmarkScore | null;
     scoreRows: BenchmarkLeaderboardRow[];
     selectedAlgorithmIds: string[];
+    setOverviewAlgorithmExpanded: (value: boolean) => void;
     setSelectedAlgorithmIds: (value: string[] | ((current: string[]) => string[])) => void;
   }) {
     const algorithmOptions =
@@ -818,14 +835,19 @@ export default function ResultsPage() {
           </div>
           <div className="panel-body">
             <div className="quality-selector-grid overview-algorithm-grid">
-              <div className="quality-selector-trigger active overview-algorithm-trigger">
+              <button
+                aria-expanded={overviewAlgorithmExpanded}
+                className={overviewAlgorithmExpanded ? "quality-selector-trigger active overview-algorithm-trigger" : "quality-selector-trigger overview-algorithm-trigger"}
+                onClick={() => setOverviewAlgorithmExpanded(!overviewAlgorithmExpanded)}
+                type="button"
+              >
                 <span>{uiText("水印算法", "Watermark algorithms")}</span>
                 <strong>
                   {selectedAlgorithmIds.length}/{algorithmOptions.length}
                 </strong>
-              </div>
+              </button>
             </div>
-            <div className="quality-selector-drawer overview-algorithm-drawer">
+            {overviewAlgorithmExpanded ? <div className="quality-selector-drawer overview-algorithm-drawer">
               <div className="quality-selector-actions">
                 <button onClick={() => setSelectedAlgorithmIds(algorithmOptions.map((item) => item.id))} type="button">
                   {uiText("全选", "All")}
@@ -853,7 +875,7 @@ export default function ResultsPage() {
                   </label>
                 ))}
               </div>
-            </div>
+            </div> : null}
             <div className="quality-selection-summary">
               <span>
                 {selectedAlgorithmIds.length} {uiText("个已选算法", "algorithms selected")} / {scoreRows.length}{" "}
@@ -951,6 +973,7 @@ export default function ResultsPage() {
     attackHeatmapRowMode,
     resourceAlgorithmNames,
     resourceAttackNames,
+    registeredAttackCount,
     score,
     selectedAttackHeatmapCell,
     setActiveSelectorKey,
@@ -967,6 +990,7 @@ export default function ResultsPage() {
     attackHeatmapRowMode: AttackHeatmapRowMode;
     resourceAlgorithmNames: Record<string, string>;
     resourceAttackNames: Record<string, string>;
+    registeredAttackCount: number;
     score: BenchmarkScore | null;
     selectedAttackHeatmapCell: AttackHeatmapCell | null;
     setActiveSelectorKey: AttackSelectorSetter;
@@ -1033,7 +1057,13 @@ export default function ResultsPage() {
       <>
         <section className="panel attack-selector-panel">
           <div className="panel-header">
-            <h2>{uiText("攻击分析筛选", "Attack analysis filters")}</h2>
+            <div className="filter-panel-heading">
+              <h2>{uiText("攻击分析筛选", "Attack analysis filters")}</h2>
+              <span>
+                {registeredAttackCount || attackOptions.length} {uiText("类攻击资源", "registered attack types")} · {attackOptions.length}{" "}
+                {uiText("个展开评测项", "expanded evaluation items")}
+              </span>
+            </div>
             <Filter size={16} />
           </div>
           <div className="panel-body">
@@ -1095,6 +1125,12 @@ export default function ResultsPage() {
               <span>
                 {categorySummaries.length} {uiText("个攻击类别", "attack categories")}
               </span>
+              <span className="selection-explainer">
+                {uiText(
+                  "资源按攻击类型统计；三维视角等配置展开后形成更多评测项。",
+                  "Resources count attack types; view and configuration variants expand into more evaluation items."
+                )}
+              </span>
             </div>
           </div>
         </section>
@@ -1111,6 +1147,7 @@ export default function ResultsPage() {
                 setSelectedAttackHeatmapCell(null);
                 setActiveInsight(makeCurvePointInsight(point));
               }}
+              uiText={uiText}
             />
             <div className="attack-heatmap-section">
               <div className="attack-subheading">
@@ -1182,6 +1219,8 @@ export default function ResultsPage() {
     qualityAttackFilter,
     qualityAttackIds,
     qualityDatasetIds,
+    qualityLegendQuery,
+    registeredAttackCount,
     resourceAlgorithmNames,
     resourceAttackNames,
     results,
@@ -1193,12 +1232,15 @@ export default function ResultsPage() {
     setQualityAlgorithmIds,
     setQualityAttackFilter,
     setQualityAttackIds,
-    setQualityDatasetIds
+    setQualityDatasetIds,
+    setQualityLegendQuery
   }: {
     qualityAlgorithmIds: string[];
     qualityAttackFilter: string;
     qualityAttackIds: string[];
     qualityDatasetIds: string[];
+    qualityLegendQuery: string;
+    registeredAttackCount: number;
     resourceAlgorithmNames: Record<string, string>;
     resourceAttackNames: Record<string, string>;
     results: RunResults | null;
@@ -1211,6 +1253,7 @@ export default function ResultsPage() {
     setQualityAttackFilter: (value: string) => void;
     setQualityAttackIds: StringArraySetter;
     setQualityDatasetIds: StringArraySetter;
+    setQualityLegendQuery: (value: string) => void;
   }) {
     const fallbackDatasetIds = Array.from(new Set((results?.resultUnits ?? []).map((unit) => unit.datasetId).filter(Boolean)));
     const fallbackDatasetId = fallbackDatasetIds.length === 1 ? fallbackDatasetIds[0] : "unknown";
@@ -1235,6 +1278,24 @@ export default function ResultsPage() {
       )
     );
     const comboSummaries = buildQualityComboSummaries(filteredCurvePoints);
+    const normalizedLegendQuery = qualityLegendQuery.trim().toLocaleLowerCase();
+    const visibleComboSummaries = comboSummaries.filter((combo) => {
+      if (!normalizedLegendQuery) {
+        return true;
+      }
+      return [
+        combo.datasetId,
+        combo.algorithmId,
+        displayAlgorithm(combo.algorithmId, resourceAlgorithmNames),
+        combo.attackPresetId,
+        combo.attackMethod,
+        displayAttackByIds(combo.attackPresetId, combo.attackMethod, resourceAttackNames),
+        combo.variantLabel
+      ]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(normalizedLegendQuery);
+    });
     const qualitySeriesDomain = comboSummaries.map((combo) => combo.key);
     const weakestPoint = filteredCurvePoints.reduce<BenchmarkCurvePoint | null>(
       (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
@@ -1290,7 +1351,12 @@ export default function ResultsPage() {
       <>
         <section className="panel quality-selector-panel">
           <div className="panel-header">
-            <h2>{uiText("质量-鲁棒性筛选", "Quality-robustness filters")}</h2>
+            <div className="filter-panel-heading">
+              <h2>{uiText("质量-鲁棒性筛选", "Quality-robustness filters")}</h2>
+              <span>
+                {uiText("默认每个攻击类别选取 1 个代表项，避免曲线过载", "One representative per attack family is selected by default")}
+              </span>
+            </div>
             <Filter size={16} />
           </div>
           <div className="panel-body">
@@ -1354,6 +1420,10 @@ export default function ResultsPage() {
                 {scoreRows.length} {uiText("个排名算法", "ranked algorithms")}
                 {qualityAttackFilter !== "all" ? ` / ${displayAttack(qualityAttackFilter, resourceAttackNames)}` : ""}
               </span>
+              <span className="selection-explainer">
+                {registeredAttackCount || attackOptions.length} {uiText("类资源", "resource types")} → {attackOptions.length}{" "}
+                {uiText("个展开评测项；可从“攻击方法”中全选。", "expanded items; use Attack methods to select all.")}
+              </span>
             </div>
           </div>
         </section>
@@ -1400,8 +1470,19 @@ export default function ResultsPage() {
               <h2>{uiText("组合清单与图例", "Combination list and legend")}</h2>
               <Gauge size={16} />
             </div>
+            <label className="quality-legend-search">
+              <Search aria-hidden="true" size={15} />
+              <input
+                aria-label={uiText("搜索图例", "Search legend")}
+                onChange={(event) => setQualityLegendQuery(event.target.value)}
+                placeholder={uiText("搜索算法、攻击或变体", "Search algorithm, attack, or variant")}
+                type="search"
+                value={qualityLegendQuery}
+              />
+              <span>{visibleComboSummaries.length}/{comboSummaries.length}</span>
+            </label>
             <div className="panel-body quality-combo-list">
-              {comboSummaries.map((combo) => (
+              {visibleComboSummaries.map((combo) => (
                 <button
                   className="quality-combo-row"
                   key={combo.key}
@@ -1443,7 +1524,7 @@ export default function ResultsPage() {
                   </span>
                 </button>
               ))}
-              {comboSummaries.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
+              {visibleComboSummaries.length === 0 ? <div className="empty compact-empty">{t.common.noData}</div> : null}
             </div>
           </div>
         </section>
@@ -1907,6 +1988,32 @@ function reconcileQualitySelection(current: string[], availableIds: string[], fa
   return sameStringArray(current, normalized) ? current : normalized;
 }
 
+function defaultQualityAttackIds(points: BenchmarkCurvePoint[]): string[] {
+  const representatives = new Map<string, QualityAttackOption>();
+  for (const option of buildQualityAttackOptions(points).filter((item) => !isIdentityAttackOption(item))) {
+    const category = normalizeAttackCategory(option.attackCategory, option.attackPresetId, option.attackMethod);
+    const current = representatives.get(category);
+    if (
+      !current ||
+      option.variantCount < current.variantCount ||
+      (option.variantCount === current.variantCount && option.pointCount > current.pointCount) ||
+      (option.variantCount === current.variantCount &&
+        option.pointCount === current.pointCount &&
+        option.attackPresetId.localeCompare(current.attackPresetId) < 0)
+    ) {
+      representatives.set(category, option);
+    }
+  }
+  return Array.from(representatives.values())
+    .sort(
+      (left, right) =>
+        attackCategoryRank(normalizeAttackCategory(left.attackCategory, left.attackPresetId, left.attackMethod)) -
+          attackCategoryRank(normalizeAttackCategory(right.attackCategory, right.attackPresetId, right.attackMethod)) ||
+        left.attackPresetId.localeCompare(right.attackPresetId)
+    )
+    .map((item) => item.attackPresetId);
+}
+
 function qualityCurvePointSort(left: BenchmarkCurvePoint, right: BenchmarkCurvePoint) {
   return (
     (left.datasetId || "").localeCompare(right.datasetId || "") ||
@@ -2136,13 +2243,15 @@ function buildAttackCategoryDistributions(
 
 function AttackViolinPlot({
   categories,
-  onPickPoint
+  onPickPoint,
+  uiText
 }: {
   categories: AttackCategoryDistribution[];
   onPickPoint: (point: BenchmarkCurvePoint) => void;
+  uiText: (zh: string, en: string) => string;
 }) {
   if (!categories.length) {
-    return <div className="empty compact-empty">No attack distribution data</div>;
+    return <div className="empty compact-empty">{uiText("暂无攻击分布数据", "No attack distribution data")}</div>;
   }
   const width = 760;
   const rowHeight = 70;
@@ -2209,13 +2318,13 @@ function AttackViolinPlot({
                 </circle>
               ))}
               <text className="attack-row-meta" x={width - rightPad} y={centerY + 5} textAnchor="end">
-                {category.attackCount} attacks / {category.pointCount} pts
+                {category.attackCount} {uiText("种攻击", "attacks")} / {category.pointCount} {uiText("个点", "pts")}
               </text>
             </g>
           );
         })}
         <text className="chart-axis-title" textAnchor="middle" x={leftPad + plotWidth / 2} y={height - 4}>
-          Normalized Quality Degradation
+          {uiText("归一化质量退化（NQD）", "Normalized Quality Degradation (NQD)")}
         </text>
       </svg>
     </div>
@@ -2943,7 +3052,17 @@ function formatParamRange(name: string, min: number, max: number): string {
 
 function variantLabel(point: BenchmarkCurvePoint): string {
   const label = point.attackVariantLabel?.trim();
-  return label && label !== "default" ? label : "default";
+  if (!label || label === "default") {
+    return "default";
+  }
+  const cleaned = label
+    .split(/[,;|]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => !/^save[_-]?intermediates\s*=\s*false$/i.test(item))
+    .filter((item) => !/^(?:device|output[_-]?(?:dir|path)|cache[_-]?dir)\s*=/i.test(item))
+    .join(" · ");
+  return cleaned || "default";
 }
 
 function formatAttackParams(params: Record<string, unknown> | undefined): string {
@@ -2951,7 +3070,16 @@ function formatAttackParams(params: Record<string, unknown> | undefined): string
     return "default";
   }
   const entries = Object.entries(params)
-    .filter(([, value]) => value != null)
+    .filter(([key, value]) => {
+      if (value == null || key.startsWith("_")) {
+        return false;
+      }
+      const normalizedKey = key.toLowerCase().replaceAll("-", "_");
+      if (["device", "output_dir", "output_path", "cache_dir"].includes(normalizedKey)) {
+        return false;
+      }
+      return !(normalizedKey === "save_intermediates" && value === false);
+    })
     .sort(([left], [right]) => left.localeCompare(right));
   if (!entries.length) {
     return "default";

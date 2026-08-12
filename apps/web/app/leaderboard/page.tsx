@@ -1,23 +1,27 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Download } from "lucide-react";
+import { BarChart3, Clock3, Download, History } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
-import { curveDomainColor } from "@/components/RobustnessCurve";
 import { useLanguage } from "@/components/LanguageProvider";
-import { chartBarFill } from "@/lib/chart-colors";
 import { fetchAlgorithms, fetchLeaderboard, fetchRuns } from "@/lib/api";
 import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type { AlgorithmVersion, BenchmarkLeaderboardRow, DemoRunRecord, LeaderboardResponse } from "@/lib/types";
 
 type RankingMetric = "robustness" | "complexity" | "fidelity" | "composite";
 
-const RANKING_METRICS: RankingMetric[] = ["robustness", "complexity", "fidelity", "composite"];
+const RANKING_METRICS: RankingMetric[] = ["robustness", "composite", "fidelity", "complexity"];
 const COMPOSITE_WEIGHTS = {
   robustness: 0.5,
   fidelity: 0.3,
   complexity: 0.2
 } as const;
+
+type AlgorithmHistory = {
+  algorithmId: string;
+  primary: BenchmarkLeaderboardRow;
+  runs: BenchmarkLeaderboardRow[];
+};
 
 export default function LeaderboardPage() {
   const { language, t } = useLanguage();
@@ -26,7 +30,7 @@ export default function LeaderboardPage() {
   const [runs, setRuns] = useState<DemoRunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>("composite");
-  const [selectedRankingRow, setSelectedRankingRow] = useState<BenchmarkLeaderboardRow | null>(null);
+  const [selectedAlgorithmId, setSelectedAlgorithmId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -55,12 +59,12 @@ export default function LeaderboardPage() {
   useEffect(() => {
     if (!selectedRunId) {
       setLeaderboard(null);
-      setSelectedRankingRow(null);
+      setSelectedAlgorithmId("");
       return;
     }
     let cancelled = false;
     setLeaderboard(null);
-    setSelectedRankingRow(null);
+    setSelectedAlgorithmId("");
     fetchLeaderboard("wrs-v2-detection-v1", selectedRunId)
       .then((nextLeaderboard) => {
         if (!cancelled) {
@@ -77,9 +81,24 @@ export default function LeaderboardPage() {
     };
   }, [selectedRunId]);
 
-  const rows = leaderboard?.rows ?? [];
+  const allRows = leaderboard?.rows ?? [];
+  const algorithmHistories = useMemo(() => buildAlgorithmHistories(allRows), [allRows]);
+  const rows = useMemo(() => algorithmHistories.map((item) => item.primary), [algorithmHistories]);
   const algorithmNames = useMemo(() => buildAlgorithmNames(algorithms), [algorithms]);
-  const algorithmColorDomain = useMemo(() => rows.map((row) => row.algorithmId), [rows]);
+  const selectedHistory = algorithmHistories.find((item) => item.algorithmId === selectedAlgorithmId) ?? null;
+
+  useEffect(() => {
+    if (!rows.length) {
+      setSelectedAlgorithmId("");
+      return;
+    }
+    setSelectedAlgorithmId((current) => {
+      if (current && rows.some((row) => row.algorithmId === current)) {
+        return current;
+      }
+      return rankRowsByMetric(rows, rankingMetric)[0]?.algorithmId ?? "";
+    });
+  }, [rankingMetric, rows]);
 
   return (
     <AppShell active="leaderboard">
@@ -111,37 +130,65 @@ export default function LeaderboardPage() {
 
       <section className="leaderboard-grid">
         <AlgorithmEvaluationRanking
-          algorithmColorDomain={algorithmColorDomain}
           algorithmNames={algorithmNames}
           language={language}
           metric={rankingMetric}
-          onPick={setSelectedRankingRow}
+          onPick={(row) => setSelectedAlgorithmId(row.algorithmId)}
           rows={rows}
-          selectedAlgorithmId={selectedRankingRow?.algorithmId}
+          selectedAlgorithmId={selectedAlgorithmId}
           setMetric={setRankingMetric}
         />
 
-        {selectedRankingRow ? (
+        {selectedHistory ? (
           <div className="panel leaderboard-ranking-detail">
             <div className="panel-header">
-              <h2>{displayAlgorithm(selectedRankingRow.algorithmId, algorithmNames)}</h2>
-              <span className={selectedRankingRow.officialEligible ? "badge ok" : "badge warn"}>
-                {selectedRankingRow.officialEligible ? t.common.official : t.common.provisional}
+              <h2>{displayAlgorithm(selectedHistory.algorithmId, algorithmNames)}</h2>
+              <span className={selectedHistory.primary.officialEligible ? "badge ok" : "badge warn"}>
+                {selectedHistory.primary.officialEligible ? t.common.official : t.common.provisional}
               </span>
             </div>
-            <div className="panel-body metric-list">
+            <div className="leaderboard-score-scope">
+              <span>{language === "zh" ? "官方协议指标" : "Official protocol"}</span>
+              <strong>WRS-v2</strong>
+              <p>{language === "zh" ? "用于正式鲁棒性结论与对外报告。" : "Use for formal robustness claims and reporting."}</p>
+            </div>
+            <div className="panel-body metric-list leaderboard-detail-metrics">
               <div className="metric-row">
-                <span>{language === "zh" ? "鲁棒性" : "Robustness"}</span>
-                <strong>{formatPercent(robustnessScore(selectedRankingRow))}</strong>
+                <span>{language === "zh" ? "官方 WRS" : "Official WRS"}</span>
+                <strong>{selectedHistory.primary.wrs == null ? "n/a" : selectedHistory.primary.wrs.toFixed(1)}</strong>
               </div>
               <div className="metric-row">
-                <span>{language === "zh" ? "自身保真度" : "Intrinsic fidelity"}</span>
-                <strong>{formatPercent(normalizedFidelityScore(selectedRankingRow, rows))}</strong>
+                <span>{language === "zh" ? "产品综合分" : "Product composite"}</span>
+                <strong>{formatPercent(compositeScore(selectedHistory.primary, rows))}</strong>
+              </div>
+              <div className="metric-row">
+                <span>{t.results.cleanFidelity}</span>
+                <strong>{formatPercent(normalizedFidelityScore(selectedHistory.primary, rows))}</strong>
               </div>
               <div className="metric-row">
                 <span>{language === "zh" ? "算法复杂度" : "Algorithm complexity"}</span>
-                <strong>{formatPercent(algorithmSimplicityScore(selectedRankingRow, rows))}</strong>
+                <strong>{formatPercent(algorithmSimplicityScore(selectedHistory.primary, rows))}</strong>
               </div>
+            </div>
+            <div className="leaderboard-history-heading">
+              <span><History size={15} /> {language === "zh" ? "Run 历史" : "Run history"}</span>
+              <strong>{selectedHistory.runs.length}</strong>
+            </div>
+            <div className="leaderboard-run-history">
+              {selectedHistory.runs.map((row, index) => (
+                <div className={index === 0 ? "leaderboard-run-item current" : "leaderboard-run-item"} key={`${row.runId ?? "run"}-${row.updatedAt ?? index}`}>
+                  <div>
+                    <strong>{row.configName || row.runId || (language === "zh" ? "未命名运行" : "Unnamed run")}</strong>
+                    <span><Clock3 size={12} /> {formatRunTimestamp(row.updatedAt, language)}</span>
+                  </div>
+                  <div>
+                    <b>WRS {row.wrs == null ? "n/a" : row.wrs.toFixed(1)}</b>
+                    <span className={row.officialEligible ? "run-status official" : "run-status provisional"}>
+                      {(t.common.status as Record<string, string>)[row.runStatus ?? ""] ?? row.runStatus ?? row.protocolStatus}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ) : null}
@@ -165,7 +212,6 @@ function leaderboardRunLabel(run: DemoRunRecord, language: string): string {
 }
 
 function AlgorithmEvaluationRanking({
-  algorithmColorDomain,
   algorithmNames,
   language,
   metric,
@@ -174,7 +220,6 @@ function AlgorithmEvaluationRanking({
   selectedAlgorithmId,
   setMetric
 }: {
-  algorithmColorDomain: string[];
   algorithmNames: Record<string, string>;
   language: string;
   metric: RankingMetric;
@@ -207,16 +252,15 @@ function AlgorithmEvaluationRanking({
         {rankedRows.map((row, index) => {
           const value = rankingMetricScore(row, metric, rows);
           const width = `${Math.max(3, (value / maxScore) * 100)}%`;
-          const color = curveDomainColor(algorithmColorDomain, row.algorithmId);
           return (
             <button
-              className={selectedAlgorithmId === row.algorithmId ? "interactive-bar-row active" : "interactive-bar-row"}
+              className={`interactive-bar-row leaderboard-rank-row rank-${Math.min(index + 1, 4)}${selectedAlgorithmId === row.algorithmId ? " active" : ""}`}
               key={row.algorithmId}
               onClick={() => onPick(row)}
               type="button"
             >
-              <span>{index + 1}. {displayAlgorithm(row.algorithmId, algorithmNames)}</span>
-              <i style={{ width, background: chartBarFill(color) }} />
+              <span><b>{index + 1}</b> {displayAlgorithm(row.algorithmId, algorithmNames)}</span>
+              <i style={{ width }} />
               <strong>{formatRankingValue(row, metric, rows)}</strong>
             </button>
           );
@@ -236,6 +280,47 @@ function buildAlgorithmNames(algorithms: AlgorithmVersion[]): Record<string, str
     }
   }
   return names;
+}
+
+function buildAlgorithmHistories(rows: BenchmarkLeaderboardRow[]): AlgorithmHistory[] {
+  const grouped = new Map<string, BenchmarkLeaderboardRow[]>();
+  for (const row of rows) {
+    grouped.set(row.algorithmId, [...(grouped.get(row.algorithmId) ?? []), row]);
+  }
+  return Array.from(grouped.entries())
+    .map(([algorithmId, historyRows]) => {
+      const runs = [...historyRows].sort(compareHistoryRows);
+      return { algorithmId, primary: runs[0], runs };
+    })
+    .sort((left, right) => left.algorithmId.localeCompare(right.algorithmId));
+}
+
+function compareHistoryRows(left: BenchmarkLeaderboardRow, right: BenchmarkLeaderboardRow): number {
+  if (left.officialEligible !== right.officialEligible) {
+    return left.officialEligible ? -1 : 1;
+  }
+  const updatedDifference = Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? "");
+  if (Number.isFinite(updatedDifference) && updatedDifference !== 0) {
+    return updatedDifference;
+  }
+  return (right.wrs ?? -1) - (left.wrs ?? -1) || (right.runId ?? "").localeCompare(left.runId ?? "");
+}
+
+function formatRunTimestamp(value: string | undefined, language: string): string {
+  if (!value) {
+    return language === "zh" ? "时间未知" : "Unknown time";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(language === "zh" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
 }
 
 function displayAlgorithm(
@@ -265,18 +350,18 @@ function displayTokenLabel(value: string): string {
 
 function rankingLabels(language: string): Record<RankingMetric, string> {
   return {
-    robustness: language === "zh" ? "鲁棒性" : "Robustness",
+    robustness: language === "zh" ? "官方 WRS" : "Official WRS",
     complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity",
     fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
-    composite: language === "zh" ? "综合评分" : "Composite score"
+    composite: language === "zh" ? "产品综合分" : "Product composite"
   };
 }
 
 function rankingDescription(metric: RankingMetric, language: string): string {
   if (metric === "robustness") {
     return language === "zh"
-      ? "按已覆盖攻击类别的平均鲁棒得分排序，分数越高表示抗攻击能力越强。"
-      : "Ranked by mean robustness over covered attack families; higher is more robust.";
+      ? "官方口径：直接按 WRS-v2 排序，用于正式鲁棒性结论；临时结果仍会标记为 provisional。"
+      : "Official scope: ranked directly by WRS-v2 for formal robustness claims; provisional results remain labeled.";
   }
   if (metric === "complexity") {
     return language === "zh"
@@ -289,8 +374,8 @@ function rankingDescription(metric: RankingMetric, language: string): string {
       : "Ranked by clean fidelity; higher means less visible distortion.";
   }
   return language === "zh"
-    ? "综合评分 = 50% 鲁棒性 + 30% 自身保真度 + 20% 算法复杂度（效率分，越高越好）。缺失维度会按可用项重新归一化。"
-    : "Composite = 50% robustness + 30% fidelity + 20% complexity efficiency. Missing dimensions are renormalized.";
+    ? "产品展示口径（非官方 WRS）：50% 鲁棒性 + 30% 自身保真度 + 20% 算法效率；缺失维度按可用项重新归一化。"
+    : "Product display scope (not official WRS): 50% robustness + 30% fidelity + 20% efficiency; missing dimensions are renormalized.";
 }
 
 function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric): BenchmarkLeaderboardRow[] {
@@ -303,7 +388,7 @@ function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric
 
 function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): number {
   if (metric === "robustness") {
-    return (robustnessScore(row) ?? 0) * 100;
+    return row.wrs ?? 0;
   }
   if (metric === "fidelity") {
     return (normalizedFidelityScore(row, rows) ?? 0) * 100;
@@ -316,7 +401,7 @@ function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric,
 
 function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): string {
   if (metric === "robustness") {
-    return formatPercent(robustnessScore(row));
+    return row.wrs == null ? "n/a" : row.wrs.toFixed(1);
   }
   if (metric === "fidelity") {
     return formatPercent(normalizedFidelityScore(row, rows));
