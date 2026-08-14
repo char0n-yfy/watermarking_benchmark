@@ -268,8 +268,8 @@ export default function ResourcesPage() {
   const { language, t } = useLanguage();
   const [datasets, setDatasets] = useState<DatasetVersion[]>(fallbackDatasets);
   const [catalogItems, setCatalogItems] = useState<DatasetCatalogItem[]>([]);
-  const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>(fallbackAlgorithms);
-  const [attacks, setAttacks] = useState<AttackPreset[]>(fallbackAttacks);
+  const [algorithms, setAlgorithms] = useState<AlgorithmVersion[]>([]);
+  const [attacks, setAttacks] = useState<AttackPreset[]>([]);
   const [activeType, setActiveType] = useState<ResourceType>("datasets");
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -279,6 +279,7 @@ export default function ResourcesPage() {
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [page, setPage] = useState(1);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const [resourceCatalogState, setResourceCatalogState] = useState<"loading" | "live" | "fallback">("loading");
   const pageSize = useResponsiveResourcePageSize();
   const detailPanelBodyRef = useRef<HTMLDivElement | null>(null);
   const preservedDetailScrollRef = useRef<number | null>(null);
@@ -323,28 +324,36 @@ export default function ResourcesPage() {
         }
       });
 
+    setResourceCatalogState("loading");
     Promise.all([fetchAlgorithms(), fetchAttacks()])
       .then(([apiAlgorithms, apiAttacks]) => {
         if (cancelled) {
           return;
         }
-        setAlgorithms(apiAlgorithms.length > 0 ? apiAlgorithms : fallbackAlgorithms);
-        setAttacks(apiAttacks.length > 0 ? apiAttacks : fallbackAttacks);
-        return Promise.all([fetchAlgorithms({ remote: true }), fetchAttacks({ remote: true })]);
+        setAlgorithms(apiAlgorithms);
+        setAttacks(apiAttacks);
+        setResourceCatalogState("live");
+        Promise.all([fetchAlgorithms({ remote: true }), fetchAttacks({ remote: true })])
+          .then(([remoteAlgorithms, remoteAttacks]) => {
+            if (cancelled) {
+              return;
+            }
+            if (remoteAlgorithms.length > 0) {
+              setAlgorithms(remoteAlgorithms);
+            }
+            if (remoteAttacks.length > 0) {
+              setAttacks(remoteAttacks);
+            }
+          })
+          .catch(() => undefined);
       })
-      .then((remote) => {
-        if (cancelled || !remote) {
-          return;
+      .catch(() => {
+        if (!cancelled) {
+          setAlgorithms(fallbackAlgorithms);
+          setAttacks(fallbackAttacks);
+          setResourceCatalogState("fallback");
         }
-        const [remoteAlgorithms, remoteAttacks] = remote;
-        if (remoteAlgorithms.length > 0) {
-          setAlgorithms(remoteAlgorithms);
-        }
-        if (remoteAttacks.length > 0) {
-          setAttacks(remoteAttacks);
-        }
-      })
-      .catch(() => undefined);
+      });
 
     return () => {
       cancelled = true;
@@ -560,9 +569,17 @@ export default function ResourcesPage() {
       <section className="resources-workbench">
         <div className="resource-summary-strip">
           <SummaryCard icon={Database} label={t.console.datasets} value={catalogLoading && catalogItems.length === 0 ? "…" : catalogItems.length.toString()} meta={`${totalSamples.toLocaleString()} ${t.common.samples}`} />
-          <SummaryCard icon={Shield} label={t.console.algorithms} value={resourceGroups.watermarks.length.toString()} meta={countByGpu(resourceGroups.watermarks)} />
-          <SummaryCard icon={Gauge} label={t.console.attacks} value={resourceGroups.attacks.length.toString()} meta={countByGpu(resourceGroups.attacks)} />
+          <SummaryCard icon={Shield} label={t.console.algorithms} value={resourceCatalogState === "loading" ? "…" : resourceGroups.watermarks.length.toString()} meta={countByGpu(resourceGroups.watermarks)} />
+          <SummaryCard icon={Gauge} label={t.console.attacks} value={resourceCatalogState === "loading" ? "…" : resourceGroups.attacks.length.toString()} meta={countByGpu(resourceGroups.attacks)} />
         </div>
+
+        {resourceCatalogState === "fallback" ? (
+          <div className="risk warn resource-catalog-notice" role="status">
+            {language === "zh"
+              ? "资源接口暂时不可用，当前显示内置目录；恢复连接后刷新页面即可同步真实状态。"
+              : "The resource API is unavailable, so the built-in catalog is shown. Refresh after connectivity is restored to sync live status."}
+          </div>
+        ) : null}
 
         <div className="resources-browser-grid">
         <aside className="panel resource-filter-panel">

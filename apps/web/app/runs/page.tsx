@@ -20,6 +20,7 @@ import {
   Zap
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { Dialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
   cancelParallelTuning,
@@ -2415,14 +2416,13 @@ export default function RunsPage() {
       ) : null}
 
       {tuningDialogOpen ? (
-        <div className="modal-backdrop" role="presentation">
-          <div aria-modal="true" className="config-modal tuning-config-modal" role="dialog">
+        <Dialog className="config-modal tuning-config-modal" labelledBy="tuning-dialog-title" onClose={() => setTuningDialogOpen(false)}>
             <div className="modal-header tuning-modal-header">
               <div>
-                <h2>并行参数搜索</h2>
+                <h2 id="tuning-dialog-title">并行参数搜索</h2>
                 <p>配置搜索范围与搜索模式。sampleCount 会自动不小于最大 batch。</p>
               </div>
-              <button className="icon-button tuning-close-button" onClick={() => setTuningDialogOpen(false)} title="关闭" type="button">
+              <button aria-label="关闭" className="icon-button tuning-close-button" onClick={() => setTuningDialogOpen(false)} title="关闭" type="button">
                 ×
               </button>
             </div>
@@ -2776,19 +2776,17 @@ export default function RunsPage() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
 
       {startDialogOpen ? (
-        <div className="modal-backdrop" role="presentation">
-          <div aria-modal="true" className="config-modal run-start-modal" role="dialog">
+        <Dialog className="config-modal run-start-modal" labelledBy="run-start-dialog-title" onClose={() => setStartDialogOpen(false)}>
             <div className="modal-header">
               <div>
-                <h2>{t.runs.startDialogTitle}</h2>
+                <h2 id="run-start-dialog-title">{t.runs.startDialogTitle}</h2>
                 <p>{t.runs.startDialogHint}</p>
               </div>
-              <button className="icon-button" onClick={() => setStartDialogOpen(false)} title={t.runs.cancel} type="button">
+              <button aria-label={t.runs.cancel} className="icon-button" onClick={() => setStartDialogOpen(false)} title={t.runs.cancel} type="button">
                 ×
               </button>
             </div>
@@ -2880,19 +2878,17 @@ export default function RunsPage() {
                 {startMode === "resume" ? t.runs.resume : t.runs.beginExecution}
               </button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
 
       {cancelConfirmOpen && monitorRun ? (
-        <div className="modal-backdrop" role="presentation">
-          <div aria-modal="true" className="config-modal run-confirm-modal" role="dialog">
+        <Dialog className="config-modal run-confirm-modal" labelledBy="run-cancel-dialog-title" onClose={() => setCancelConfirmOpen(false)}>
             <div className="modal-header">
               <div>
-                <h2>{t.runs.cancelConfirmTitle}</h2>
+                <h2 id="run-cancel-dialog-title">{t.runs.cancelConfirmTitle}</h2>
                 <p>{taskName(monitorRun)}</p>
               </div>
-              <button className="icon-button" onClick={() => setCancelConfirmOpen(false)} title={t.runs.cancel} type="button">
+              <button aria-label={t.runs.cancel} className="icon-button" onClick={() => setCancelConfirmOpen(false)} title={t.runs.cancel} type="button">
                 ×
               </button>
             </div>
@@ -2909,19 +2905,17 @@ export default function RunsPage() {
                 {t.runs.confirmCancelExperiment}
               </button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
 
       {lastSummary && !inlineSummary ? (
-        <div className="modal-backdrop" role="presentation">
-          <div aria-modal="true" className="config-modal run-summary-modal" role="dialog">
+        <Dialog className="config-modal run-summary-modal" labelledBy="run-summary-dialog-title" onClose={closeSummaryDialog}>
             <div className="modal-header">
               <div>
-                <h2>{t.runs.executionSummary}</h2>
+                <h2 id="run-summary-dialog-title">{t.runs.executionSummary}</h2>
                 <p>{lastSummary.note}</p>
               </div>
-              <button className="icon-button" onClick={closeSummaryDialog} title={t.runs.closeSummary} type="button">
+              <button aria-label={t.runs.closeSummary} className="icon-button" onClick={closeSummaryDialog} title={t.runs.closeSummary} type="button">
                 ×
               </button>
             </div>
@@ -3001,8 +2995,7 @@ export default function RunsPage() {
                 {t.runs.closeSummary}
               </button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
     </AppShell>
   );

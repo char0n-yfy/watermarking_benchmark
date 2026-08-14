@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Download } from "lucide-react";
+import { BarChart3, Download, Info, LoaderCircle, TriangleAlert } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { PageState } from "@/components/PageState";
 import { curveDomainColor } from "@/components/RobustnessCurve";
 import { useLanguage } from "@/components/LanguageProvider";
 import { chartBarFill } from "@/lib/chart-colors";
@@ -27,9 +28,12 @@ export default function LeaderboardPage() {
   const [selectedRunId, setSelectedRunId] = useState("");
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>("composite");
   const [selectedRankingRow, setSelectedRankingRow] = useState<BenchmarkLeaderboardRow | null>(null);
+  const [runsLoading, setRunsLoading] = useState(true);
+  const [leaderboardState, setLeaderboardState] = useState<"idle" | "loading" | "ready" | "error">("idle");
 
   useEffect(() => {
     let cancelled = false;
+    setRunsLoading(true);
     Promise.all([fetchRuns(), fetchAlgorithms().catch(() => [] as AlgorithmVersion[])])
       .then(([nextRuns, nextAlgorithms]) => {
         if (cancelled) {
@@ -43,9 +47,13 @@ export default function LeaderboardPage() {
           current && leaderboardRuns.some((run) => run.id === current) ? current : (leaderboardRuns[0]?.id ?? "")
         );
         setAlgorithms(nextAlgorithms);
+        setRunsLoading(false);
       })
       .catch(() => {
-        // Keep the page shell available; empty charts already show no-data states.
+        if (!cancelled) {
+          setRunsLoading(false);
+          setLeaderboardState("error");
+        }
       });
     return () => {
       cancelled = true;
@@ -56,26 +64,32 @@ export default function LeaderboardPage() {
     if (!selectedRunId) {
       setLeaderboard(null);
       setSelectedRankingRow(null);
+      if (!runsLoading) {
+        setLeaderboardState((current) => (current === "error" ? current : "idle"));
+      }
       return;
     }
     let cancelled = false;
     setLeaderboard(null);
     setSelectedRankingRow(null);
+    setLeaderboardState("loading");
     fetchLeaderboard("wrs-v2-detection-v1", selectedRunId)
       .then((nextLeaderboard) => {
         if (!cancelled) {
           setLeaderboard(nextLeaderboard);
+          setLeaderboardState("ready");
         }
       })
       .catch(() => {
         if (!cancelled) {
           setLeaderboard(null);
+          setLeaderboardState("error");
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedRunId]);
+  }, [runsLoading, selectedRunId]);
 
   const rows = leaderboard?.rows ?? [];
   const algorithmNames = useMemo(() => buildAlgorithmNames(algorithms), [algorithms]);
@@ -83,12 +97,12 @@ export default function LeaderboardPage() {
 
   return (
     <AppShell active="leaderboard">
-      <div className="topbar">
+      <div className="topbar run-picker-topbar">
         <div className="title-block">
           <h1>{t.leaderboard.title}</h1>
           <p>{t.leaderboard.subtitle}</p>
         </div>
-        <div className="toolbar">
+        <div className="toolbar run-picker-toolbar">
           <select
             aria-label={language === "zh" ? "选择实验" : "Select experiment"}
             className="run-result-select"
@@ -98,7 +112,7 @@ export default function LeaderboardPage() {
           >
             {runs.map((run) => (
               <option key={run.id} value={run.id}>
-                {leaderboardRunLabel(run, language)} / {run.status}
+                {leaderboardRunLabel(run, language)} / {t.common.status[run.status]}
               </option>
             ))}
           </select>
@@ -110,41 +124,64 @@ export default function LeaderboardPage() {
       </div>
 
       <section className="leaderboard-grid">
-        <AlgorithmEvaluationRanking
-          algorithmColorDomain={algorithmColorDomain}
-          algorithmNames={algorithmNames}
-          language={language}
-          metric={rankingMetric}
-          onPick={setSelectedRankingRow}
-          rows={rows}
-          selectedAlgorithmId={selectedRankingRow?.algorithmId}
-          setMetric={setRankingMetric}
-        />
+        {rows.length === 0 ? (
+          <PageState
+            description={
+              runsLoading || leaderboardState === "loading"
+                ? language === "zh" ? "正在读取固定评测协议下的算法排名。" : "Reading algorithm rankings for the selected protocol."
+                : leaderboardState === "error"
+                  ? language === "zh" ? "排行榜接口暂时不可用，请确认评分产物已生成后重试。" : "The leaderboard endpoint is unavailable. Confirm that scoring artifacts exist, then retry."
+                  : language === "zh" ? "当前实验尚未生成可排名的评分行。请选择其他实验，或先完成正式评分。" : "This experiment has no rankable score rows yet. Select another experiment or finish official scoring."
+            }
+            icon={runsLoading || leaderboardState === "loading" ? LoaderCircle : leaderboardState === "error" ? TriangleAlert : Info}
+            title={
+              runsLoading || leaderboardState === "loading"
+                ? language === "zh" ? "正在加载天梯图" : "Loading leaderboard"
+                : leaderboardState === "error"
+                  ? language === "zh" ? "无法读取天梯图" : "Unable to load leaderboard"
+                  : language === "zh" ? "暂无可排名数据" : "No rankable data"
+            }
+            tone={runsLoading || leaderboardState === "loading" ? "loading" : leaderboardState === "error" ? "error" : "empty"}
+          />
+        ) : (
+          <>
+            <AlgorithmEvaluationRanking
+              algorithmColorDomain={algorithmColorDomain}
+              algorithmNames={algorithmNames}
+              language={language}
+              metric={rankingMetric}
+              onPick={setSelectedRankingRow}
+              rows={rows}
+              selectedAlgorithmId={selectedRankingRow?.algorithmId}
+              setMetric={setRankingMetric}
+            />
 
-        {selectedRankingRow ? (
-          <div className="panel leaderboard-ranking-detail">
-            <div className="panel-header">
-              <h2>{displayAlgorithm(selectedRankingRow.algorithmId, algorithmNames)}</h2>
-              <span className={selectedRankingRow.officialEligible ? "badge ok" : "badge warn"}>
-                {selectedRankingRow.officialEligible ? t.common.official : t.common.provisional}
-              </span>
-            </div>
-            <div className="panel-body metric-list">
-              <div className="metric-row">
-                <span>{language === "zh" ? "鲁棒性" : "Robustness"}</span>
-                <strong>{formatPercent(robustnessScore(selectedRankingRow))}</strong>
+            {selectedRankingRow ? (
+              <div className="panel leaderboard-ranking-detail">
+                <div className="panel-header">
+                  <h2>{displayAlgorithm(selectedRankingRow.algorithmId, algorithmNames)}</h2>
+                  <span className={selectedRankingRow.officialEligible ? "badge ok" : "badge warn"}>
+                    {selectedRankingRow.officialEligible ? t.common.official : t.common.provisional}
+                  </span>
+                </div>
+                <div className="panel-body metric-list">
+                  <div className="metric-row">
+                    <span>{language === "zh" ? "鲁棒性" : "Robustness"}</span>
+                    <strong>{formatPercent(robustnessScore(selectedRankingRow))}</strong>
+                  </div>
+                  <div className="metric-row">
+                    <span>{language === "zh" ? "自身保真度" : "Intrinsic fidelity"}</span>
+                    <strong>{formatPercent(normalizedFidelityScore(selectedRankingRow, rows))}</strong>
+                  </div>
+                  <div className="metric-row">
+                    <span>{language === "zh" ? "算法复杂度" : "Algorithm complexity"}</span>
+                    <strong>{formatPercent(algorithmSimplicityScore(selectedRankingRow, rows))}</strong>
+                  </div>
+                </div>
               </div>
-              <div className="metric-row">
-                <span>{language === "zh" ? "自身保真度" : "Intrinsic fidelity"}</span>
-                <strong>{formatPercent(normalizedFidelityScore(selectedRankingRow, rows))}</strong>
-              </div>
-              <div className="metric-row">
-                <span>{language === "zh" ? "算法复杂度" : "Algorithm complexity"}</span>
-                <strong>{formatPercent(algorithmSimplicityScore(selectedRankingRow, rows))}</strong>
-              </div>
-            </div>
-          </div>
-        ) : null}
+            ) : null}
+          </>
+        )}
       </section>
     </AppShell>
   );

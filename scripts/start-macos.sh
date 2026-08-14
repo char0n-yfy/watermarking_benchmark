@@ -18,12 +18,20 @@ API_PORT="${API_PORT:-8000}"
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-3000}"
 
+CORS_ORIGINS="${WM_BENCH_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:6006,http://127.0.0.1:6006}"
+for origin in "http://localhost:${WEB_PORT}" "http://127.0.0.1:${WEB_PORT}"; do
+  if [[ ",${CORS_ORIGINS}," != *",${origin},"* ]]; then
+    CORS_ORIGINS="${CORS_ORIGINS},${origin}"
+  fi
+done
+
 export APP_ENV="${APP_ENV:-development}"
 export WM_BENCH_DATA_ROOT="${WM_BENCH_DATA_ROOT:-${ROOT_DIR}}"
 export WM_BENCH_RESOURCES_ROOT="${WM_BENCH_RESOURCES_ROOT:-${ROOT_DIR}/resources}"
 export WM_BENCH_RUNS_ROOT="${WM_BENCH_RUNS_ROOT:-${ROOT_DIR}/runs}"
 export WM_BENCH_DEVICE="${WM_BENCH_DEVICE:-cpu}"
 export WM_BENCH_WORKER_POLL_SECONDS="${WM_BENCH_WORKER_POLL_SECONDS:-2}"
+export WM_BENCH_CORS_ORIGINS="${CORS_ORIGINS}"
 export API_HOST
 export API_PORT
 

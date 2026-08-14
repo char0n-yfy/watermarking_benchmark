@@ -10,6 +10,7 @@ export function BenchmarkRadar({
   selectedCategoryKey,
   onSelectCategory,
   colorDomain,
+  scoreLabel = "Score",
   variant = "default"
 }: {
   categories: BenchmarkCategoryScore[];
@@ -18,6 +19,7 @@ export function BenchmarkRadar({
   selectedCategoryKey?: string;
   onSelectCategory?: (category: BenchmarkCategoryScore) => void;
   colorDomain?: string[];
+  scoreLabel?: string;
   variant?: "default" | "hero";
 }) {
   const [hoveredCategoryKey, setHoveredCategoryKey] = useState<string | null>(null);
@@ -72,10 +74,12 @@ export function BenchmarkRadar({
         categoryKey: hoveredCategoryKey,
         center,
         drawableSeries,
+        emptyText,
         focusedSeriesId,
         hoveredSeriesId,
         labelPoints: axisPoints,
         radius,
+        scoreLabel,
         size
       })
     : null;
@@ -87,8 +91,11 @@ export function BenchmarkRadar({
         .join(" ")}
     >
       <svg
+        aria-label={`Radar chart. ${drawableSeries
+          .map((item) => `${item.label}: ${item.categories.map((category) => `${category.label} ${formatRadarScore(category.score, emptyText, scoreLabel)}`).join(", ")}`)
+          .join("; ")}`}
         className={isHero ? "radar-chart radar-chart-hero" : "radar-chart"}
-        role="img"
+        role="group"
         viewBox={`0 0 ${size} ${size}`}
       >
         <circle className="radar-boundary" cx={center} cy={center} r={radius} />
@@ -197,9 +204,17 @@ export function BenchmarkRadar({
                       setHoveredCategoryKey(null);
                       setHoveredSeriesId(null);
                     }}
+                    onKeyDown={(event) => {
+                      if (onSelectCategory && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        onSelectCategory(point.category);
+                      }
+                    }}
                     r={isHero ? "5" : "4"}
+                    aria-label={`${item.label}, ${point.category.label}, ${formatRadarScore(point.category.score, emptyText, scoreLabel)}`}
+                    role={onSelectCategory ? "button" : undefined}
                     style={{ "--radar-color": color } as CSSProperties}
-                    tabIndex={0}
+                    tabIndex={onSelectCategory ? 0 : undefined}
                   />
                 ))}
             </g>
@@ -335,19 +350,23 @@ function buildRadarTooltip({
   categoryKey,
   center,
   drawableSeries,
+  emptyText,
   focusedSeriesId,
   hoveredSeriesId,
   labelPoints,
   radius,
+  scoreLabel,
   size
 }: {
   categoryKey: string;
   center: number;
   drawableSeries: Array<{ id: string; label: string; categories: BenchmarkCategoryScore[] }>;
+  emptyText: string;
   focusedSeriesId: string | null;
   hoveredSeriesId: string | null;
   labelPoints: RadarAxisPoint[];
   radius: number;
+  scoreLabel: string;
   size: number;
 }) {
   const series =
@@ -370,12 +389,12 @@ function buildRadarTooltip({
     x: boxX,
     y: boxY,
     title: title.length > 18 ? `${title.slice(0, 17)}...` : title,
-    value: `${valuePrefix}${formatRadarScore(category.score)}`
+    value: `${valuePrefix}${formatRadarScore(category.score, emptyText, scoreLabel)}`
   };
 }
 
-function formatRadarScore(score: number | null | undefined): string {
-  return score == null || !Number.isFinite(score) ? "暂无数据" : `得分 ${score.toFixed(3)}`;
+function formatRadarScore(score: number | null | undefined, emptyText: string, scoreLabel: string): string {
+  return score == null || !Number.isFinite(score) ? emptyText : `${scoreLabel} ${score.toFixed(3)}`;
 }
 
 function buildRadarAreaPath(points: RadarPlotPoint[]): string | null {

@@ -206,7 +206,12 @@ export function RobustnessCurve({
 
   return (
     <div className="curve-wrap">
-      <svg className="curve-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
+      <svg
+        aria-label={`Robustness curve with ${series.length} algorithm series and ${series.reduce((total, item) => total + item.points.length, 0)} points.`}
+        className="curve-chart"
+        role="img"
+        viewBox={`0 0 ${width} ${height}`}
+      >
         <line className="chart-axis" x1={pad} x2={pad} y1={pad} y2={height - pad} />
         <line className="chart-axis" x1={pad} x2={width - pad} y1={height - pad} y2={height - pad} />
         {[0, 0.25, 0.5, 0.75, 1].map((tick) => (
@@ -324,7 +329,12 @@ function ScoreCurve({
           <span>{pointCaption}</span>
         </div>
       ) : null}
-      <svg className="curve-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
+      <svg
+        aria-label={`Robustness score curve with ${series.length} series and ${series.reduce((total, item) => total + item.points.length, 0)} points. Horizontal axis: Normalized Quality Degradation. Vertical axis: TPR.`}
+        className="curve-chart"
+        role="group"
+        viewBox={`0 0 ${width} ${height}`}
+      >
         <line className="chart-axis" x1={leftPad} x2={leftPad} y1={topPad} y2={axisY} />
         <line className="chart-axis" x1={leftPad} x2={width - rightPad} y1={axisY} y2={axisY} />
         {yTicks.map((tick) => (
@@ -367,8 +377,23 @@ function ScoreCurve({
           return (
             <g key={item.id}>
               <polyline fill="none" points={points} stroke={color} strokeWidth="2.2" />
-              {item.points.map((point, pointIndex) => (
-                <g key={`${item.id}-${point.raw.attackPresetId}-${point.raw.attackParamStrength ?? point.raw.attackStrength}-${point.x}-${pointIndex}`}>
+              {item.points.map((point, pointIndex) => {
+                const pointLabel = `Algorithm: ${labelAlgorithm(point.raw.algorithmId)}. Attack: ${labelAttack(point.raw)}. Variant: ${variantDisplayLabel(point.raw)}. Strength: ${point.raw.attackParamStrengthName ?? "strength"} ${formatStrength(point.raw.attackParamStrength ?? point.raw.attackStrength)}. NQD: ${formatMetric(point.raw.xNqd)}. TPR: ${formatMetric(point.raw.yTprAtFpr)}. Samples: ${formatSampleCount(point.raw.sampleCount)}.`;
+                return (
+                <g
+                  aria-label={pointLabel}
+                  className={onSelectPoint ? "clickable-chart-point" : undefined}
+                  key={`${item.id}-${point.raw.attackPresetId}-${point.raw.attackParamStrength ?? point.raw.attackStrength}-${point.x}-${pointIndex}`}
+                  onClick={() => onSelectPoint?.(point.raw)}
+                  onKeyDown={(event) => {
+                    if (onSelectPoint && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      onSelectPoint(point.raw);
+                    }
+                  }}
+                  role={onSelectPoint ? "button" : undefined}
+                  tabIndex={onSelectPoint ? 0 : undefined}
+                >
                   <title>
                     {`Algorithm: ${labelAlgorithm(point.raw.algorithmId)}
 Attack: ${labelAttack(point.raw)}
@@ -379,16 +404,15 @@ TPR: ${formatMetric(point.raw.yTprAtFpr)}
 Samples: ${formatSampleCount(point.raw.sampleCount)}`}
                   </title>
                   <PointGlyph
-                    className="clickable-chart-point"
                     color={color}
-                    onClick={() => onSelectPoint?.(point.raw)}
                     shape={shape}
                     size={scalePointSize ? pointRadius(point.raw, pointSizeStats) : undefined}
                     x={xFor(point.x)}
                     y={yFor(point.y)}
                   />
                 </g>
-              ))}
+                );
+              })}
             </g>
           );
         })}

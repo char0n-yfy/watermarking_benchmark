@@ -498,6 +498,109 @@ class ExperimentServiceTest(unittest.TestCase):
             self.assertEqual(len(result_units), 1)
             self.assertEqual(result_units[0]["resultUnitKey"], cell["cellKey"])
 
+    def test_copied_run_relocates_missing_artifact_root_to_local_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs_root = root / "runs"
+            run_id = "run_copied"
+            run_dir = runs_root / run_id
+            run_dir.mkdir(parents=True)
+            stale_root = Path("/remote/machine/runs") / run_id
+            local_log = run_dir / "worker.log"
+            local_log.write_text("copied log\n", encoding="utf-8")
+            (run_dir / "run_record.json").write_text(
+                json.dumps(
+                    {
+                        "id": run_id,
+                        "taskName": "Copied experiment",
+                        "status": "succeeded",
+                        "cells": 1,
+                        "progress": 100,
+                        "completedProgress": 100,
+                        "artifactRoot": str(stale_root),
+                        "logPath": str(stale_root / "worker.log"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "result_units.jsonl").write_text(
+                json.dumps(
+                    {
+                        "resultUnitKey": "copied-unit",
+                        "cellKey": "copied-unit",
+                        "status": "succeeded",
+                        "datasetId": "smoke",
+                        "algorithmId": "alg-traditional-spread-dct",
+                        "attackPresetId": "atk-identity",
+                        "attackMethod": "identity",
+                        "attackStrength": 0.0,
+                        "seed": 42,
+                        "sampleCount": 1,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            service = ExperimentService(
+                resources_root=root / "resources",
+                runs_root=runs_root,
+            )
+
+            run = service.get_run(run_id)
+            listed_run = next(item for item in service.list_runs() if item["id"] == run_id)
+            result_units = service.list_run_result_units(run_id)
+
+            self.assertEqual(run["artifactRoot"], str(run_dir))
+            self.assertEqual(run["logPath"], str(local_log))
+            self.assertEqual(listed_run["artifactRoot"], str(run_dir))
+            self.assertEqual(len(result_units), 1)
+            self.assertEqual(result_units[0]["resultUnitKey"], "copied-unit")
+
+    def test_copied_run_preserves_existing_external_artifact_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs_root = root / "runs"
+            run_id = "run_external"
+            run_dir = runs_root / run_id
+            external_root = root / "mounted-runs" / run_id
+            run_dir.mkdir(parents=True)
+            external_root.mkdir(parents=True)
+            (run_dir / "run_record.json").write_text(
+                json.dumps(
+                    {
+                        "id": run_id,
+                        "taskName": "Mounted experiment",
+                        "status": "succeeded",
+                        "cells": 1,
+                        "progress": 100,
+                        "completedProgress": 100,
+                        "artifactRoot": str(external_root),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "result_units.jsonl").write_text(
+                json.dumps({"resultUnitKey": "local-unit", "cellKey": "local-unit"}) + "\n",
+                encoding="utf-8",
+            )
+            (external_root / "result_units.jsonl").write_text(
+                json.dumps({"resultUnitKey": "external-unit", "cellKey": "external-unit"}) + "\n",
+                encoding="utf-8",
+            )
+
+            service = ExperimentService(
+                resources_root=root / "resources",
+                runs_root=runs_root,
+            )
+
+            run = service.get_run(run_id)
+            result_units = service.list_run_result_units(run_id)
+
+            self.assertEqual(run["artifactRoot"], str(external_root))
+            self.assertEqual(len(result_units), 1)
+            self.assertEqual(result_units[0]["resultUnitKey"], "external-unit")
+
     def test_execute_run_heartbeat_prevents_stale_reconcile_during_long_stage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

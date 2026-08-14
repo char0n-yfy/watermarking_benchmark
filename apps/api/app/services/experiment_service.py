@@ -210,6 +210,31 @@ class ExperimentService:
             artifact_root = self.runs_root / safe_segment(run_or_id)
         return artifact_root / RUN_RECORD_NAME
 
+    def _relocate_stale_run_record(self, run: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+        """Use a copied local run directory when its recorded artifact root no longer exists."""
+        recorded_root_value = run.get("artifactRoot")
+        recorded_root = Path(str(recorded_root_value)) if recorded_root_value else None
+        if recorded_root is not None and (recorded_root == run_dir or recorded_root.exists()):
+            return run
+        if not run_dir.is_dir() or not any(
+            (run_dir / filename).exists()
+            for filename in (
+                "result_units.jsonl",
+                "run_summary.json",
+                "run_state.json",
+                "run_status.json",
+                "run_plan.json",
+            )
+        ):
+            return run
+
+        relocated = {**run, "artifactRoot": str(run_dir)}
+        recorded_log_path = run.get("logPath")
+        if not recorded_log_path or not Path(str(recorded_log_path)).exists():
+            local_log_path = run_dir / "worker.log"
+            relocated["logPath"] = str(local_log_path) if local_log_path.exists() else None
+        return relocated
+
     def _heartbeat_path(self, worker_id: str) -> Path:
         return self.heartbeats_dir / f"{safe_segment(worker_id)}.json"
 
@@ -246,7 +271,7 @@ class ExperimentService:
             run = _read_json_file(self._run_record_path(run_id))
         if not run or not isinstance(run.get("id"), str):
             return None
-        return run
+        return self._relocate_stale_run_record(run, self.runs_root / safe_segment(run_id))
 
     def _write_run_record(self, run: dict[str, Any]) -> None:
         run_id = str(run["id"])
@@ -261,10 +286,15 @@ class ExperimentService:
             for path in self.runs_dir.glob("*.json"):
                 run = _read_json_file(path)
                 if isinstance(run.get("id"), str):
+                    run = self._relocate_stale_run_record(
+                        run,
+                        self.runs_root / safe_segment(str(run["id"])),
+                    )
                     runs[str(run["id"])] = run
         for run_dir in self._iter_file_run_dirs():
             record = _read_json_file(run_dir / RUN_RECORD_NAME)
             if isinstance(record.get("id"), str):
+                record = self._relocate_stale_run_record(record, run_dir)
                 runs.setdefault(str(record["id"]), record)
         return list(runs.values())
 
@@ -703,6 +733,7 @@ class ExperimentService:
         if not any((record, summary, state, status_doc, plan, (run_dir / "result_units.jsonl").exists())):
             return None
         if record:
+            record = self._relocate_stale_run_record(record, run_dir)
             return self._enrich_run_with_state(self._run_from_file_record(record))
 
         selection = self._first_dict(summary.get("selection"), state.get("selection"), plan.get("selection"))

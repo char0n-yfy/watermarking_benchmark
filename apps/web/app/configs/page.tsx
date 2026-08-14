@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Braces, Check, Database, Edit3, Gauge, Loader2, Save, Search, Shield, Trash2, X } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { Dialog } from "@/components/Dialog";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
   createSavedConfig,
@@ -1033,7 +1034,7 @@ export default function ConfigsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<SavedExperimentConfig | null>(null);
   const [renameName, setRenameName] = useState("");
-  const [message, setMessage] = useState("");
+  const [feedback, setFeedback] = useState<{ text: string; tone: "ok" | "warn" | "error" } | null>(null);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const isSavingConfigRef = useRef(false);
 
@@ -1211,12 +1212,12 @@ export default function ConfigsPage() {
         setSavedConfigs(apiConfigs);
 
         if (apiDatasets.length === 0) {
-          setMessage("resources/datasets 下还没有可用图片，请先解压数据集。");
+          setFeedback({ text: "resources/datasets 下还没有可用图片，请先解压数据集。", tone: "warn" });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setMessage("API 未启动或资源接口不可访问，暂时无法创建配置。");
+          setFeedback({ text: "API 未启动或资源接口不可访问，暂时无法创建配置。", tone: "error" });
         }
       });
     return () => {
@@ -1235,7 +1236,7 @@ export default function ConfigsPage() {
     setPhysicalSettings(defaultPhysicalSettings);
     setRegenerationSettings(defaultRegenerationSettings);
     setConsumerEnhancementSettings(defaultConsumerEnhancementSettings);
-    setMessage("");
+    setFeedback(null);
     setIsCreateOpen(true);
   };
 
@@ -1244,7 +1245,7 @@ export default function ConfigsPage() {
       return;
     }
     if (!canSave) {
-      setMessage("请至少选择一个数据集、一个水印算法，并填写配置名称。");
+      setFeedback({ text: "请至少选择一个数据集、一个水印算法，并填写配置名称。", tone: "warn" });
       return;
     }
     isSavingConfigRef.current = true;
@@ -1253,9 +1254,9 @@ export default function ConfigsPage() {
       const config = await createSavedConfig(configName.trim(), effectiveSelection);
       setSavedConfigs((current) => [config, ...current]);
       setIsCreateOpen(false);
-      setMessage(t.configs.savedToast);
+      setFeedback({ text: t.configs.savedToast, tone: "ok" });
     } catch {
-      setMessage("API 保存失败，请先启动 FastAPI 服务后再保存。");
+      setFeedback({ text: "API 保存失败，请先启动 FastAPI 服务后再保存。", tone: "error" });
     } finally {
       isSavingConfigRef.current = false;
       setIsSavingConfig(false);
@@ -1265,7 +1266,7 @@ export default function ConfigsPage() {
   const openRenameModal = (config: SavedExperimentConfig) => {
     setRenameTarget(config);
     setRenameName(config.name);
-    setMessage("");
+    setFeedback(null);
   };
 
   const renameConfig = async () => {
@@ -1274,7 +1275,7 @@ export default function ConfigsPage() {
     }
     const nextName = renameName.trim();
     if (!nextName) {
-      setMessage("配置名称不能为空。");
+      setFeedback({ text: "配置名称不能为空。", tone: "warn" });
       return;
     }
     try {
@@ -1282,9 +1283,9 @@ export default function ConfigsPage() {
       setSavedConfigs((configs) => configs.map((config) => (config.id === updated.id ? updated : config)));
       setRenameTarget(null);
       setRenameName("");
-      setMessage(language === "zh" ? "配置已重命名。" : "Config renamed.");
+      setFeedback({ text: language === "zh" ? "配置已重命名。" : "Config renamed.", tone: "ok" });
     } catch {
-      setMessage("重命名失败，请确认 API 服务可用。");
+      setFeedback({ text: "重命名失败，请确认 API 服务可用。", tone: "error" });
     }
   };
 
@@ -1295,9 +1296,9 @@ export default function ConfigsPage() {
     try {
       await deleteSavedConfig(config.id);
       setSavedConfigs((configs) => configs.filter((item) => item.id !== config.id));
-      setMessage(language === "zh" ? "配置已删除。" : "Config deleted.");
+      setFeedback({ text: language === "zh" ? "配置已删除。" : "Config deleted.", tone: "ok" });
     } catch {
-      setMessage("删除失败，请确认 API 服务可用。");
+      setFeedback({ text: "删除失败，请确认 API 服务可用。", tone: "error" });
     }
   };
 
@@ -1365,17 +1366,20 @@ export default function ConfigsPage() {
         </div>
       </section>
 
-      {message ? <div className="risk ok config-page-message">{message}</div> : null}
+      {feedback ? (
+        <div className={`risk ${feedback.tone} config-page-message`} role={feedback.tone === "error" ? "alert" : "status"}>
+          {feedback.text}
+        </div>
+      ) : null}
 
       {isCreateOpen ? (
-        <div aria-modal="true" className="modal-backdrop" role="dialog">
-          <div className="config-modal">
+        <Dialog className="config-modal" labelledBy="config-create-title" onClose={() => setIsCreateOpen(false)}>
             <div className="modal-header">
               <div>
-                <h2>{copy.createTitle}</h2>
+                <h2 id="config-create-title">{copy.createTitle}</h2>
                 <p>{copy.modalHint}</p>
               </div>
-              <button aria-label="Close" className="icon-button" onClick={() => setIsCreateOpen(false)} type="button">
+              <button aria-label={copy.cancel} className="icon-button" onClick={() => setIsCreateOpen(false)} type="button">
                 <X size={16} />
               </button>
             </div>
@@ -1384,6 +1388,7 @@ export default function ConfigsPage() {
               <div className="field config-name-field">
                 <label htmlFor="config-name">{t.configs.nameLabel}</label>
                 <input
+                  data-dialog-autofocus
                   id="config-name"
                   onChange={(event) => setConfigName(event.target.value)}
                   placeholder={t.configs.namePlaceholder}
@@ -2444,19 +2449,22 @@ export default function ConfigsPage() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
 
       {renameTarget ? (
-        <div aria-modal="true" className="modal-backdrop compact-modal-backdrop" role="dialog">
-          <div className="rename-modal">
+        <Dialog
+          backdropClassName="compact-modal-backdrop"
+          className="rename-modal"
+          labelledBy="config-rename-title"
+          onClose={() => setRenameTarget(null)}
+        >
             <div className="modal-header">
               <div>
-                <h2>{copy.renameTitle}</h2>
+                <h2 id="config-rename-title">{copy.renameTitle}</h2>
                 <p>{renameTarget.id}</p>
               </div>
-              <button aria-label="Close" className="icon-button" onClick={() => setRenameTarget(null)} type="button">
+              <button aria-label={copy.cancel} className="icon-button" onClick={() => setRenameTarget(null)} type="button">
                 <X size={16} />
               </button>
             </div>
@@ -2465,6 +2473,7 @@ export default function ConfigsPage() {
                 <label htmlFor="rename-config-name">{t.configs.nameLabel}</label>
                 <input
                   autoFocus
+                  data-dialog-autofocus
                   id="rename-config-name"
                   onChange={(event) => setRenameName(event.target.value)}
                   value={renameName}
@@ -2483,8 +2492,7 @@ export default function ConfigsPage() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
     </AppShell>
   );

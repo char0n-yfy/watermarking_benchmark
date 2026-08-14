@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
@@ -7,6 +8,7 @@ import {
   Filter,
   Gauge,
   Info,
+  LoaderCircle,
   PlayCircle,
   RefreshCw,
   SlidersHorizontal,
@@ -15,6 +17,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { BenchmarkRadar } from "@/components/BenchmarkRadar";
 import { useLanguage } from "@/components/LanguageProvider";
+import { PageState } from "@/components/PageState";
 import {
   CurveLegendGlyph,
   RobustnessCurve,
@@ -374,7 +377,6 @@ export default function ResultsPage() {
     if (!selectedRunId) {
       setResults(null);
       setScore(null);
-      setLoading(false);
       return;
     }
     let cancelled = false;
@@ -561,26 +563,32 @@ export default function ResultsPage() {
 
   return (
     <AppShell active="results">
-      <div className="topbar">
+      <div className="topbar run-picker-topbar">
         <div className="title-block">
           <h1>{t.results.title}</h1>
         </div>
-        <div className="toolbar">
+        <div className="toolbar run-picker-toolbar">
           <select
-            aria-label="Select run result"
+            aria-label={uiText("选择测评结果", "Select run result")}
             className="run-result-select"
             disabled={runs.length === 0}
             onChange={(event) => setSelectedRunId(event.target.value)}
             value={selectedRunId}
           >
-            {runs.length === 0 ? <option value="">No runs</option> : null}
+            {runs.length === 0 ? <option value="">{loading ? uiText("正在加载…", "Loading…") : uiText("暂无运行", "No runs")}</option> : null}
             {runs.map((run) => (
               <option key={run.id} value={run.id}>
-                {friendlyRunRecordName(run, language).slice(0, 72)} / {run.status}
+                {friendlyRunRecordName(run, language).slice(0, 72)} / {t.common.status[run.status]}
               </option>
             ))}
           </select>
-          <button className="button icon-button" onClick={() => setRunRefreshKey((value) => value + 1)} type="button">
+          <button
+            aria-label={t.common.refresh}
+            className="button icon-button"
+            onClick={() => setRunRefreshKey((value) => value + 1)}
+            title={t.common.refresh}
+            type="button"
+          >
             <RefreshCw size={16} />
           </button>
           <button className="button" disabled={!results} onClick={() => exportResultsCsv(results, score)} type="button">
@@ -590,26 +598,27 @@ export default function ResultsPage() {
         </div>
       </div>
 
-      {notice ? <div className="risk warn">{notice}</div> : null}
+      {notice ? <div className={`risk ${notice === t.results.apiUnavailable ? "error" : "warn"}`} role={notice === t.results.apiUnavailable ? "alert" : "status"}>{notice}</div> : null}
 
       {!results ? (
-        <section className="result-empty-state">
-          <Info size={34} />
-          <h2>{loading ? emptyCopy.loadingTitle : emptyCopy.title}</h2>
-          <p>{loading ? emptyCopy.loadingBody : emptyCopy.body}</p>
-          {!loading ? (
-            <div className="toolbar">
-              <a className="button primary" href="/runs">
+        <PageState
+          actions={!loading ? (
+            <>
+              <Link className="button primary" href="/runs">
                 <PlayCircle size={16} />
                 {emptyCopy.openRuns}
-              </a>
-              <a className="button" href="/configs">
+              </Link>
+              <Link className="button" href="/configs">
                 <SlidersHorizontal size={16} />
                 {emptyCopy.openConfigs}
-              </a>
-            </div>
-          ) : null}
-        </section>
+              </Link>
+            </>
+          ) : undefined}
+          description={loading ? emptyCopy.loadingBody : emptyCopy.body}
+          icon={loading ? LoaderCircle : Info}
+          title={loading ? emptyCopy.loadingTitle : emptyCopy.title}
+          tone={loading ? "loading" : notice === t.results.apiUnavailable ? "error" : "empty"}
+        />
       ) : (
         <>
       <section className="results-summary-grid">
@@ -871,7 +880,7 @@ export default function ResultsPage() {
           <div className="panel-body overview-radar-body">
             <BenchmarkRadar
               categories={overviewMainRadarCategories}
-              emptyText="暂无数据"
+              emptyText={t.common.noData}
               onSelectCategory={(category) =>
                 setActiveInsight({
                   kind: "category",
@@ -884,6 +893,7 @@ export default function ResultsPage() {
               selectedCategoryKey={activeInsight?.kind === "category" ? activeInsight.key : undefined}
               series={overviewMainRadarSeries}
               colorDomain={algorithmColorDomain}
+              scoreLabel={uiText("得分", "Score")}
               variant="hero"
             />
           </div>
@@ -903,7 +913,7 @@ export default function ResultsPage() {
                   <BenchmarkRadar
                     categories={detail.categories}
                     colorDomain={algorithmColorDomain}
-                    emptyText="暂无数据"
+                    emptyText={t.common.noData}
                     onSelectCategory={(category) =>
                       setActiveInsight({
                         kind: "category",
@@ -918,6 +928,7 @@ export default function ResultsPage() {
                         ? activeInsight.key.slice(detail.categoryKey.length + 1)
                         : undefined
                     }
+                    scoreLabel={uiText("得分", "Score")}
                     series={detail.series}
                   />
                 ) : (
