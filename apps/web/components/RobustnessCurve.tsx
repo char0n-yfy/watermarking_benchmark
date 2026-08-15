@@ -232,10 +232,11 @@ export function RobustnessCurve({
           const color = colors[index % colors.length];
           const points = item.points.map((point) => `${xFor(point.strength)},${yFor(point.accuracy)}`).join(" ");
           return (
-            <g key={item.algorithmId}>
-              <polyline fill="none" points={points} stroke={color} strokeWidth="2.2" />
+            <g className="score-curve-series" key={item.algorithmId}>
+              <polyline className="score-curve-line" fill="none" points={points} stroke={color} strokeWidth="2.2" />
               {item.points.map((point) => (
                 <circle
+                  className="score-curve-point"
                   cx={xFor(point.strength)}
                   cy={yFor(point.accuracy)}
                   fill={color}
@@ -375,14 +376,14 @@ function ScoreCurve({
           const shape = shapeFor(item.shapeKey);
           const points = item.points.map((point) => `${xFor(point.x)},${yFor(point.y)}`).join(" ");
           return (
-            <g key={item.id}>
-              <polyline fill="none" points={points} stroke={color} strokeWidth="2.2" />
+            <g className="score-curve-series" key={item.id}>
+              <polyline className="score-curve-line" fill="none" points={points} stroke={color} strokeWidth="2.2" />
               {item.points.map((point, pointIndex) => {
                 const pointLabel = `Algorithm: ${labelAlgorithm(point.raw.algorithmId)}. Attack: ${labelAttack(point.raw)}. Variant: ${variantDisplayLabel(point.raw)}. Strength: ${point.raw.attackParamStrengthName ?? "strength"} ${formatStrength(point.raw.attackParamStrength ?? point.raw.attackStrength)}. NQD: ${formatMetric(point.raw.xNqd)}. TPR: ${formatMetric(point.raw.yTprAtFpr)}. Samples: ${formatSampleCount(point.raw.sampleCount)}.`;
                 return (
                 <g
                   aria-label={pointLabel}
-                  className={onSelectPoint ? "clickable-chart-point" : undefined}
+                  className={onSelectPoint ? "score-curve-point clickable-chart-point" : "score-curve-point"}
                   key={`${item.id}-${point.raw.attackPresetId}-${point.raw.attackParamStrength ?? point.raw.attackStrength}-${point.x}-${pointIndex}`}
                   onClick={() => onSelectPoint?.(point.raw)}
                   onKeyDown={(event) => {

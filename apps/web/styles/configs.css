@@ -125,6 +125,13 @@
   line-height: 1.7;
 }
 
+.config-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 .config-page-message {
   margin-top: 12px;
 }

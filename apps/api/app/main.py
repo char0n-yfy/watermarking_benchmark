@@ -8,10 +8,11 @@ from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
+from .core.storage import safe_segment
 from .core.status import RunStatus
 from .schemas.datasets import DatasetDownloadCreatePayload
 from .schemas.experiments import ExperimentConfigCreatePayload, ExperimentConfigRenamePayload, RunCreatePayload
@@ -509,6 +510,19 @@ def create_app() -> FastAPI:
             return service.get_run_results(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/runs/{run_id}/results.csv")
+    def download_run_results_csv(run_id: str) -> Response:
+        try:
+            content = service.get_run_results_csv(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        filename = f"{safe_segment(run_id)}-results.csv"
+        return Response(
+            content=content,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.get("/runs/{run_id}/score")
     def get_run_score(run_id: str) -> dict[str, object]:

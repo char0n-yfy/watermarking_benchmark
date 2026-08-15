@@ -326,6 +326,10 @@ button {
   flex: 0 0 auto;
 }
 
+.desktop-sidebar-toggle {
+  display: none;
+}
+
 .sidebar-panel {
   display: flex;
   flex: 1 1 auto;

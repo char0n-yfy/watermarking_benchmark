@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-import json
+import csv
 import gzip
+import io
+import json
+import math
 import os
 import threading
 from contextlib import contextmanager
@@ -37,6 +40,25 @@ DASHBOARD_CACHE_SCHEMA_VERSION = 1
 DASHBOARD_CACHE_DIR = "dashboard-results"
 DASHBOARD_CACHE_NAME = "results.v1.json.gz"
 DASHBOARD_SCORE_CACHE_NAME = "score.v1.json.gz"
+
+
+def _javascript_string(value: Any) -> str:
+    """Match JavaScript String(...) for the primitive values used by CSV export."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "NaN"
+        if math.isinf(value):
+            return "Infinity" if value > 0 else "-Infinity"
+        if value == 0:
+            return "0"
+        if value.is_integer():
+            return str(int(value))
+        return repr(value)
+    return str(value)
 
 
 def with_hidden_baseline_attack(selection: dict[str, Any]) -> dict[str, Any]:
@@ -1003,6 +1025,68 @@ class ExperimentService:
 
     def get_run_results(self, run_id: str) -> dict[str, Any]:
         return self._get_or_build_dashboard_results(run_id)
+
+    def get_run_results_csv(self, run_id: str) -> str:
+        results = self._get_or_build_dashboard_results(run_id)
+        run = results.get("run") if isinstance(results.get("run"), dict) else {}
+        score = results.get("score") if isinstance(results.get("score"), dict) else None
+        result_units = results.get("resultUnits") if isinstance(results.get("resultUnits"), list) else []
+
+        rows: list[list[str]] = [[
+            "run_id",
+            "result_unit_key",
+            "algorithm_id",
+            "attack_preset_id",
+            "attack_strength",
+            "status",
+            "bit_accuracy",
+            "ber",
+            "tpr_at_fpr",
+            "nqd",
+            "manifest_path",
+        ]]
+        run_id_value = _javascript_string(run.get("id", run_id))
+        for unit in result_units:
+            if not isinstance(unit, dict):
+                continue
+            result_unit_key = unit.get("resultUnitKey")
+            if result_unit_key is None:
+                result_unit_key = unit.get("cellKey")
+            if result_unit_key is None:
+                result_unit_key = unit.get("id")
+            summary = unit.get("summary")
+            scoring = summary.get("scoring") if isinstance(summary, dict) else None
+            rows.append([
+                run_id_value,
+                _javascript_string(result_unit_key),
+                _javascript_string(unit.get("algorithmId")),
+                _javascript_string(unit.get("attackPresetId")),
+                _javascript_string(unit.get("attackStrength")),
+                _javascript_string(unit.get("status")),
+                _javascript_string(unit.get("bitAccuracy")),
+                _javascript_string(unit.get("bitErrorRate")),
+                _javascript_string(scoring.get("tprAtFpr") if isinstance(scoring, dict) else None),
+                _javascript_string(
+                    scoring.get("normalizedQualityDegradation") if isinstance(scoring, dict) else None
+                ),
+                _javascript_string(unit.get("manifestPath")),
+            ])
+
+        if score is not None:
+            rows.append([])
+            rows.append([
+                "protocol_id",
+                _javascript_string(score.get("protocolId")),
+                "status",
+                _javascript_string(score.get("status")),
+                "wrs",
+                _javascript_string(score.get("wrs")),
+            ])
+
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="\n")
+        writer.writerows(rows)
+        return buffer.getvalue().removesuffix("\n")
 
     def _get_or_build_dashboard_results(self, run_id: str) -> dict[str, Any]:
         run = self.get_run(run_id)

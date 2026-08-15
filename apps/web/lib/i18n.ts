@@ -14,8 +14,7 @@ export const translations = {
       resources: "资源",
       runs: "运行",
       results: "结果",
-      leaderboard: "天梯图",
-      schema: "数据结构"
+      leaderboard: "天梯图"
     },
     common: {
       samples: "样本",
@@ -101,13 +100,34 @@ export const translations = {
       runningRuns: "运行中任务",
       completedRuns: "已完成运行",
       failedRuns: "失败运行",
+      experimentName: "测评名称",
+      highestStage: "最高阶段",
+      cellProgress: "单元进度",
+      stageProgress: "阶段进度",
       startedAt: "开始时间",
       robustnessCurves: "鲁棒性曲线",
       leaderboardPreview: "天梯图预览",
       datasetsSummary: "数据集摘要",
       officialLeaderboardPending: "正式天梯图等待固定评测协议和批量结果。",
       needMultipleStrengths: "需要同一算法在多个攻击强度下的结果才能绘制曲线。",
-      noActiveRuns: "当前没有运行中或已暂停的测评。"
+      noActiveRuns: "当前没有运行中或已暂停的测评。",
+      hardwarePerformance: "当前电脑性能",
+      gpuUsage: "GPU 占用率",
+      vramUsage: "显存占用率",
+      memoryUsage: "内存占用率",
+      cpuUsage: "CPU 占用率",
+      diskUsage: "硬盘占用率",
+      notCollected: "未采集",
+      liveUsage: "实时占用",
+      gpuMetricsUnavailable: "未检测到 NVIDIA GPU 指标",
+      vramUnavailable: "显存数据不可用",
+      temperature: "温度",
+      power: "功耗",
+      available: "可用",
+      used: "已用",
+      total: "总量",
+      apiUnavailable: "API 未启动或不可访问，请先启动 FastAPI 服务。",
+      metricsUnavailable: "系统性能指标暂时不可用，队列和资源数据已加载。"
     },
     configs: {
       title: "测评配置",
@@ -246,6 +266,11 @@ export const translations = {
       queuedNotice: "已加入后端队列，等待 worker 执行。",
       startExperiment: "开始测评",
       startExperimentHint: "新建一个测评任务，或从失败、暂停、部分完成的任务继续执行。",
+      tuningTitle: "并行参数自动调优",
+      tuningIntro: "先选择调参规则与算法范围，启动后再进入搜索进度、吞吐量趋势和推荐参数面板。",
+      configureTuning: "配置并开始调参",
+      latestTuningResult: "查看最近结果",
+      standaloneTuningHint: "在开始测评之外单独搜索 batch size 与 CPU worker 参数。",
       startDialogTitle: "开始测评",
       startDialogHint: "选择从头创建任务，或读取已有运行中/已暂停任务进行续跑。",
       newTask: "新建任务",
@@ -393,12 +418,6 @@ export const translations = {
       requirements: "上线前条件",
       protocolStatus: "协议状态"
     },
-    schema: {
-      title: "数据结构",
-      subtitle: "元数据实体",
-      coreTables: "核心表",
-      tableDescription: "本地文件状态与测评结果结构"
-    },
     resourceNames: {
       "ds-coco-v1": "MS-COCO 验证集切片",
       "ds-diffusiondb-v1": "DiffusionDB 精选集",
@@ -427,8 +446,7 @@ export const translations = {
       resources: "Resources",
       runs: "Runs",
       results: "Results",
-      leaderboard: "Leaderboard",
-      schema: "Schema"
+      leaderboard: "Leaderboard"
     },
     common: {
       samples: "samples",
@@ -514,13 +532,34 @@ export const translations = {
       runningRuns: "Running runs",
       completedRuns: "Completed runs",
       failedRuns: "Failed runs",
+      experimentName: "Experiment",
+      highestStage: "Highest stage",
+      cellProgress: "Cell progress",
+      stageProgress: "Stage progress",
       startedAt: "Started at",
       robustnessCurves: "Robustness curves",
       leaderboardPreview: "Leaderboard preview",
       datasetsSummary: "Datasets summary",
       officialLeaderboardPending: "The official leaderboard is waiting for a fixed benchmark protocol and batch results.",
       needMultipleStrengths: "Multiple attack strengths for the same algorithm are required to draw curves.",
-      noActiveRuns: "No running or paused experiments right now."
+      noActiveRuns: "No running or paused experiments right now.",
+      hardwarePerformance: "Computer performance",
+      gpuUsage: "GPU usage",
+      vramUsage: "VRAM usage",
+      memoryUsage: "Memory usage",
+      cpuUsage: "CPU usage",
+      diskUsage: "Disk usage",
+      notCollected: "Not collected",
+      liveUsage: "Live usage",
+      gpuMetricsUnavailable: "NVIDIA GPU metrics unavailable",
+      vramUnavailable: "VRAM metrics unavailable",
+      temperature: "Temperature",
+      power: "Power",
+      available: "Available",
+      used: "Used",
+      total: "Total",
+      apiUnavailable: "The API is unavailable. Start the FastAPI service and try again.",
+      metricsUnavailable: "System metrics are temporarily unavailable; queue and resource data are still loaded."
     },
     configs: {
       title: "Experiment Configs",
@@ -659,6 +698,11 @@ export const translations = {
       queuedNotice: "Queued in the backend. Waiting for a worker.",
       startExperiment: "Start Experiment",
       startExperimentHint: "Create a fresh experiment task, or continue a failed, paused, or partially completed task.",
+      tuningTitle: "Parallel Parameter Tuning",
+      tuningIntro: "Choose tuning rules and algorithms, then review search progress, throughput trends, and recommended parameters.",
+      configureTuning: "Configure and start tuning",
+      latestTuningResult: "View latest result",
+      standaloneTuningHint: "Search batch size and CPU worker settings independently from an experiment run.",
       startDialogTitle: "Start Experiment",
       startDialogHint: "Choose whether to create a task from scratch or resume an unfinished task.",
       newTask: "New Task",
@@ -805,12 +849,6 @@ export const translations = {
       noRows: "No scoreable runs yet. Complete an experiment with attack strengths to show provisional WRS.",
       requirements: "Requirements",
       protocolStatus: "Protocol status"
-    },
-    schema: {
-      title: "Schema",
-      subtitle: "Metadata entities",
-      coreTables: "Core tables",
-      tableDescription: "Local file state and run artifact structure"
     },
     resourceNames: {},
     dates: {}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Braces, Check, Database, Edit3, Gauge, Loader2, Save, Search, Shield, Trash2, X } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
@@ -1177,7 +1178,15 @@ export default function ConfigsPage() {
           renameTitle: "重命名配置",
           save: "保存配置",
           saving: "保存中",
-          modalHint: "保存后，该配置会进入运行页，可提交给 worker 执行。"
+          modalHint: "保存后，该配置会进入运行页，可提交给 worker 执行。",
+          missingDataset: "resources/datasets 下还没有可用图片，请先在资源页下载或安装数据集。",
+          apiUnavailable: "API 未启动或资源接口不可访问，暂时无法创建配置。",
+          selectionRequired: "请至少选择一个数据集、一个水印算法，并填写配置名称。",
+          saveFailed: "API 保存失败，请先启动 FastAPI 服务后再保存。",
+          emptyName: "配置名称不能为空。",
+          renameFailed: "重命名失败，请确认 API 服务可用。",
+          deleteFailed: "删除失败，请确认 API 服务可用。",
+          openResources: "前往资源页"
         }
       : {
           addConfig: "New config",
@@ -1196,7 +1205,15 @@ export default function ConfigsPage() {
           renameTitle: "Rename config",
           save: "Save config",
           saving: "Saving",
-          modalHint: "After saving, launch this config from the Runs page."
+          modalHint: "After saving, launch this config from the Runs page.",
+          missingDataset: "No usable images were found under resources/datasets. Download or install a dataset from Resources first.",
+          apiUnavailable: "The API or resource catalog is unavailable, so configs cannot be created right now.",
+          selectionRequired: "Choose at least one dataset and watermark algorithm, then enter a config name.",
+          saveFailed: "The config could not be saved. Check that the FastAPI service is running.",
+          emptyName: "Config name cannot be empty.",
+          renameFailed: "Rename failed. Check the API service.",
+          deleteFailed: "Delete failed. Check the API service.",
+          openResources: "Open Resources"
         };
 
   useEffect(() => {
@@ -1212,18 +1229,18 @@ export default function ConfigsPage() {
         setSavedConfigs(apiConfigs);
 
         if (apiDatasets.length === 0) {
-          setFeedback({ text: "resources/datasets 下还没有可用图片，请先解压数据集。", tone: "warn" });
+          setFeedback({ text: copy.missingDataset, tone: "warn" });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setFeedback({ text: "API 未启动或资源接口不可访问，暂时无法创建配置。", tone: "error" });
+          setFeedback({ text: copy.apiUnavailable, tone: "error" });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [language]);
 
   const openCreateModal = () => {
     setSelection(emptySelection);
@@ -1245,7 +1262,7 @@ export default function ConfigsPage() {
       return;
     }
     if (!canSave) {
-      setFeedback({ text: "请至少选择一个数据集、一个水印算法，并填写配置名称。", tone: "warn" });
+      setFeedback({ text: copy.selectionRequired, tone: "warn" });
       return;
     }
     isSavingConfigRef.current = true;
@@ -1256,7 +1273,7 @@ export default function ConfigsPage() {
       setIsCreateOpen(false);
       setFeedback({ text: t.configs.savedToast, tone: "ok" });
     } catch {
-      setFeedback({ text: "API 保存失败，请先启动 FastAPI 服务后再保存。", tone: "error" });
+      setFeedback({ text: copy.saveFailed, tone: "error" });
     } finally {
       isSavingConfigRef.current = false;
       setIsSavingConfig(false);
@@ -1275,7 +1292,7 @@ export default function ConfigsPage() {
     }
     const nextName = renameName.trim();
     if (!nextName) {
-      setFeedback({ text: "配置名称不能为空。", tone: "warn" });
+      setFeedback({ text: copy.emptyName, tone: "warn" });
       return;
     }
     try {
@@ -1285,7 +1302,7 @@ export default function ConfigsPage() {
       setRenameName("");
       setFeedback({ text: language === "zh" ? "配置已重命名。" : "Config renamed.", tone: "ok" });
     } catch {
-      setFeedback({ text: "重命名失败，请确认 API 服务可用。", tone: "error" });
+      setFeedback({ text: copy.renameFailed, tone: "error" });
     }
   };
 
@@ -1298,7 +1315,7 @@ export default function ConfigsPage() {
       setSavedConfigs((configs) => configs.filter((item) => item.id !== config.id));
       setFeedback({ text: language === "zh" ? "配置已删除。" : "Config deleted.", tone: "ok" });
     } catch {
-      setFeedback({ text: "删除失败，请确认 API 服务可用。", tone: "error" });
+      setFeedback({ text: copy.deleteFailed, tone: "error" });
     }
   };
 
@@ -1326,9 +1343,17 @@ export default function ConfigsPage() {
                 <Braces size={34} />
                 <h2>{t.configs.empty}</h2>
                 <p>{copy.draftEmpty}</p>
-                <button className="button surface-action configs-add-button" onClick={openCreateModal} type="button">
-                  {copy.addConfig}
-                </button>
+                <div className="config-empty-actions">
+                  <button className="button surface-action configs-add-button" onClick={openCreateModal} type="button">
+                    {copy.addConfig}
+                  </button>
+                  {datasets.length === 0 ? (
+                    <Link className="button" href="/resources">
+                      <Database size={16} />
+                      {copy.openResources}
+                    </Link>
+                  ) : null}
+                </div>
               </div>
             ) : null}
             {savedConfigs.map((config) => (

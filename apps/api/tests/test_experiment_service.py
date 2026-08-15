@@ -25,6 +25,46 @@ from app.services.scoring import PROTOCOL_ID
 
 
 class ExperimentServiceTest(unittest.TestCase):
+    def test_run_results_csv_matches_browser_export_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = ExperimentService(resources_root=root / "resources", runs_root=root / "runs")
+            payload = {
+                "run": {"id": "run-export"},
+                "resultUnits": [
+                    {
+                        "resultUnitKey": "unit-1",
+                        "algorithmId": "alg-a",
+                        "attackPresetId": "atk-jpeg",
+                        "attackStrength": 0.5,
+                        "status": "succeeded",
+                        "bitAccuracy": 0.875,
+                        "bitErrorRate": 0.125,
+                        "manifestPath": '/tmp/a"b.json',
+                        "summary": {
+                            "scoring": {
+                                "tprAtFpr": 0.75,
+                                "normalizedQualityDegradation": 0.25,
+                            }
+                        },
+                    }
+                ],
+                "score": {"protocolId": PROTOCOL_ID, "status": "final", "wrs": 80.0},
+            }
+
+            with patch.object(service, "_get_or_build_dashboard_results", return_value=payload):
+                csv_text = service.get_run_results_csv("run-export")
+
+            self.assertEqual(
+                csv_text.splitlines(),
+                [
+                    '"run_id","result_unit_key","algorithm_id","attack_preset_id","attack_strength","status","bit_accuracy","ber","tpr_at_fpr","nqd","manifest_path"',
+                    '"run-export","unit-1","alg-a","atk-jpeg","0.5","succeeded","0.875","0.125","0.75","0.25","/tmp/a""b.json"',
+                    '',
+                    f'"protocol_id","{PROTOCOL_ID}","status","final","wrs","80"',
+                ],
+            )
+
     def test_result_unit_jsonl_compaction_keeps_latest_record_per_unit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "result_units.jsonl"

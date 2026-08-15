@@ -239,7 +239,6 @@ function AlgorithmEvaluationRanking({
           </button>
         ))}
       </div>
-      <p className="overview-evaluation-note">{rankingDescription(metric, language)}</p>
       <div className="panel-body interactive-bars">
         {rankedRows.map((row, index) => {
           const value = rankingMetricScore(row, metric, rows);
@@ -307,27 +306,6 @@ function rankingLabels(language: string): Record<RankingMetric, string> {
     fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
     composite: language === "zh" ? "综合评分" : "Composite score"
   };
-}
-
-function rankingDescription(metric: RankingMetric, language: string): string {
-  if (metric === "robustness") {
-    return language === "zh"
-      ? "按已覆盖攻击类别的平均鲁棒得分排序，分数越高表示抗攻击能力越强。"
-      : "Ranked by mean robustness over covered attack families; higher is more robust.";
-  }
-  if (metric === "complexity") {
-    return language === "zh"
-      ? "按相对运行效率排序，分数越高表示算法越轻量、运行越快。"
-      : "Ranked by relative runtime efficiency; higher means lighter and faster.";
-  }
-  if (metric === "fidelity") {
-    return language === "zh"
-      ? "按无攻击条件下的图像保真度排序，分数越高表示水印引入的失真越小。"
-      : "Ranked by clean fidelity; higher means less visible distortion.";
-  }
-  return language === "zh"
-    ? "综合评分 = 50% 鲁棒性 + 30% 自身保真度 + 20% 算法复杂度（效率分，越高越好）。缺失维度会按可用项重新归一化。"
-    : "Composite = 50% robustness + 30% fidelity + 20% complexity efficiency. Missing dimensions are renormalized.";
 }
 
 function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric): BenchmarkLeaderboardRow[] {

@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MemoExoticComponent } from "react";
 import {
   BarChart3,
   Download,
@@ -34,9 +34,9 @@ import {
   fetchAlgorithms,
   fetchAttacks,
   fetchDatasetCatalog,
-  fetchRunResults,
   fetchRunScore,
-  fetchRuns
+  fetchRuns,
+  runResultsCsvUrl
 } from "@/lib/api";
 import {
   countBenchmarkAttackTypes,
@@ -189,6 +189,9 @@ interface ScoringSummary {
 
 const RESULT_TABS: ResultsTab[] = ["overview", "attack", "quality"];
 const EMPTY_SCORE_ROWS: BenchmarkLeaderboardRow[] = [];
+const MemoizedRobustnessCurve = memo(RobustnessCurve);
+const MemoizedAttackViolinPlot = memo(AttackViolinPlot);
+const MemoizedAttackHeatmapMatrix = memo(AttackHeatmapMatrix);
 
 export default function ResultsPage() {
   const { language, t } = useLanguage();
@@ -397,36 +400,6 @@ export default function ResultsPage() {
       setLoading(true);
     }
 
-    const applyFullResults = (nextResults: RunResults) => {
-      if (!cancelled) {
-        setResults(nextResults);
-        setScore(nextResults.score ?? null);
-        setActiveInsight({
-          kind: "run",
-          title: nextResults.run.taskName || nextResults.run.configName || nextResults.run.id,
-          body: `${nextResults.resultUnits.length} result units, status ${nextResults.run.status}`,
-          meta: nextResults.run.artifactRoot
-        });
-      }
-    };
-
-    const loadFullResults = (showFailureNotice: boolean) => {
-      fetchRunResults(selectedRunId)
-        .then(applyFullResults)
-        .catch(() => {
-          if (!cancelled && showFailureNotice) {
-            setResults(null);
-            setScore(null);
-            setNotice(t.results.apiUnavailable);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setLoading(false);
-          }
-        });
-    };
-
     fetchRunScore(selectedRunId)
       .then((scoreResponse) => {
         if (!cancelled) {
@@ -448,10 +421,14 @@ export default function ResultsPage() {
           });
           setLoading(false);
         }
-        loadFullResults(false);
       })
       .catch(() => {
-        loadFullResults(true);
+        if (!cancelled) {
+          setResults(null);
+          setScore(null);
+          setNotice(t.results.apiUnavailable);
+          setLoading(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -561,6 +538,30 @@ export default function ResultsPage() {
     };
   };
 
+  const tabComponentCache = useRef<{
+    language: typeof language;
+    resourceAlgorithmNames: typeof resourceAlgorithmNames;
+    resourceAttackNames: typeof resourceAttackNames;
+    AttackAnalysisTab: MemoExoticComponent<typeof AttackAnalysisTab>;
+    QualityWorkbenchTab: MemoExoticComponent<typeof QualityWorkbenchTab>;
+  } | null>(null);
+  if (
+    !tabComponentCache.current ||
+    tabComponentCache.current.language !== language ||
+    tabComponentCache.current.resourceAlgorithmNames !== resourceAlgorithmNames ||
+    tabComponentCache.current.resourceAttackNames !== resourceAttackNames
+  ) {
+    tabComponentCache.current = {
+      language,
+      resourceAlgorithmNames,
+      resourceAttackNames,
+      AttackAnalysisTab: memo(AttackAnalysisTab),
+      QualityWorkbenchTab: memo(QualityWorkbenchTab)
+    };
+  }
+  const StableAttackAnalysisTab = tabComponentCache.current.AttackAnalysisTab;
+  const StableQualityWorkbenchTab = tabComponentCache.current.QualityWorkbenchTab;
+
   return (
     <AppShell active="results">
       <div className="topbar run-picker-topbar">
@@ -584,14 +585,19 @@ export default function ResultsPage() {
           </select>
           <button
             aria-label={t.common.refresh}
-            className="button icon-button"
+            className="button icon-button result-refresh-button"
             onClick={() => setRunRefreshKey((value) => value + 1)}
             title={t.common.refresh}
             type="button"
           >
             <RefreshCw size={16} />
           </button>
-          <button className="button" disabled={!results} onClick={() => exportResultsCsv(results, score)} type="button">
+          <button
+            className="button result-export-button"
+            disabled={!results || !selectedRunId}
+            onClick={() => exportResultsCsv(selectedRunId)}
+            type="button"
+          >
             <Download size={16} />
             {t.results.exportCsv}
           </button>
@@ -620,7 +626,7 @@ export default function ResultsPage() {
           tone={loading ? "loading" : notice === t.results.apiUnavailable ? "error" : "empty"}
         />
       ) : (
-        <>
+        <div className="results-workspace">
       <section className="results-summary-grid">
         <SummaryCard
           iconKind="experiment"
@@ -699,12 +705,13 @@ export default function ResultsPage() {
       ) : null}
 
       {activeTab === "attack" ? (
-        <AttackAnalysisTab
+        <StableAttackAnalysisTab
           activeSelectorKey={activeAttackSelectorKey}
           attackAttackIds={attackAttackIds}
           attackDatasetIds={attackDatasetIds}
           attackHeatmapMetric={attackHeatmapMetric}
           attackHeatmapRowMode={attackHeatmapRowMode}
+          qualityAvailableCurvePoints={qualityAvailableCurvePoints}
           resourceAlgorithmNames={resourceAlgorithmNames}
           resourceAttackNames={resourceAttackNames}
           score={score}
@@ -719,11 +726,12 @@ export default function ResultsPage() {
       ) : null}
 
       {activeTab === "quality" ? (
-        <QualityWorkbenchTab
+        <StableQualityWorkbenchTab
           qualityAttackFilter={qualityAttackFilter}
           qualityAlgorithmIds={qualityAlgorithmIds}
           qualityAttackIds={qualityAttackIds}
           qualityDatasetIds={qualityDatasetIds}
+          qualityAvailableCurvePoints={qualityAvailableCurvePoints}
           resourceAlgorithmNames={resourceAlgorithmNames}
           resourceAttackNames={resourceAttackNames}
           results={results}
@@ -739,7 +747,7 @@ export default function ResultsPage() {
         />
       ) : null}
 
-        </>
+        </div>
       )}
     </AppShell>
   );
@@ -960,6 +968,7 @@ export default function ResultsPage() {
     attackDatasetIds,
     attackHeatmapMetric,
     attackHeatmapRowMode,
+    qualityAvailableCurvePoints,
     resourceAlgorithmNames,
     resourceAttackNames,
     score,
@@ -976,6 +985,7 @@ export default function ResultsPage() {
     attackDatasetIds: string[];
     attackHeatmapMetric: AttackHeatmapMetric;
     attackHeatmapRowMode: AttackHeatmapRowMode;
+    qualityAvailableCurvePoints: BenchmarkCurvePoint[];
     resourceAlgorithmNames: Record<string, string>;
     resourceAttackNames: Record<string, string>;
     score: BenchmarkScore | null;
@@ -987,18 +997,33 @@ export default function ResultsPage() {
     setAttackHeatmapRowMode: (value: AttackHeatmapRowMode) => void;
     setSelectedAttackHeatmapCell: (value: AttackHeatmapCell | null) => void;
   }) {
-    const allPoints = (score?.curvePoints ?? []).sort(qualityCurvePointSort);
-    const datasetOptions = buildQualityDatasetOptions(allPoints);
-    const attackOptions = buildQualityAttackOptions(allPoints).filter((item) => !isIdentityAttackOption(item));
-    const selectedDatasetSet = new Set(attackDatasetIds);
-    const selectedAttackSet = new Set(attackAttackIds);
-    const filteredPoints = allPoints.filter(
-      (point) =>
-        selectedDatasetSet.has(point.datasetId || "unknown") &&
-        selectedAttackSet.has(point.attackPresetId)
+    const allPoints = qualityAvailableCurvePoints;
+    const datasetOptions = useMemo(() => buildQualityDatasetOptions(allPoints), [allPoints]);
+    const attackOptions = useMemo(
+      () => buildQualityAttackOptions(allPoints).filter((item) => !isIdentityAttackOption(item)),
+      [allPoints]
     );
-    const categorySummaries = buildAttackCategoryDistributions(filteredPoints, resourceAttackNames);
-    const attackCount = new Set(filteredPoints.map((point) => point.attackPresetId)).size;
+    const filteredPoints = useMemo(() => {
+      const selectedDatasetSet = new Set(attackDatasetIds);
+      const selectedAttackSet = new Set(attackAttackIds);
+      return allPoints.filter(
+        (point) =>
+          selectedDatasetSet.has(point.datasetId || "unknown") &&
+          selectedAttackSet.has(point.attackPresetId)
+      );
+    }, [allPoints, attackAttackIds, attackDatasetIds]);
+    const categorySummaries = useMemo(
+      () => buildAttackCategoryDistributions(filteredPoints, resourceAttackNames),
+      [filteredPoints, resourceAttackNames]
+    );
+    const attackCount = useMemo(
+      () => new Set(filteredPoints.map((point) => point.attackPresetId)).size,
+      [filteredPoints]
+    );
+    const filteredAlgorithmCount = useMemo(
+      () => new Set(filteredPoints.map((point) => point.algorithmId)).size,
+      [filteredPoints]
+    );
     const selectorConfigs: Array<{
       key: AttackSelectorKey;
       options: QualitySelectorOption[];
@@ -1029,7 +1054,7 @@ export default function ResultsPage() {
       }
     ];
     const activeSelector = activeSelectorKey ? selectorConfigs.find((item) => item.key === activeSelectorKey) ?? null : null;
-    const handlePickHeatmapCell = (cell: AttackHeatmapCell) => {
+    const handlePickHeatmapCell = useCallback((cell: AttackHeatmapCell) => {
       setSelectedAttackHeatmapCell(cell);
       setActiveInsight({
         kind: "curve",
@@ -1038,7 +1063,11 @@ export default function ResultsPage() {
         body: `TPR ${formatMetric(cell.avgTpr)}, NQD ${formatMetric(cell.avgNqd)}`,
         meta: `${cell.attackPresetIds.length} ${uiText("个攻击", "attacks")} / ${cell.pointCount} ${uiText("个点", "points")}`
       });
-    };
+    }, [setActiveInsight, setSelectedAttackHeatmapCell, uiText]);
+    const handlePickViolinPoint = useCallback((point: BenchmarkCurvePoint) => {
+      setSelectedAttackHeatmapCell(null);
+      setActiveInsight(makeCurvePointInsight(point));
+    }, [makeCurvePointInsight, setActiveInsight, setSelectedAttackHeatmapCell]);
 
     return (
       <>
@@ -1101,7 +1130,7 @@ export default function ResultsPage() {
                 {uiText("种攻击", "attacks")}
               </span>
               <span>
-                {new Set(filteredPoints.map((point) => point.algorithmId)).size} {uiText("个水印算法全部纳入", "watermark algorithms included")}
+                {filteredAlgorithmCount} {uiText("个水印算法全部纳入", "watermark algorithms included")}
               </span>
               <span>
                 {categorySummaries.length} {uiText("个攻击类别", "attack categories")}
@@ -1116,12 +1145,9 @@ export default function ResultsPage() {
             <Gauge size={16} />
           </div>
           <div className="panel-body">
-            <AttackViolinPlot
+            <MemoizedAttackViolinPlot
               categories={categorySummaries}
-              onPickPoint={(point) => {
-                setSelectedAttackHeatmapCell(null);
-                setActiveInsight(makeCurvePointInsight(point));
-              }}
+              onPickPoint={handlePickViolinPoint}
             />
             <div className="attack-heatmap-section">
               <div className="attack-subheading">
@@ -1171,7 +1197,7 @@ export default function ResultsPage() {
                   </button>
                 </div>
               </div>
-              <AttackHeatmapMatrix
+              <MemoizedAttackHeatmapMatrix
                 algorithmNames={resourceAlgorithmNames}
                 attackNames={resourceAttackNames}
                 metric={attackHeatmapMetric}
@@ -1193,6 +1219,7 @@ export default function ResultsPage() {
     qualityAttackFilter,
     qualityAttackIds,
     qualityDatasetIds,
+    qualityAvailableCurvePoints,
     resourceAlgorithmNames,
     resourceAttackNames,
     results,
@@ -1210,6 +1237,7 @@ export default function ResultsPage() {
     qualityAttackFilter: string;
     qualityAttackIds: string[];
     qualityDatasetIds: string[];
+    qualityAvailableCurvePoints: BenchmarkCurvePoint[];
     resourceAlgorithmNames: Record<string, string>;
     resourceAttackNames: Record<string, string>;
     results: RunResults | null;
@@ -1223,39 +1251,67 @@ export default function ResultsPage() {
     setQualityAttackIds: StringArraySetter;
     setQualityDatasetIds: StringArraySetter;
   }) {
-    const fallbackDatasetIds = Array.from(new Set((results?.resultUnits ?? []).map((unit) => unit.datasetId).filter(Boolean)));
-    const fallbackDatasetId = fallbackDatasetIds.length === 1 ? fallbackDatasetIds[0] : "unknown";
-    const allCurvePoints = (score?.curvePoints ?? [])
-      .map((point) => ({ ...point, datasetId: point.datasetId || fallbackDatasetId }))
-      .sort(qualityCurvePointSort);
-    const datasetOptions = buildQualityDatasetOptions(allCurvePoints);
-    const algorithmOptions = buildQualityAlgorithmOptions(allCurvePoints, resourceAlgorithmNames);
-    const attackOptions = buildQualityAttackOptions(allCurvePoints).filter((item) => !isIdentityAttackOption(item));
-    const selectedDatasetSet = new Set(qualityDatasetIds);
-    const selectedAlgorithmSet = new Set(qualityAlgorithmIds);
-    const selectedAttackSet = new Set(qualityAttackIds);
-    const filteredCurvePoints = allCurvePoints.filter(
-      (point) =>
-        selectedDatasetSet.has(point.datasetId) &&
-        selectedAlgorithmSet.has(point.algorithmId) &&
-        selectedAttackSet.has(point.attackPresetId)
+    const allCurvePoints = qualityAvailableCurvePoints;
+    const datasetOptions = useMemo(() => buildQualityDatasetOptions(allCurvePoints), [allCurvePoints]);
+    const algorithmOptions = useMemo(
+      () => buildQualityAlgorithmOptions(allCurvePoints, resourceAlgorithmNames),
+      [allCurvePoints, resourceAlgorithmNames]
     );
-    const attackSummaries = buildQualityAttackSummaries(
-      allCurvePoints.filter(
-        (point) => selectedDatasetSet.has(point.datasetId) && selectedAlgorithmSet.has(point.algorithmId)
-      )
+    const attackOptions = useMemo(
+      () => buildQualityAttackOptions(allCurvePoints).filter((item) => !isIdentityAttackOption(item)),
+      [allCurvePoints]
     );
-    const comboSummaries = buildQualityComboSummaries(filteredCurvePoints);
-    const qualitySeriesDomain = comboSummaries.map((combo) => combo.key);
-    const weakestPoint = filteredCurvePoints.reduce<BenchmarkCurvePoint | null>(
-      (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
-      null
+    const selectedDatasetSet = useMemo(() => new Set(qualityDatasetIds), [qualityDatasetIds]);
+    const selectedAlgorithmSet = useMemo(() => new Set(qualityAlgorithmIds), [qualityAlgorithmIds]);
+    const selectedAttackSet = useMemo(() => new Set(qualityAttackIds), [qualityAttackIds]);
+    const filteredCurvePoints = useMemo(
+      () =>
+        allCurvePoints.filter(
+          (point) =>
+            selectedDatasetSet.has(point.datasetId) &&
+            selectedAlgorithmSet.has(point.algorithmId) &&
+            selectedAttackSet.has(point.attackPresetId)
+        ),
+      [allCurvePoints, selectedAlgorithmSet, selectedAttackSet, selectedDatasetSet]
     );
-    const selectedAttackCount = new Set(filteredCurvePoints.map((point) => point.attackPresetId)).size;
-    const selectedStrengthCount = new Set(
-      filteredCurvePoints.map((point) => `${point.attackPresetId}:${point.attackParamStrength ?? point.attackStrength}`)
-    ).size;
-    const selectedVariantCount = new Set(filteredCurvePoints.map((point) => point.attackVariantKey ?? "default")).size;
+    const attackSummaries = useMemo(
+      () =>
+        buildQualityAttackSummaries(
+          allCurvePoints.filter(
+            (point) => selectedDatasetSet.has(point.datasetId) && selectedAlgorithmSet.has(point.algorithmId)
+          )
+        ),
+      [allCurvePoints, selectedAlgorithmSet, selectedDatasetSet]
+    );
+    const comboSummaries = useMemo(() => buildQualityComboSummaries(filteredCurvePoints), [filteredCurvePoints]);
+    const qualitySeriesDomain = useMemo(() => comboSummaries.map((combo) => combo.key), [comboSummaries]);
+    const weakestPoint = useMemo(
+      () =>
+        filteredCurvePoints.reduce<BenchmarkCurvePoint | null>(
+          (current, point) => (current == null || point.yTprAtFpr < current.yTprAtFpr ? point : current),
+          null
+        ),
+      [filteredCurvePoints]
+    );
+    const selectedAttackCount = useMemo(
+      () => new Set(filteredCurvePoints.map((point) => point.attackPresetId)).size,
+      [filteredCurvePoints]
+    );
+    const selectedStrengthCount = useMemo(
+      () =>
+        new Set(
+          filteredCurvePoints.map((point) => `${point.attackPresetId}:${point.attackParamStrength ?? point.attackStrength}`)
+        ).size,
+      [filteredCurvePoints]
+    );
+    const selectedVariantCount = useMemo(
+      () => new Set(filteredCurvePoints.map((point) => point.attackVariantKey ?? "default")).size,
+      [filteredCurvePoints]
+    );
+    const handleQualityPointSelect = useCallback(
+      (point: BenchmarkCurvePoint) => setActiveInsight(makeCurvePointInsight(point)),
+      [makeCurvePointInsight, setActiveInsight]
+    );
     const selectorConfigs: Array<{
       key: QualitySelectorKey;
       options: QualitySelectorOption[];
@@ -1383,14 +1439,14 @@ export default function ResultsPage() {
                 <span>{uiText("点: 强度或变体", "Point: strength or variant")}</span>
                 <span>{uiText("虚线: Q@P95 / Q@P70", "Dashed: Q@P95 / Q@P70")}</span>
               </div>
-              <RobustnessCurve
+              <MemoizedRobustnessCurve
                 algorithmLabels={resourceAlgorithmNames}
                 attackLabels={resourceAttackNames}
                 colorDomain={qualitySeriesDomain}
                 curvePoints={filteredCurvePoints}
                 emptyText={t.console.needMultipleStrengths}
                 groupMode="combination"
-                onSelectPoint={(point) => setActiveInsight(makeCurvePointInsight(point))}
+                onSelectPoint={handleQualityPointSelect}
                 performanceThresholds={score?.performanceThresholds}
                 pointCaption={uiText("点: 攻击变体 / 强度", "Point: attack variant / strength")}
                 results={results}
@@ -1918,6 +1974,15 @@ function reconcileQualitySelection(current: string[], availableIds: string[], fa
   return sameStringArray(current, normalized) ? current : normalized;
 }
 
+function appendGrouped<K, V>(grouped: Map<K, V[]>, key: K, value: V) {
+  const current = grouped.get(key);
+  if (current) {
+    current.push(value);
+  } else {
+    grouped.set(key, [value]);
+  }
+}
+
 function qualityCurvePointSort(left: BenchmarkCurvePoint, right: BenchmarkCurvePoint) {
   return (
     (left.datasetId || "").localeCompare(right.datasetId || "") ||
@@ -1935,7 +2000,7 @@ function buildQualityDatasetOptions(points: BenchmarkCurvePoint[]): QualitySelec
   const grouped = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
     const datasetId = point.datasetId || "unknown";
-    grouped.set(datasetId, [...(grouped.get(datasetId) ?? []), point]);
+    appendGrouped(grouped, datasetId, point);
   }
   return Array.from(grouped.entries())
     .map(([datasetId, items]) => ({
@@ -1955,7 +2020,7 @@ function buildQualityAlgorithmOptions(
 ): QualitySelectorOption[] {
   const grouped = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
-    grouped.set(point.algorithmId, [...(grouped.get(point.algorithmId) ?? []), point]);
+    appendGrouped(grouped, point.algorithmId, point);
   }
   return Array.from(grouped.entries())
     .map(([algorithmId, items]) => ({
@@ -1971,7 +2036,7 @@ function buildQualityAttackSummaries(points: BenchmarkCurvePoint[]): QualityAtta
   const grouped = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
     const key = `${point.attackCategory}:${point.attackPresetId}:${point.attackMethod}`;
-    grouped.set(key, [...(grouped.get(key) ?? []), point]);
+    appendGrouped(grouped, key, point);
   }
   return Array.from(grouped.entries())
     .map(([key, items]) => {
@@ -2007,7 +2072,7 @@ function buildQualityComboSummaries(points: BenchmarkCurvePoint[]): QualityCombo
   const grouped = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
     const key = qualityComboKey(point);
-    grouped.set(key, [...(grouped.get(key) ?? []), point]);
+    appendGrouped(grouped, key, point);
   }
   return Array.from(grouped.entries()).map(([key, items]) => {
     const strengths = items.map((point) => point.attackParamStrength ?? point.attackStrength);
@@ -2039,7 +2104,7 @@ function buildQualityComboSummaries(points: BenchmarkCurvePoint[]): QualityCombo
 function buildQualityAttackOptions(points: BenchmarkCurvePoint[]): QualityAttackOption[] {
   const grouped = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
-    grouped.set(point.attackPresetId, [...(grouped.get(point.attackPresetId) ?? []), point]);
+    appendGrouped(grouped, point.attackPresetId, point);
   }
   return Array.from(grouped.entries())
     .map(([attackPresetId, items]) => ({
@@ -2071,11 +2136,11 @@ function buildAttackVisualSummaries(
 ): AttackVisualSummary[] {
   const pointsByAttack = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
-    pointsByAttack.set(point.attackPresetId, [...(pointsByAttack.get(point.attackPresetId) ?? []), point]);
+    appendGrouped(pointsByAttack, point.attackPresetId, point);
   }
   const rowsByAttack = new Map<string, BenchmarkAttackLeaderboardRow[]>();
   for (const row of leaderboardRows) {
-    rowsByAttack.set(row.attackPresetId, [...(rowsByAttack.get(row.attackPresetId) ?? []), row]);
+    appendGrouped(rowsByAttack, row.attackPresetId, row);
   }
   const rawSummaries = Array.from(pointsByAttack.entries()).map(([attackPresetId, attackPoints]) => {
     const rows = rowsByAttack.get(attackPresetId) ?? [];
@@ -2130,7 +2195,7 @@ function buildAttackCategoryDistributions(
   const grouped = new Map<string, BenchmarkCurvePoint[]>();
   for (const point of points) {
     const key = normalizeAttackCategory(point.attackCategory, point.attackPresetId, point.attackMethod);
-    grouped.set(key, [...(grouped.get(key) ?? []), point]);
+    appendGrouped(grouped, key, point);
   }
   return Array.from(grouped.entries())
     .map(([key, items]) => ({
@@ -3239,41 +3304,14 @@ function formatThreshold(value: number | "inf" | "-inf" | null | undefined) {
   return formatMetric(value ?? null);
 }
 
-function exportResultsCsv(results: RunResults | null, score: BenchmarkScore | null) {
-  if (!results) {
+function exportResultsCsv(runId: string) {
+  if (!runId) {
     return;
   }
-  const rows = [
-    ["run_id", "result_unit_key", "algorithm_id", "attack_preset_id", "attack_strength", "status", "bit_accuracy", "ber", "tpr_at_fpr", "nqd", "manifest_path"],
-    ...results.resultUnits.map((unit) => {
-      const scoring = resultUnitScoring(unit);
-      return [
-        results.run.id,
-        unit.resultUnitKey ?? unit.cellKey ?? unit.id,
-        unit.algorithmId,
-        unit.attackPresetId,
-        String(unit.attackStrength),
-        unit.status,
-        String(unit.bitAccuracy ?? ""),
-        String(unit.bitErrorRate ?? ""),
-        String(scoring?.tprAtFpr ?? ""),
-        String(scoring?.normalizedQualityDegradation ?? ""),
-        unit.manifestPath ?? ""
-      ];
-    })
-  ];
-  if (score) {
-    rows.push([]);
-    rows.push(["protocol_id", score.protocolId, "status", score.status, "wrs", String(score.wrs ?? "")]);
-  }
-  const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${results.run.id}-results.csv`;
+  anchor.href = runResultsCsvUrl(runId);
+  anchor.download = `${runId}-results.csv`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
 }

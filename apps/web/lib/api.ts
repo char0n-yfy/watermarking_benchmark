@@ -261,11 +261,15 @@ export function createRun(configId: string, name?: string): Promise<DemoRunRecor
 }
 
 export function fetchRunResults(runId: string): Promise<RunResults> {
-  return requestJson<RunResults>(`/runs/${runId}/results`);
+  return requestJson<RunResults>(`/runs/${encodeURIComponent(runId)}/results`);
 }
 
 export function fetchRunScore(runId: string): Promise<RunScoreResponse> {
-  return requestJson<RunScoreResponse>(`/runs/${runId}/score`);
+  return requestJson<RunScoreResponse>(`/runs/${encodeURIComponent(runId)}/score`);
+}
+
+export function runResultsCsvUrl(runId: string): string {
+  return `${apiBaseUrl}/runs/${encodeURIComponent(runId)}/results.csv`;
 }
 
 export function fetchBenchmarkProtocols(): Promise<BenchmarkProtocol[]> {

@@ -2124,13 +2124,13 @@ export default function RunsPage() {
           <section className="panel run-start-panel run-tuning-start-panel">
             <div className="panel-body run-start-body">
               <div className="run-start-copy">
-                <h2>并行参数自动调优</h2>
-                <p>先选择调参规则与算法范围，启动后再进入搜索进度、吞吐量趋势和推荐参数面板。</p>
+                <h2>{t.runs.tuningTitle}</h2>
+                <p>{t.runs.tuningIntro}</p>
               </div>
               <div className="run-start-actions">
                 <button className="button primary run-start-button" disabled={tuningBusy} onClick={openTuningDialog} type="button">
                   <SlidersHorizontal size={18} />
-                  配置并开始调参
+                  {t.runs.configureTuning}
                 </button>
                 {tuningJob?.id ? (
                   <button
@@ -2143,7 +2143,7 @@ export default function RunsPage() {
                     type="button"
                   >
                     <LineChart size={18} />
-                    查看最近结果
+                    {t.runs.latestTuningResult}
                   </button>
                 ) : null}
               </div>
@@ -2174,11 +2174,11 @@ export default function RunsPage() {
         <section className="panel run-tuning-panel">
           <div className="panel-header">
             <div>
-              <h2>并行参数自动调优</h2>
+              <h2>{t.runs.tuningTitle}</h2>
               <p>
                 {tuningJob
                   ? `${tuningJob.id} · ${tuningJob.message ?? tuningJob.status}`
-                  : "在开始测评之外单独搜索 batch size 与 CPU worker 参数。"}
+                  : t.runs.standaloneTuningHint}
               </p>
             </div>
           </div>
