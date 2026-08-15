@@ -22,89 +22,61 @@ apps/
   web/        Next.js 前端，生产构建输出到 apps/web/out
   worker/     本地实验执行 Worker
 evaluator/    水印算法、攻击算法和评估逻辑
-infra/        AutoDL 部署与运行脚本
-scripts/      跨平台启动、关闭、依赖初始化和检查脚本
+scripts/      唯一服务入口、依赖初始化和维护工具
 docs/         评分协议和开发规范
 resources/    数据集、权重和资源元数据入口
 requirements/ Python 分层依赖
 runs/         运行结果、日志和实验状态
 ```
 
-## 一键启动与关闭
+## 统一服务入口
 
-| 平台 | 启动服务 | 关闭服务 |
-| --- | --- | --- |
-| macOS | `bash scripts/start-macos.sh` | `bash scripts/stop-macos.sh` |
-| Windows PowerShell | `.\scripts\start-windows.ps1` | `.\scripts\stop-windows.ps1` |
-| Linux / AutoDL | `bash scripts/deploy-autodl-linux.sh` | `bash scripts/deploy-autodl-linux.sh stop` |
-
-Windows 首次运行脚本时，如遇到执行策略限制，可以先在当前 PowerShell 会话执行：
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-```
-
-启动后打开脚本输出的 Web URL。关闭命令只停止当前项目启动的本地服务，不会删除数据集、权重、日志或历史实验结果。
-
-## 平台入口
-
-macOS 默认地址：
-
-- Web UI: `http://127.0.0.1:3000`
-- API 健康检查: `http://127.0.0.1:8000/health`
-- 默认设备: `cpu`
-
-macOS 指定端口或设备：
+三种 OS 共用同一个主入口 `scripts/wmbench.py`，不再由平台脚本各自实现服务生命周期：
 
 ```bash
-API_PORT=8001 WEB_PORT=3001 WM_BENCH_DEVICE=mps bash scripts/start-macos.sh
-API_PORT=8001 WEB_PORT=3001 bash scripts/stop-macos.sh
+python3 scripts/wmbench.py --profile local up
+python3 scripts/wmbench.py --profile local status
+python3 scripts/wmbench.py --profile local logs
+python3 scripts/wmbench.py --profile local restart
+python3 scripts/wmbench.py --profile local down
 ```
 
-Windows 默认地址同 macOS。Windows 指定端口或设备：
+Windows 将 `python3` 换成 `py -3`。所有平台直接调用该入口，不再提供独立的 Shell 或 PowerShell 启停脚本。主入口支持三种运行模式：
 
-```powershell
-.\scripts\start-windows.ps1 -ApiPort 8001 -WebPort 3001 -Device cpu
-.\scripts\stop-windows.ps1 -ApiPort 8001 -WebPort 3001
-```
+| Profile | 用途 | Web 运行方式 | 默认端口 |
+| --- | --- | --- | --- |
+| `local` | macOS、Windows、Linux 本地开发 | Next.js dev server | Web 3000 + API 8000 |
+| `production` | 三种 OS 的生产式单机运行 | 静态构建由 FastAPI 托管 | 6006 |
+| `autodl` | AutoDL GPU 部署 | 静态构建由 FastAPI 托管 | 6006 |
 
-Windows 上如需更准确的 CPU 功耗读数，可安装 LibreHardwareMonitor，并在 `.env` 中设置 `WM_BENCH_LHM_PATH`。不需要该能力时可设置 `WM_BENCH_SKIP_LHM=1`。
+`--profile auto` 是默认值：AutoDL 主机选择 `autodl`，其他机器选择 `local`。`up` 会按指纹增量准备依赖和生产构建；已经完成 bootstrap 时可用 `up --no-bootstrap` 快速启动。
 
-AutoDL 推荐入口：
+配置优先级固定为：命令行参数 > 当前环境变量 > profile dotenv > 内置默认值。`local`、`production`、`autodl` 分别使用 `.env`、`.env.production`、`.env.autodl`；后两者缺失时从对应 example 自动创建。
+
+常用参数示例：
 
 ```bash
-bash scripts/deploy-autodl-linux.sh
+python3 scripts/wmbench.py --profile local --api-port 8001 --web-port 3001 --device mps up
+python3 scripts/wmbench.py --profile production --api-port 6006 up
+python3 scripts/wmbench.py --profile autodl --skip-sharp up
 ```
 
-AutoDL 常用运维命令：
-
-```bash
-bash scripts/deploy-autodl-linux.sh status
-bash scripts/deploy-autodl-linux.sh logs
-bash scripts/deploy-autodl-linux.sh tunnel
-bash scripts/deploy-autodl-linux.sh restart
-bash scripts/deploy-autodl-linux.sh stop
-```
-
-AutoDL 兼容底层入口：
-
-```bash
-bash infra/autodl/start.sh
-bash scripts/start-autodl-linux.sh
-```
-
-底层入口可以启动服务，但验收和日常运维建议使用 `scripts/deploy-autodl-linux.sh`，因为它同时提供 status、logs、tunnel、restart 和 stop 子命令。
-
-AutoDL 默认地址：
-
-- 服务器本机: `http://127.0.0.1:6006`
-- 健康检查: `http://127.0.0.1:6006/health`
-
-AutoDL 默认只需要暴露 `6006` 一个端口。可以在 AutoDL 控制台创建自定义服务，也可以从本机建立 SSH 隧道：
+生产式部署启动后，Web UI 和 API 同源，只需开放 API 端口。远程服务器推荐 SSH 隧道：
 
 ```bash
 ssh -L 6006:127.0.0.1:6006 root@<server-ip>
 ```
+
+各环境的启动命令为：
+
+| 环境 | 启动命令 |
+| --- | --- |
+| macOS / Linux 本地开发 | `python3 scripts/wmbench.py --profile local up` |
+| Windows 本地开发 | `py -3 scripts/wmbench.py --profile local up` |
+| 通用生产式单机部署 | `python3 scripts/wmbench.py --profile production up` |
+| AutoDL | `python3 scripts/wmbench.py --profile autodl up` |
+
+停止时将 `up` 换成 `down`。Windows 如需准确的 CPU 功耗读数，可在 `.env` 中设置 `WM_BENCH_LHM_PATH`；统一入口会自动启动 LibreHardwareMonitor，设置 `WM_BENCH_SKIP_LHM=1` 可关闭该行为。
 
 ## 依赖管理
 
@@ -118,7 +90,7 @@ pnpm --filter @wm-bench/web build
 
 项目根目录的 `package.json` 声明 `pnpm@10.23.0`，锁文件为 `pnpm-lock.yaml`。项目不使用 `package-lock.json`。
 
-Python 依赖由启动脚本自动准备。分层入口如下：
+Python 依赖由统一入口的 `bootstrap`/`up` 增量准备。分层入口如下：
 
 - `requirements.txt`: API、Worker 和核心评估依赖入口
 - `apps/api/requirements.txt`: FastAPI 服务依赖
@@ -129,7 +101,7 @@ Python 依赖由启动脚本自动准备。分层入口如下：
 跳过 SHARP/3D 重型依赖：
 
 ```bash
-WM_BENCH_INSTALL_SHARP_DEPS=0 bash scripts/start-macos.sh
+python3 scripts/wmbench.py --profile local --skip-sharp up
 ```
 
 AutoDL 可在 `.env.autodl` 中设置同名变量。
@@ -258,7 +230,7 @@ AutoDL 默认路径见 `.env.autodl.example`：
 cp .env.example .env
 ```
 
-AutoDL 首次部署会在缺失时从 `.env.autodl.example` 生成 `.env.autodl`。
+生产式部署和 AutoDL 首次运行会分别从 `.env.production.example`、`.env.autodl.example` 生成 `.env.production`、`.env.autodl`。
 
 常用环境变量：
 
@@ -278,7 +250,7 @@ NEXT_PUBLIC_API_BASE_URL=
 
 建议按以下顺序验收：
 
-1. 服务可一键启动和关闭：macOS 使用 `scripts/start-macos.sh` / `scripts/stop-macos.sh`，Windows 使用 `scripts/start-windows.ps1` / `scripts/stop-windows.ps1`，AutoDL 使用 `scripts/deploy-autodl-linux.sh` / `scripts/deploy-autodl-linux.sh stop`。
+1. 服务只由 `scripts/wmbench.py` 启动和关闭，不存在另一套 OS 专用生命周期实现。
 2. Web UI 可以打开，API 健康检查返回正常：本地开发默认 `http://127.0.0.1:8000/health`，AutoDL 默认 `http://127.0.0.1:6006/health`。
 3. 资源页可以展示内置数据集、水印算法和攻击列表，并能识别本机已安装的数据集和权重。
 4. 部署前检查返回 ready，或仅在缺少可选资源时给出可解释的 WARN。
@@ -286,10 +258,10 @@ NEXT_PUBLIC_API_BASE_URL=
 6. 资源目录单元测试通过。
 7. AutoDL 生产部署只暴露 `API_PORT` 一个端口，默认 `6006`，前端和 API 同源访问。
 
-部署前检查：
+统一部署前检查：
 
 ```bash
-python3 scripts/check-deploy-readiness.py
+python3 scripts/wmbench.py --profile autodl check
 ```
 
 前端生产构建：
@@ -307,7 +279,7 @@ python3 -m unittest apps.api.tests.test_resource_catalog
 AutoDL 状态检查：
 
 ```bash
-bash scripts/deploy-autodl-linux.sh status
+python3 scripts/wmbench.py --profile autodl status
 ```
 
 ## 安全说明
