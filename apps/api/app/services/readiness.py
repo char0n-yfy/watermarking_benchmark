@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -248,7 +249,9 @@ def add_weight_files_check(checks: list[dict[str, Any]], weights_root: Path) -> 
 
 def is_fresh_worker(worker: dict[str, Any], poll_seconds: float) -> bool:
     pid = worker.get("pid")
-    if isinstance(pid, int) and pid > 0 and not Path(f"/proc/{pid}").exists():
+    # `/proc/<pid>` exists on Unix-like systems only.  Checking it on
+    # Windows incorrectly marks every otherwise healthy local worker stale.
+    if os.name == "posix" and isinstance(pid, int) and pid > 0 and not Path(f"/proc/{pid}").exists():
         return False
     raw_last_seen = worker.get("lastSeenAt")
     if not isinstance(raw_last_seen, str):
