@@ -159,7 +159,7 @@ export function RobustnessCurve({
         colorKey: item.colorKey,
         label: item.label,
         shapeKey: item.shapeKey,
-        points: item.points.sort((a, b) =>
+        points: aggregateDuplicateCurvePoints(item.points).sort((a, b) =>
           selectedAttack || groupMode !== "algorithm"
             ? (a.raw.attackParamStrength ?? a.raw.attackStrength) - (b.raw.attackParamStrength ?? b.raw.attackStrength) ||
               a.x - b.x
@@ -377,7 +377,9 @@ function ScoreCurve({
           const points = item.points.map((point) => `${xFor(point.x)},${yFor(point.y)}`).join(" ");
           return (
             <g className="score-curve-series" key={item.id}>
-              <polyline className="score-curve-line" fill="none" points={points} stroke={color} strokeWidth="2.2" />
+              {item.points.length > 1 ? (
+                <polyline className="score-curve-line" fill="none" points={points} stroke={color} strokeWidth="2.2" />
+              ) : null}
               {item.points.map((point, pointIndex) => {
                 const pointLabel = `Algorithm: ${labelAlgorithm(point.raw.algorithmId)}. Attack: ${labelAttack(point.raw)}. Variant: ${variantDisplayLabel(point.raw)}. Strength: ${point.raw.attackParamStrengthName ?? "strength"} ${formatStrength(point.raw.attackParamStrength ?? point.raw.attackStrength)}. NQD: ${formatMetric(point.raw.xNqd)}. TPR: ${formatMetric(point.raw.yTprAtFpr)}. Samples: ${formatSampleCount(point.raw.sampleCount)}.`;
                 return (
@@ -718,6 +720,57 @@ function collectPointSizeStats(
     strengthMin: strengths.length ? Math.min(...strengths) : null,
     strengthMax: strengths.length ? Math.max(...strengths) : null
   };
+}
+
+function aggregateDuplicateCurvePoints(
+  points: Array<{ x: number; y: number; raw: BenchmarkCurvePoint }>
+): Array<{ x: number; y: number; raw: BenchmarkCurvePoint }> {
+  const grouped = new Map<
+    string,
+    { xWeighted: number; yWeighted: number; weight: number; raw: BenchmarkCurvePoint }
+  >();
+  for (const point of points) {
+    const strength = point.raw.attackParamStrength ?? point.raw.attackStrength;
+    const key = [
+      point.raw.datasetId || "unknown",
+      point.raw.algorithmId,
+      point.raw.attackPresetId,
+      point.raw.attackVariantKey || "default",
+      point.raw.attackParamStrengthName || "strength",
+      strength
+    ].join(":");
+    const weight =
+      typeof point.raw.sampleCount === "number" && Number.isFinite(point.raw.sampleCount) && point.raw.sampleCount > 0
+        ? point.raw.sampleCount
+        : 1;
+    const current = grouped.get(key);
+    if (!current) {
+      grouped.set(key, {
+        raw: point.raw,
+        weight,
+        xWeighted: point.x * weight,
+        yWeighted: point.y * weight
+      });
+      continue;
+    }
+    current.weight += weight;
+    current.xWeighted += point.x * weight;
+    current.yWeighted += point.y * weight;
+  }
+  return Array.from(grouped.values()).map((item) => {
+    const x = item.xWeighted / item.weight;
+    const y = item.yWeighted / item.weight;
+    return {
+      x,
+      y,
+      raw: {
+        ...item.raw,
+        sampleCount: item.weight,
+        xNqd: x,
+        yTprAtFpr: y
+      }
+    };
+  });
 }
 
 function pointRadius(

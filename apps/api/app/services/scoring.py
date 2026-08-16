@@ -561,7 +561,7 @@ def rank_algorithm_scores(scored_cells: list[JsonDict]) -> list[JsonDict]:
 
 
 def build_curve_points(scored_cells: list[JsonDict]) -> list[JsonDict]:
-    points: list[JsonDict] = []
+    grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
     for cell in scored_cells:
         scoring = cell["scoring"]
         if scoring.get("tprAtFpr") is None or scoring.get("normalizedQualityDegradation") is None:
@@ -571,27 +571,117 @@ def build_curve_points(scored_cells: list[JsonDict]) -> list[JsonDict]:
             attack_params = scoring.get("attackParams") if isinstance(scoring.get("attackParams"), Mapping) else {}
         variant = attack_variant_summary(attack_params)
         param_strength = attack_param_strength(float(cell["attackStrength"]), attack_params)
+        variant_key = str(scoring.get("attackVariantKey") or variant["key"])
+        param_strength_name = str(scoring.get("attackParamStrengthName") or param_strength["name"])
+        param_strength_value = float(scoring.get("attackParamStrength", param_strength["value"]))
+        group_key = (
+            str(cell.get("datasetId") or ""),
+            str(cell["algorithmId"]),
+            str(cell["attackPresetId"]),
+            str(cell["attackMethod"]),
+            str(scoring.get("attackCategory") or ""),
+            variant_key,
+            param_strength_name,
+            param_strength_value,
+            float(cell["attackStrength"]),
+        )
+        grouped.setdefault(group_key, []).append(cell)
+
+    points: list[JsonDict] = []
+    for group_key, cells in grouped.items():
+        first = cells[0]
+        first_scoring = first["scoring"]
+        attack_params = first.get("attackParams")
+        if not isinstance(attack_params, Mapping):
+            attack_params = (
+                first_scoring.get("attackParams") if isinstance(first_scoring.get("attackParams"), Mapping) else {}
+            )
+        variant = attack_variant_summary(attack_params)
+        (
+            dataset_id,
+            algorithm_id,
+            attack_preset_id,
+            attack_method,
+            attack_category,
+            variant_key,
+            param_strength_name,
+            param_strength_value,
+            attack_strength,
+        ) = group_key
+        sample_count = sum(_curve_sample_count(cell) for cell in cells)
+        nqd = _weighted_mean(
+            (
+                float(cell["scoring"]["normalizedQualityDegradation"]),
+                _curve_sample_count(cell),
+            )
+            for cell in cells
+        )
+        tpr = _weighted_mean(
+            (float(cell["scoring"]["tprAtFpr"]), _curve_positive_count(cell))
+            for cell in cells
+        )
+        performance = _weighted_mean(
+            (value, _curve_positive_count(cell))
+            for cell in cells
+            if (value := _cell_performance(cell)) is not None
+        )
+        if nqd is None or tpr is None:
+            continue
         points.append(
             {
-                "datasetId": cell.get("datasetId") or "",
-                "algorithmId": cell["algorithmId"],
-                "attackPresetId": cell["attackPresetId"],
-                "attackMethod": cell["attackMethod"],
-                "attackCategory": scoring.get("attackCategory"),
-                "attackStrength": cell["attackStrength"],
+                "datasetId": dataset_id,
+                "algorithmId": algorithm_id,
+                "attackPresetId": attack_preset_id,
+                "attackMethod": attack_method,
+                "attackCategory": attack_category,
+                "attackStrength": attack_strength,
                 "attackParams": dict(attack_params),
-                "attackVariantKey": str(scoring.get("attackVariantKey") or variant["key"]),
-                "attackVariantLabel": str(scoring.get("attackVariantLabel") or variant["label"]),
-                "attackParamStrengthName": str(scoring.get("attackParamStrengthName") or param_strength["name"]),
-                "attackParamStrength": scoring.get("attackParamStrength", param_strength["value"]),
-                "sampleCount": int(scoring.get("sampleCount") or cell.get("sampleCount") or 0),
-                "xStrength": _normalized_strength(float(cell["attackStrength"])),
-                "xNqd": scoring["normalizedQualityDegradation"],
-                "yTprAtFpr": scoring["tprAtFpr"],
-                "yPerformance": _cell_performance(cell),
+                "attackVariantKey": variant_key,
+                "attackVariantLabel": str(first_scoring.get("attackVariantLabel") or variant["label"]),
+                "attackParamStrengthName": param_strength_name,
+                "attackParamStrength": param_strength_value,
+                "sampleCount": sample_count,
+                "xStrength": _normalized_strength(attack_strength),
+                "xNqd": nqd,
+                "yTprAtFpr": tpr,
+                "yPerformance": performance,
             }
         )
+    points.sort(
+        key=lambda point: (
+            point["datasetId"],
+            point["algorithmId"],
+            point["attackMethod"],
+            point["attackPresetId"],
+            point["attackVariantKey"],
+            point["attackParamStrength"],
+        )
+    )
     return points
+
+
+def _curve_sample_count(cell: JsonDict) -> int:
+    scoring = cell.get("scoring") if isinstance(cell.get("scoring"), dict) else {}
+    try:
+        return max(1, int(scoring.get("sampleCount") or cell.get("sampleCount") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _curve_positive_count(cell: JsonDict) -> int:
+    scoring = cell.get("scoring") if isinstance(cell.get("scoring"), dict) else {}
+    try:
+        return max(1, int(scoring.get("positiveScoreCount") or _curve_sample_count(cell)))
+    except (TypeError, ValueError):
+        return _curve_sample_count(cell)
+
+
+def _weighted_mean(values: Iterable[tuple[float, int]]) -> float | None:
+    usable = [(float(value), max(1, int(weight))) for value, weight in values if math.isfinite(float(value))]
+    if not usable:
+        return None
+    total_weight = sum(weight for _value, weight in usable)
+    return sum(value * weight for value, weight in usable) / total_weight
 
 
 def rank_attack_scores(scored_cells: list[JsonDict]) -> list[JsonDict]:

@@ -33,7 +33,7 @@
   min-width: 108px;
   padding: 0 18px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   flex-shrink: 0;
   text-align: center;
   overflow: hidden;
@@ -69,7 +69,7 @@
   margin-top: 4px;
   padding: 0 20px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: center;
   overflow: hidden;
   box-shadow: none;
@@ -121,7 +121,7 @@
   max-width: 520px;
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-ui);
   line-height: 1.7;
 }
 
@@ -215,7 +215,7 @@
 .modal-header p {
   margin: 6px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
 
@@ -262,7 +262,7 @@
 .modal-section-heading h3 {
   flex: 1;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-ui);
 }
 
 .field-icon-input {
@@ -306,7 +306,7 @@
   justify-content: space-between;
   gap: 10px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -340,7 +340,7 @@
   justify-content: space-between;
   gap: 8px;
   color: #4c5c53;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -374,7 +374,7 @@
 
 .viewpoint-settings-label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -415,7 +415,7 @@
   border-radius: 7px;
   background: #fff;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -462,13 +462,13 @@
 .strength-range-heading span,
 .strength-level-field span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
 .strength-range-heading strong {
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -477,7 +477,7 @@
   background: var(--teal-soft);
   color: var(--teal);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   line-height: 1.4;
   white-space: nowrap;
@@ -629,7 +629,7 @@
   justify-content: space-between;
   margin: -2px 10px 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--text-micro);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -648,7 +648,7 @@
   background: #fff;
   color: var(--ink);
   padding: 0 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
   text-align: center;
 }
@@ -665,6 +665,6 @@
   background: #fbfcfa;
   color: var(--muted);
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }

@@ -24,6 +24,7 @@ from app.services.scoring import (
     PROTOCOL_ID,
     aggregate_benchmark_score,
     benchmark_protocols,
+    build_curve_points,
     score_cell_from_records,
 )
 
@@ -36,7 +37,7 @@ HIDDEN_BASELINE_ATTACK_ID = "atk-identity"
 WORKER_HEARTBEAT_RETENTION_SECONDS = 3600
 EXPERIMENT_STATE_DIR = "_experiment_state"
 RUN_RECORD_NAME = "run_record.json"
-DASHBOARD_CACHE_SCHEMA_VERSION = 1
+DASHBOARD_CACHE_SCHEMA_VERSION = 2
 DASHBOARD_CACHE_DIR = "dashboard-results"
 DASHBOARD_CACHE_NAME = "results.v1.json.gz"
 DASHBOARD_SCORE_CACHE_NAME = "score.v1.json.gz"
@@ -1289,7 +1290,12 @@ class ExperimentService:
                 return cached[1]
 
         if isinstance(summary, dict) and isinstance(summary.get("score"), dict):
-            score = summary["score"]
+            if result_units is None:
+                result_units = self._list_run_result_units_for_run(run)
+            score = {
+                **summary["score"],
+                "curvePoints": build_curve_points(result_units),
+            }
         else:
             if result_units is None:
                 result_units = self._list_run_result_units_for_run(run)

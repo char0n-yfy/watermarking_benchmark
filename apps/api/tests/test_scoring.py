@@ -177,6 +177,41 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(points[0]["attackParams"]["quality"], 3)
         self.assertEqual(points[0]["sampleCount"], 12)
 
+    def test_curve_points_aggregate_shards_before_connecting_strengths(self) -> None:
+        def cell(strength: float, sample_count: int, tpr: float, nqd: float) -> dict[str, object]:
+            return {
+                "datasetId": "dataset-demo",
+                "algorithmId": "alg-demo",
+                "attackPresetId": "atk-jpeg",
+                "attackMethod": "jpeg",
+                "attackStrength": strength,
+                "attackParams": {"strength": strength},
+                "sampleCount": sample_count,
+                "scoring": {
+                    "attackCategory": "distortion_attacks",
+                    "tprAtFpr": tpr,
+                    "normalizedQualityDegradation": nqd,
+                    "sampleCount": sample_count,
+                    "positiveScoreCount": sample_count,
+                },
+            }
+
+        points = build_curve_points(
+            [
+                cell(0.0, 10, 0.5, 0.2),
+                cell(0.0, 30, 1.0, 0.6),
+                cell(0.5, 20, 0.25, 0.8),
+            ]
+        )
+
+        self.assertEqual(len(points), 2)
+        self.assertEqual(points[0]["attackParamStrength"], 0.0)
+        self.assertEqual(points[0]["sampleCount"], 40)
+        self.assertAlmostEqual(points[0]["xNqd"], 0.5)
+        self.assertAlmostEqual(points[0]["yTprAtFpr"], 0.875)
+        self.assertEqual(points[1]["attackParamStrength"], 0.5)
+        self.assertEqual(points[1]["sampleCount"], 20)
+
     def test_quality_summary_returns_lightweight_nqd(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

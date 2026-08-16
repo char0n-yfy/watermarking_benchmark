@@ -281,7 +281,7 @@ function axisAngle(index: number, count: number): number {
 function estimateLabelWidth(label: string, isHero: boolean): number {
   let width = 0;
   for (const char of label) {
-    width += char.charCodeAt(0) > 0xff ? (isHero ? 12 : 10.5) : (isHero ? 6.8 : 6);
+    width += char.charCodeAt(0) > 0xff ? (isHero ? 15.5 : 13) : (isHero ? 8.8 : 7.4);
   }
   return width;
 }

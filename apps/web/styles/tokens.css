@@ -23,6 +23,12 @@
   --shadow-card-hover: 0 6px 18px rgba(16, 24, 40, 0.08);
   --font-sans: "Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --text-micro: 12px;
+  --text-xs: 13px;
+  --text-sm: 14px;
+  --text-ui: 15px;
+  --text-body: 15px;
+  --text-panel-title: 17px;
   --focus-ring: #0b6fbb;
   --focus-shadow: 0 0 0 3px rgb(11 111 187 / 22%);
   --sidebar-width: 270px;

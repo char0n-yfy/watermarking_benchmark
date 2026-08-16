@@ -58,7 +58,7 @@
 .summary-card-head span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -75,7 +75,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -146,7 +146,7 @@
 }
 
 .resource-filter-panel .field label {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
@@ -163,7 +163,7 @@
   height: 32px;
   min-height: 0;
   padding: 0 10px;
-  font-size: 14px;
+  font-size: var(--text-ui);
   font-weight: 500;
   line-height: 32px;
 }
@@ -181,13 +181,13 @@
 
 .resource-filter-panel .segmented-control button {
   min-height: 30px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
 .resource-filter-panel .toggle-row {
   min-height: 26px;
-  font-size: 14px;
+  font-size: var(--text-ui);
   font-weight: 500;
 }
 
@@ -221,7 +221,7 @@
   align-items: center;
   min-height: 36px;
   padding: 0 10px;
-  font-size: 14px;
+  font-size: var(--text-ui);
   font-weight: 600;
 }
 
@@ -232,7 +232,7 @@
 .resource-type-button strong {
   min-width: 2.5ch;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-ui);
   text-align: right;
 }
 
@@ -291,7 +291,7 @@
   border-right: 1px solid var(--line);
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -309,7 +309,7 @@
   align-items: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
@@ -319,7 +319,7 @@
   gap: 6px;
   padding-inline: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -355,12 +355,12 @@
 }
 
 .resource-row-main strong {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .resource-row-main small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .resource-row-meta {
@@ -408,7 +408,7 @@
   border-top: 1px solid var(--line);
   background: var(--panel);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -433,7 +433,7 @@
   border-radius: 7px;
   background: #fff;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -449,7 +449,7 @@
 
 .pagination-ellipsis {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -471,7 +471,7 @@
 .detail-title-text {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 17px;
+  font-size: 18px;
 }
 
 .detail-title-badges {
@@ -486,7 +486,7 @@
   flex: 0 0 auto;
   background: var(--steel-soft);
   color: var(--steel);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -494,7 +494,7 @@
   margin: 8px 0 0;
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -519,7 +519,7 @@
 .resource-long-description summary {
   cursor: pointer;
   color: var(--teal);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -599,19 +599,19 @@
 .dataset-download-choice-head strong {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .dataset-download-choice > span:not(.dataset-download-choice-head) {
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 800;
 }
 
 .dataset-download-choice small {
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.35;
 }
 
@@ -649,18 +649,18 @@
 
 .dataset-download-selected span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
 .dataset-download-selected strong {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .dataset-download-selected small {
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -684,7 +684,7 @@
   border-top: 1px solid #e7ece6;
   padding: 8px 10px 0;
   color: var(--accent-strong);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -702,19 +702,19 @@
   background: var(--steel-soft);
   color: var(--steel);
   padding: 2px 7px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .dataset-pool-summary {
   display: grid;
   gap: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .dataset-download-hint {
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
 
@@ -727,7 +727,7 @@
 .dataset-download-fields label {
   display: grid;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
@@ -747,7 +747,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .dataset-download-progress small {
@@ -763,7 +763,7 @@
   display: grid;
   gap: 4px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .dataset-download-path code {
@@ -788,7 +788,7 @@
 
 .detail-metric span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--text-micro);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -796,7 +796,7 @@
 .detail-metric strong {
   overflow-wrap: anywhere;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.45;
   word-break: break-word;
 }
@@ -807,7 +807,7 @@
 }
 
 .detail-section strong {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .detail-section code {
@@ -817,7 +817,7 @@
   background: #fbfcfa;
   color: var(--muted);
   padding: 9px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
@@ -849,7 +849,7 @@
 
 .resource-reference-layer-label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -857,20 +857,20 @@
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.55;
   word-break: break-word;
 }
 
 .resource-reference-note {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .resource-reference-empty {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
@@ -882,7 +882,7 @@
   border-radius: 5px;
   background: #fff;
   color: var(--ink);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
@@ -899,7 +899,7 @@
   z-index: 2;
   color: var(--accent);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -954,7 +954,7 @@
 .attack-method-chip strong {
   overflow: hidden;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -962,7 +962,7 @@
 .attack-method-chip small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -994,7 +994,7 @@
 .attack-weight-row span {
   min-width: 0;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -1003,13 +1003,13 @@
   min-width: 0;
   border-radius: 6px;
   padding: 6px 7px;
-  font-size: 10px;
+  font-size: var(--text-micro);
 }
 
 .attack-mapping-row small {
   grid-column: 1 / -1;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -1023,7 +1023,7 @@
   background: #f6faf4;
   color: var(--muted);
   padding: 7px 9px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 
@@ -1035,7 +1035,7 @@
   background: #10211d;
   color: #dbf7ec;
   padding: 10px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 

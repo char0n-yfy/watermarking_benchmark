@@ -22,11 +22,11 @@
   gap: 12px;
   min-height: 44px;
   padding: 11px 14px 11px 16px;
-  font-size: 15px;
+  font-size: var(--text-body);
 }
 .language-label,
 .language-toggle button {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 @media (min-width: 1181px) {
   .shell,
@@ -169,7 +169,7 @@
 }
 .title-block p {
   max-width: 860px;
-  font-size: 15px;
+  font-size: var(--text-body);
   line-height: 1.55;
 }
 .console-project-banner {
@@ -191,14 +191,14 @@
 .button,
 .select-button {
   min-height: 42px;
-  font-size: 14px;
+  font-size: var(--text-ui);
 }
 .button {
   padding-inline: 16px;
 }
 .button.compact {
   min-height: 32px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .icon-button {
   width: 34px;
@@ -223,7 +223,7 @@
 .table-subtext,
 .run-start-copy p,
 .run-inline-summary > p {
-  font-size: 14px;
+  font-size: var(--text-ui);
 }
 .field {
   gap: 7px;
@@ -234,14 +234,14 @@
 .selector-tools input {
   min-height: 42px;
   padding: 10px 12px;
-  font-size: 14px;
+  font-size: var(--text-ui);
 }
 .badge {
   padding: 5px 10px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .table {
-  font-size: 14px;
+  font-size: var(--text-ui);
 }
 .table th,
 .table td {
@@ -265,14 +265,14 @@
 .gauge-title,
 .gauge-detail,
 .gauge-core span {
-  font-size: 14px;
+  font-size: var(--text-ui);
 }
 .gauge-core strong {
   font-size: 28px;
 }
 .gauge-meta small,
 .gauge-meta strong {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .run-start-copy h2 {
   font-size: 28px;
@@ -282,14 +282,14 @@
 }
 .run-monitor-toolbar span,
 .run-monitor-toolbar code {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-monitor-toolbar strong {
   font-size: 21px;
 }
 .run-pause-state {
   padding: 5px 10px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-stage-timeline {
   padding: 18px;
@@ -302,13 +302,13 @@
 .run-stage-option span {
   width: 28px;
   height: 28px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-stage-option strong {
-  font-size: 15px;
+  font-size: var(--text-body);
 }
 .run-stage-option small {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-stage-detail-panel {
   gap: 14px;
@@ -316,7 +316,7 @@
 }
 .run-stage-detail-head span,
 .run-stage-detail-head small {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-stage-detail-head strong {
   font-size: 24px;
@@ -336,7 +336,7 @@
 .run-shard-card-head span,
 .run-shard-progress span,
 .run-shard-foot span {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-shard-card-head strong {
   font-size: 18px;
@@ -344,7 +344,7 @@
 }
 .run-shard-card-head small {
   padding: 5px 10px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-shard-meta {
   gap: 8px;
@@ -354,35 +354,35 @@
   padding: 10px;
 }
 .run-shard-meta b {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .run-shard-meta em {
-  font-size: 15px;
+  font-size: var(--text-body);
   line-height: 1.25;
 }
 .run-shard-progress {
   gap: 8px;
 }
 .run-shard-progress strong {
-  font-size: 15px;
+  font-size: var(--text-body);
 }
 .run-shard-foot code {
   padding: 6px 9px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-gpu-chart {
   padding: 14px;
 }
 .run-gpu-chart-head strong {
-  font-size: 15px;
+  font-size: var(--text-body);
 }
 .run-gpu-chart-head span,
 .run-gpu-chart-head em {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .run-gpu-axis-label,
 .run-gpu-time-label {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .log-preview {
   max-height: 320px;
@@ -392,7 +392,7 @@
   background: #10211d;
   color: #dbf7ec;
   padding: 12px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -416,7 +416,7 @@
   }
 
   .title-block p {
-    font-size: 14px;
+    font-size: var(--text-ui);
   }
 
   .console-project-banner {
@@ -1001,7 +1001,7 @@
   padding: clamp(8px, 1.1cqi, 14px);
 }
 .gauge-title {
-  font-size: clamp(11px, 1.35cqi, 14px);
+  font-size: clamp(13px, 1.35cqi, 15px);
 }
 .gauge-icon {
   width: clamp(24px, 2.8cqi, 28px);
@@ -1011,14 +1011,14 @@
   width: clamp(68px, 12cqi, 118px);
 }
 .gauge-core strong {
-  font-size: clamp(16px, 2.3cqi, 22px);
+  font-size: clamp(17px, 2.3cqi, 23px);
 }
 .gauge-core span {
-  font-size: clamp(9px, 1.2cqi, 12px);
+  font-size: clamp(12px, 1.2cqi, 13px);
 }
 .gauge-detail {
   min-height: 0;
-  font-size: clamp(10px, 1.25cqi, 13px);
+  font-size: clamp(12px, 1.25cqi, 14px);
   overflow-wrap: anywhere;
 }
 .gauge-meta {
