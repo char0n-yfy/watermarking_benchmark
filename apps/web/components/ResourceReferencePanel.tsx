@@ -55,7 +55,7 @@ function externalLinkList(links: ResourceReference["papers"], limit?: number) {
           <a
             className="resource-reference-external-link"
             href={link.href}
-            onClick={(event) => openExternalReferenceLink(event, link.href)}
+            onClick={openExternalReferenceLink}
             onMouseDown={(event) => event.stopPropagation()}
             rel="noreferrer noopener"
             target="_blank"
@@ -85,7 +85,7 @@ function projectSourceLinkList(links: ResourceReference["projectSources"]) {
           <a
             className="resource-reference-external-link"
             href={link.href}
-            onClick={(event) => openExternalReferenceLink(event, link.href)}
+            onClick={openExternalReferenceLink}
             onMouseDown={(event) => event.stopPropagation()}
             rel="noreferrer noopener"
             target="_blank"

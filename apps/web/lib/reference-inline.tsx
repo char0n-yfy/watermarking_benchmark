@@ -23,16 +23,8 @@ export function normalizeExternalHref(value: string): string | null {
   return isExternalUrl(candidate) ? candidate : null;
 }
 
-export function openExternalReferenceLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
+export function openExternalReferenceLink(event: MouseEvent<HTMLAnchorElement>) {
   event.stopPropagation();
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
-    return;
-  }
-  event.preventDefault();
-  const opened = window.open(href, "_blank", "noopener,noreferrer");
-  if (!opened) {
-    window.location.assign(href);
-  }
 }
 
 export function projectSourceHref(path: string): string | null {
@@ -84,7 +76,7 @@ function renderExternalAnchor(href: string, label: string, key: string) {
       className="resource-reference-external-link"
       href={href}
       key={key}
-      onClick={(event) => openExternalReferenceLink(event, href)}
+      onClick={openExternalReferenceLink}
       onMouseDown={(event) => event.stopPropagation()}
       rel="noreferrer noopener"
       target="_blank"
