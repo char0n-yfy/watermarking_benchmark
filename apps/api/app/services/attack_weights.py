@@ -258,6 +258,23 @@ def reconcile_stale_attack_pack_marker(storage_root: Path, spec: AttackWeightSpe
     return True
 
 
+def reconcile_attack_pack_install_markers(resources_root: Path) -> dict[str, list[str]]:
+    """Adopt complete legacy/manual installs and remove markers for incomplete packs."""
+    added: list[str] = []
+    removed: list[str] = []
+    for pack_id, spec in ATTACK_WEIGHT_PACKS.items():
+        storage_root = resources_root / "weights" / "attacks" / spec.storage_dir
+        files_ready = attack_weight_files_ready(storage_root, spec)
+        marked_installed = is_attack_pack_marked_installed(storage_root, pack_id)
+        if files_ready and not marked_installed:
+            mark_attack_pack_installed(storage_root, pack_id)
+            added.append(pack_id)
+        elif marked_installed and not files_ready:
+            unmark_attack_pack_installed(storage_root, pack_id)
+            removed.append(pack_id)
+    return {"added": added, "removed": removed}
+
+
 def attack_method_can_install(resources_root: Path, method: str, *, remote_available: bool) -> bool:
     spec = attack_weight_spec(method)
     if spec is None:

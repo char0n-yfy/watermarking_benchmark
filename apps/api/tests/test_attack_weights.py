@@ -15,10 +15,29 @@ from app.services.attack_weights import (
     enrich_attack_resource,
     is_attack_pack_marked_installed,
     mark_attack_pack_installed,
+    reconcile_attack_pack_install_markers,
 )
 
 
 class AttackWeightsInstallStateTest(unittest.TestCase):
+    def test_complete_manual_install_is_adopted_with_pack_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "weights" / "attacks" / "consumer_enhancement_workflow_attacks"
+            for relative in (
+                "super_resolution/bsrgan_x2/BSRGANx2.pth",
+                "super_resolution/bsrgan_x4/BSRGAN.pth",
+            ):
+                checkpoint = storage / relative
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint.write_bytes(b"x" * 2048)
+
+            result = reconcile_attack_pack_install_markers(root)
+
+            self.assertIn("cew_s3", result["added"])
+            self.assertTrue(is_attack_pack_marked_installed(storage, "cew_s3"))
+            self.assertTrue(attack_method_weights_installed(root, "cew_s3"))
+
     def test_viewpoint_motion_install_state_is_per_pack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

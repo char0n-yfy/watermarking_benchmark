@@ -106,6 +106,26 @@ def create_app() -> FastAPI:
             response.headers["content-type"] = "application/json; charset=utf-8"
         return response
 
+    @app.middleware("http")
+    async def prevent_stale_exported_web_assets(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        content_type = response.headers.get("content-type", "").lower()
+        exported_page_data = path in {
+            "/index.txt",
+            "/configs.txt",
+            "/resources.txt",
+            "/runs.txt",
+            "/results.txt",
+            "/leaderboard.txt",
+            "/schema.txt",
+        }
+        if content_type.startswith("text/html") or path.startswith("/_next/") or exported_page_data:
+            response.headers["cache-control"] = "no-cache, no-store, must-revalidate"
+            response.headers["pragma"] = "no-cache"
+            response.headers["expires"] = "0"
+        return response
+
     @app.get("/health")
     def health(request: Request) -> dict[str, str]:
         return {

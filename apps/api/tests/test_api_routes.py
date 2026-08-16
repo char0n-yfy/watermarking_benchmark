@@ -186,6 +186,12 @@ class ApiRoutesTest(unittest.TestCase):
                 runs_page_response = client.get("/runs", headers={"accept": "text/html"})
                 self.assertEqual(runs_page_response.status_code, 200)
                 self.assertIn("text/html", runs_page_response.headers.get("content-type", "").lower())
+                self.assertEqual(
+                    runs_page_response.headers.get("cache-control"),
+                    "no-cache, no-store, must-revalidate",
+                )
+                self.assertEqual(runs_page_response.headers.get("pragma"), "no-cache")
+                self.assertEqual(runs_page_response.headers.get("expires"), "0")
 
             runtime_response = client.get("/system/runtime")
             self.assertEqual(runtime_response.status_code, 200)

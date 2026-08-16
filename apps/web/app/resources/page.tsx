@@ -2409,16 +2409,32 @@ function resourceTypeIcon(type: ResourceType) {
 }
 
 function installationBadgeClass(resource: BrowserResource) {
-  return isResourceInstalled(resource) ? "badge ok" : "badge";
+  if (isResourceInstalled(resource)) {
+    return "badge ok";
+  }
+  return resource.type === "attacks" ? "badge warn" : "badge";
 }
 
 function installationLabel(resource: BrowserResource, t: ReturnType<typeof useLanguage>["t"]) {
-  return isResourceInstalled(resource) ? t.resources.installed : t.resources.notInstalled;
+  if (isResourceInstalled(resource)) {
+    return t.resources.installed;
+  }
+  return resource.type === "attacks" ? t.resources.downloadable : t.resources.notInstalled;
+}
+
+function attackResourceWeightsInstalled(resource: BrowserResource) {
+  const presets = resource.attacks ?? (resource.attack ? [resource.attack] : []);
+  const weightedPresets = presets.filter((preset) => preset.weightsPackRequired === true);
+  return weightedPresets.every((preset) => preset.weightsInstalled === true);
 }
 
 function isResourceInstalled(resource: BrowserResource) {
   if (resource.type === "datasets") {
     return resource.catalog?.installed === true;
+  }
+  if (resource.type === "attacks") {
+    const codeInstalled = resource.available !== false && resource.status !== "missing";
+    return codeInstalled && attackResourceWeightsInstalled(resource);
   }
   return resource.available !== false && resource.status !== "missing";
 }

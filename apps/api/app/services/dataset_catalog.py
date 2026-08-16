@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,10 @@ from app.services.object_storage import ObjectStorageClient
 
 
 COMPACT_SAMPLE_COUNT = 1000
+LOCAL_PATH_CACHE_TTL_SECONDS = 5.0
+
+_local_path_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_local_path_cache_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -335,14 +341,73 @@ def custom_pool_count(resources_root: Path, entry: DatasetCatalogEntry) -> int:
     return entry.official_total_images or 0
 
 
-def resolve_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dict[str, Any]:
+def invalidate_dataset_catalog_cache(
+    resources_root: Path | None = None,
+    dataset_id: str | None = None,
+) -> None:
+    root_key = str(resources_root.resolve()) if resources_root is not None else None
+    canonical_id = dataset_id
+    if dataset_id is not None:
+        try:
+            canonical_id = get_catalog_entry(dataset_id).id
+        except KeyError:
+            pass
+
+    with _local_path_cache_lock:
+        if root_key is None and canonical_id is None:
+            _local_path_cache.clear()
+            return
+        stale_keys = [
+            key
+            for key in _local_path_cache
+            if (root_key is None or key[0] == root_key)
+            and (canonical_id is None or key[1] == canonical_id)
+        ]
+        for key in stale_keys:
+            _local_path_cache.pop(key, None)
+
+
+def _images_below(images: list[Path], directory: Path) -> list[Path]:
+    return [path for path in images if path.is_relative_to(directory)]
+
+
+def _directory_has_entries(path: Path) -> bool:
+    return path.exists() and any(path.iterdir())
+
+
+def _scan_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dict[str, Any]:
     root = dataset_root(resources_root, entry.id)
-    compact_path = compact_dir(resources_root, entry.id, compact_uses_root=entry.compact_uses_root)
-    full_path = full_dir(resources_root, entry.id)
-    compact_count = count_images(compact_path)
-    full_count = count_images(full_path)
-    local_root_count = count_images(root) if root.exists() else 0
-    pool_count = custom_pool_count(resources_root, entry)
+    root_images = iter_image_paths(root) if root.exists() else []
+
+    compact_candidate = root / "compact"
+    if _directory_has_entries(compact_candidate):
+        compact_path = compact_candidate
+        compact_images = _images_below(root_images, compact_candidate)
+    elif root_images or (entry.compact_uses_root and root.exists()):
+        compact_path = root
+        compact_images = root_images
+    else:
+        compact_path = compact_candidate
+        compact_images = []
+
+    full_candidate = root / "full"
+    if _directory_has_entries(full_candidate):
+        full_path = full_candidate
+        full_images = _images_below(root_images, full_candidate)
+    else:
+        full_path = root
+        full_images = root_images
+
+    if _directory_has_entries(full_candidate):
+        pool_count = len(full_images)
+    else:
+        compact_image_set = set(compact_images)
+        pool_images = [path for path in root_images if path not in compact_image_set]
+        pool_count = len(pool_images or root_images) or (entry.official_total_images or 0)
+
+    compact_count = len(compact_images)
+    full_count = len(full_images)
+    local_root_count = len(root_images)
 
     compact_available = compact_count > 0
     local_available = full_count > 0 or local_root_count > 0
@@ -358,6 +423,19 @@ def resolve_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dic
         "localAvailable": local_available,
         "installed": compact_available or local_available,
     }
+
+
+def resolve_local_paths(resources_root: Path, entry: DatasetCatalogEntry) -> dict[str, Any]:
+    cache_key = (str(resources_root.resolve()), entry.id)
+    now = time.monotonic()
+    with _local_path_cache_lock:
+        cached = _local_path_cache.get(cache_key)
+        if cached is not None and now - cached[0] < LOCAL_PATH_CACHE_TTL_SECONDS:
+            return dict(cached[1])
+
+        local = _scan_local_paths(resources_root, entry)
+        _local_path_cache[cache_key] = (time.monotonic(), local)
+        return dict(local)
 
 
 def _probe_remote_availability(

@@ -19,6 +19,7 @@ from app.services.dataset_catalog import (
     dataset_root,
     full_dir,
     get_catalog_entry,
+    invalidate_dataset_catalog_cache,
     remote_compact_object_key,
 )
 from app.services.object_storage import ObjectStorageClient, parse_manifest_lines
@@ -177,6 +178,7 @@ class DatasetDownloadService:
                 self._run_compact(job)
             else:
                 self._run_custom(job)
+            invalidate_dataset_catalog_cache(self.resources_root, job.dataset_id)
             job.status = "succeeded"
             job.progress = 100
             job.updated_at = time.time()
@@ -622,6 +624,8 @@ class DatasetDownloadService:
             if not install_dir.exists() or not iter_image_paths(install_dir):
                 raise FileNotFoundError(f"Custom dataset pool is not installed: {install_dir}")
             shutil.rmtree(install_dir)
+
+        invalidate_dataset_catalog_cache(self.resources_root, dataset_id)
 
         return {
             "datasetId": dataset_id,

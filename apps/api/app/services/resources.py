@@ -9,7 +9,7 @@ from typing import Any
 from evaluator.attacks import ATTACK_REGISTRY
 from evaluator.watermarking import WATERMARK_REGISTRY
 
-from app.services.attack_weights import enrich_attack_resource
+from app.services.attack_weights import enrich_attack_resource, reconcile_attack_pack_install_markers
 from app.services.object_storage import ObjectStorageClient
 from app.services.watermark_weights import enrich_watermark_resource
 
@@ -456,6 +456,7 @@ def list_attack_resources(
     items = list(_build_attack_catalog().values())
     if resources_root is None:
         return items
+    reconcile_attack_pack_install_markers(resources_root)
     return [
         enrich_attack_resource(item, resources_root, oss=oss, probe_remote=probe_remote)
         for item in items

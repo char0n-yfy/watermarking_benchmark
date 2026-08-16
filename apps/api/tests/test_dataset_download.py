@@ -13,7 +13,11 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.services.dataset_catalog import COMPACT_SAMPLE_COUNT, list_dataset_catalog
+from app.services.dataset_catalog import (
+    COMPACT_SAMPLE_COUNT,
+    invalidate_dataset_catalog_cache,
+    list_dataset_catalog,
+)
 from app.services.dataset_download import DatasetDownloadJob, DatasetDownloadService
 
 
@@ -56,6 +60,24 @@ class DatasetDownloadServiceTest(unittest.TestCase):
             self.assertTrue(coco["compactAvailable"])
             self.assertEqual(coco["compactSampleCount"], 1)
             self.assertFalse(any(item["category"] == "local" and item["name"] == "MS COCO" for item in catalog))
+
+    def test_catalog_cache_can_be_invalidated_after_dataset_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_dir = root / "datasets" / "MS COCO"
+            dataset_dir.mkdir(parents=True)
+            Image.new("RGB", (16, 16), (80, 120, 160)).save(dataset_dir / "first.png")
+
+            first_catalog = list_dataset_catalog(root)
+            first_coco = next(item for item in first_catalog if item["id"] == "ms-coco")
+            self.assertEqual(first_coco["compactSampleCount"], 1)
+
+            Image.new("RGB", (16, 16), (160, 120, 80)).save(dataset_dir / "second.png")
+            invalidate_dataset_catalog_cache(root, "ms-coco")
+
+            refreshed_catalog = list_dataset_catalog(root)
+            refreshed_coco = next(item for item in refreshed_catalog if item["id"] == "ms-coco")
+            self.assertEqual(refreshed_coco["compactSampleCount"], 2)
 
     def test_compact_download_skips_display_name_folder_when_already_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

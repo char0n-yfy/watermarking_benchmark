@@ -20,8 +20,8 @@ import { languages } from "@/lib/i18n";
 
 const nav = [
   { href: "/", key: "console", icon: LayoutDashboard },
-  { href: "/configs", key: "configs", icon: SlidersHorizontal },
   { href: "/resources", key: "resources", icon: Boxes },
+  { href: "/configs", key: "configs", icon: SlidersHorizontal },
   { href: "/runs", key: "runs", icon: Activity },
   { href: "/results", key: "results", icon: Images },
   { href: "/leaderboard", key: "leaderboard", icon: Trophy }
