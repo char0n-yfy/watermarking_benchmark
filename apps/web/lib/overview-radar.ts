@@ -20,7 +20,7 @@ export const OVERVIEW_ATTACK_RESOURCE_CATEGORIES = [
 export type OverviewAttackResourceCategoryKey = (typeof OVERVIEW_ATTACK_RESOURCE_CATEGORIES)[number]["key"];
 
 const MAIN_RADAR_EXTRA_AXES = [
-  { key: "fidelity", labelZh: "自身保真度", labelEn: "Clean fidelity" },
+  { key: "fidelity", labelZh: "保真度", labelEn: "Clean fidelity" },
   { key: "complexity", labelZh: "算法复杂度", labelEn: "Algorithm complexity" }
 ] as const;
 
