@@ -189,6 +189,9 @@ interface ScoringSummary {
 
 const RESULT_TABS: ResultsTab[] = ["overview", "attack", "quality"];
 const EMPTY_SCORE_ROWS: BenchmarkLeaderboardRow[] = [];
+const DEMO_DEFAULT_RUN_ID = "run_20260704_173157_b4b766";
+const DEMO_DEFAULT_ALGORITHM_IDS = ["alg-stegastamp", "alg-trustmark-q"] as const;
+const DEMO_DEFAULT_QUALITY_ATTACK_IDS = ["atk-noise-to-image", "atk-regen-diffusion"] as const;
 const MemoizedRobustnessCurve = memo(RobustnessCurve);
 const MemoizedAttackViolinPlot = memo(AttackViolinPlot);
 const MemoizedAttackHeatmapMatrix = memo(AttackHeatmapMatrix);
@@ -271,7 +274,8 @@ export default function ResultsPage() {
   useEffect(() => {
     setSelectedAlgorithmIds((current) => {
       const next = current.filter((id) => algorithmIds.includes(id));
-      const normalized = next.length > 0 ? next : algorithmIds.slice(0, 3);
+      const demoDefaults = DEMO_DEFAULT_ALGORITHM_IDS.filter((id) => algorithmIds.includes(id));
+      const normalized = next.length > 0 ? next : demoDefaults.length > 0 ? demoDefaults : algorithmIds.slice(0, 3);
       return sameStringArray(current, normalized) ? current : normalized;
     });
   }, [algorithmIds]);
@@ -329,16 +333,21 @@ export default function ResultsPage() {
   }, [attackAttackOptionIds]);
 
   useEffect(() => {
-    const seeded = selectedAlgorithmIds.filter((id) => qualityAlgorithmOptionIds.includes(id));
-    const fallback = seeded.length ? seeded : qualityAlgorithmOptionIds.slice(0, Math.min(3, qualityAlgorithmOptionIds.length));
+    const demoDefaults = DEMO_DEFAULT_ALGORITHM_IDS.filter((id) => qualityAlgorithmOptionIds.includes(id));
+    const fallback = demoDefaults.length
+      ? demoDefaults
+      : qualityAlgorithmOptionIds.slice(0, Math.min(3, qualityAlgorithmOptionIds.length));
     setQualityAlgorithmIds((current) => reconcileQualitySelection(current, qualityAlgorithmOptionIds, fallback));
-  }, [qualityAlgorithmOptionIds, selectedAlgorithmIds]);
+  }, [qualityAlgorithmOptionIds]);
 
   useEffect(() => {
+    const demoDefaults = DEMO_DEFAULT_QUALITY_ATTACK_IDS.filter((id) => qualityAttackOptionIds.includes(id));
     const fallback =
       qualityAttackFilter !== "all" && qualityAttackOptionIds.includes(qualityAttackFilter)
         ? [qualityAttackFilter]
-        : qualityAttackOptionIds;
+        : demoDefaults.length
+          ? demoDefaults
+          : qualityAttackOptionIds;
     setQualityAttackIds((current) => reconcileQualitySelection(current, qualityAttackOptionIds, fallback));
   }, [qualityAttackFilter, qualityAttackOptionIds]);
 
@@ -354,7 +363,13 @@ export default function ResultsPage() {
           if (current && nextRuns.some((run) => run.id === current)) {
             return current;
           }
+          const demoRun = nextRuns.find(
+            (run) =>
+              run.id === DEMO_DEFAULT_RUN_ID &&
+              (run.status === "succeeded" || run.status === "partially_failed")
+          );
           const latest =
+            demoRun ??
             nextRuns.find((run) => run.status === "succeeded" || run.status === "partially_failed") ??
             nextRuns.find((run) => run.status !== "queued") ??
             nextRuns[0];
@@ -1141,7 +1156,7 @@ export default function ResultsPage() {
 
         <section className="panel attack-visual-panel">
           <div className="panel-header">
-            <h2>{uiText("攻击类别分布", "Attack category distribution")}</h2>
+            <h2>{uiText("攻击失真分布", "Attack distortion distribution")}</h2>
             <Gauge size={16} />
           </div>
           <div className="panel-body">

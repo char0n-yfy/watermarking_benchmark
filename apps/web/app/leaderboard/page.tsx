@@ -12,13 +12,18 @@ import { resolveWatermarkDisplayName } from "@/lib/watermark-display";
 import type { AlgorithmVersion, BenchmarkLeaderboardRow, DemoRunRecord, LeaderboardResponse } from "@/lib/types";
 
 type RankingMetric = "robustness" | "complexity" | "fidelity" | "composite";
+type CompositeWeightKey = Exclude<RankingMetric, "composite">;
+type CompositeWeights = Record<CompositeWeightKey, number>;
 
 const RANKING_METRICS: RankingMetric[] = ["robustness", "complexity", "fidelity", "composite"];
-const COMPOSITE_WEIGHTS = {
-  robustness: 0.5,
-  fidelity: 0.3,
-  complexity: 0.2
+const COMPOSITE_WEIGHT_KEYS: CompositeWeightKey[] = ["robustness", "fidelity", "complexity"];
+const DEFAULT_COMPOSITE_WEIGHTS: CompositeWeights = {
+  robustness: 50,
+  fidelity: 30,
+  complexity: 20
 } as const;
+const COMPOSITE_WEIGHTS_STORAGE_KEY = "wm-bench-leaderboard-composite-weights";
+const DEMO_DEFAULT_RUN_ID = "run_20260704_173157_b4b766";
 
 export default function LeaderboardPage() {
   const { language, t } = useLanguage();
@@ -27,9 +32,35 @@ export default function LeaderboardPage() {
   const [runs, setRuns] = useState<DemoRunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>("composite");
+  const [compositeWeights, setCompositeWeights] = useState<CompositeWeights>({ ...DEFAULT_COMPOSITE_WEIGHTS });
+  const [compositeWeightsLoaded, setCompositeWeightsLoaded] = useState(false);
   const [selectedRankingRow, setSelectedRankingRow] = useState<BenchmarkLeaderboardRow | null>(null);
   const [runsLoading, setRunsLoading] = useState(true);
   const [leaderboardState, setLeaderboardState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(COMPOSITE_WEIGHTS_STORAGE_KEY);
+      if (stored) {
+        setCompositeWeights(normalizeCompositeWeights(JSON.parse(stored)));
+      }
+    } catch {
+      // Ignore malformed or unavailable browser storage and keep the defaults.
+    } finally {
+      setCompositeWeightsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!compositeWeightsLoaded) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(COMPOSITE_WEIGHTS_STORAGE_KEY, JSON.stringify(compositeWeights));
+    } catch {
+      // Weight adjustment still works when browser storage is unavailable.
+    }
+  }, [compositeWeights, compositeWeightsLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,9 +74,16 @@ export default function LeaderboardPage() {
           (run) => run.status === "succeeded" || run.status === "partially_failed"
         );
         setRuns(leaderboardRuns);
-        setSelectedRunId((current) =>
-          current && leaderboardRuns.some((run) => run.id === current) ? current : (leaderboardRuns[0]?.id ?? "")
-        );
+        setSelectedRunId((current) => {
+          if (current && leaderboardRuns.some((run) => run.id === current)) {
+            return current;
+          }
+          return (
+            leaderboardRuns.find((run) => run.id === DEMO_DEFAULT_RUN_ID)?.id ??
+            leaderboardRuns[0]?.id ??
+            ""
+          );
+        });
         setAlgorithms(nextAlgorithms);
         setRunsLoading(false);
       })
@@ -148,8 +186,10 @@ export default function LeaderboardPage() {
             <AlgorithmEvaluationRanking
               algorithmColorDomain={algorithmColorDomain}
               algorithmNames={algorithmNames}
+              compositeWeights={compositeWeights}
               language={language}
               metric={rankingMetric}
+              onChangeCompositeWeights={setCompositeWeights}
               onPick={setSelectedRankingRow}
               rows={rows}
               selectedAlgorithmId={selectedRankingRow?.algorithmId}
@@ -170,7 +210,7 @@ export default function LeaderboardPage() {
                     <strong>{formatPercent(robustnessScore(selectedRankingRow))}</strong>
                   </div>
                   <div className="metric-row">
-                    <span>{language === "zh" ? "自身保真度" : "Intrinsic fidelity"}</span>
+                    <span>{language === "zh" ? "保真度" : "Fidelity"}</span>
                     <strong>{formatPercent(normalizedFidelityScore(selectedRankingRow, rows))}</strong>
                   </div>
                   <div className="metric-row">
@@ -204,8 +244,10 @@ function leaderboardRunLabel(run: DemoRunRecord, language: string): string {
 function AlgorithmEvaluationRanking({
   algorithmColorDomain,
   algorithmNames,
+  compositeWeights,
   language,
   metric,
+  onChangeCompositeWeights,
   onPick,
   rows,
   selectedAlgorithmId,
@@ -213,19 +255,38 @@ function AlgorithmEvaluationRanking({
 }: {
   algorithmColorDomain: string[];
   algorithmNames: Record<string, string>;
+  compositeWeights: CompositeWeights;
   language: string;
   metric: RankingMetric;
+  onChangeCompositeWeights: (weights: CompositeWeights) => void;
   onPick: (row: BenchmarkLeaderboardRow) => void;
   rows: BenchmarkLeaderboardRow[];
   selectedAlgorithmId?: string;
   setMetric: (metric: RankingMetric) => void;
 }) {
+  const [draftWeights, setDraftWeights] = useState<CompositeWeights>(compositeWeights);
+
+  useEffect(() => {
+    setDraftWeights(compositeWeights);
+  }, [compositeWeights]);
+
   if (rows.length === 0) {
     return null;
   }
-  const rankedRows = rankRowsByMetric(rows, metric);
-  const maxScore = Math.max(...rankedRows.map((row) => rankingMetricScore(row, metric, rows)), 1);
+  const rankedRows = rankRowsByMetric(rows, metric, compositeWeights);
+  const maxScore = Math.max(...rankedRows.map((row) => rankingMetricScore(row, metric, rows, compositeWeights)), 1);
   const labels = rankingLabels(language);
+  const firstHandle = draftWeights.robustness;
+  const secondHandle = draftWeights.robustness + draftWeights.fidelity;
+  const commitDraftWeights = () => onChangeCompositeWeights(draftWeights);
+  const updateFirstHandle = (value: number) => {
+    const next = Math.min(clampWeight(value), secondHandle);
+    setDraftWeights(weightsFromHandles(next, secondHandle));
+  };
+  const updateSecondHandle = (value: number) => {
+    const next = Math.max(firstHandle, clampWeight(value));
+    setDraftWeights(weightsFromHandles(firstHandle, next));
+  };
   return (
     <section className="panel interactive-bars-panel overview-ladder-panel leaderboard-ranking-panel">
       <div className="panel-header">
@@ -239,9 +300,79 @@ function AlgorithmEvaluationRanking({
           </button>
         ))}
       </div>
+      {metric === "composite" ? (
+        <div className="composite-weight-editor">
+          <div className="composite-weight-header">
+            <div>
+              <strong>{language === "zh" ? "综合评分权重" : "Composite score weights"}</strong>
+              <span>
+                {language === "zh" ? "拖动两个滑块调整三项占比，松开后更新排名" : "Drag both handles to set the split; ranking updates on release"}
+              </span>
+            </div>
+            <button
+              className="composite-weight-reset"
+              onClick={() => {
+                const defaults = { ...DEFAULT_COMPOSITE_WEIGHTS };
+                setDraftWeights(defaults);
+                onChangeCompositeWeights(defaults);
+              }}
+              type="button"
+            >
+              {language === "zh" ? "恢复默认 50/30/20" : "Reset to 50/30/20"}
+            </button>
+          </div>
+          <div className="composite-weight-values" aria-live="polite">
+            {COMPOSITE_WEIGHT_KEYS.map((key) => (
+              <div className={`composite-weight-value ${key}`} key={key}>
+                <i aria-hidden="true" />
+                <span>{labels[key]}</span>
+                <strong>{draftWeights[key]}%</strong>
+              </div>
+            ))}
+          </div>
+          <div className="composite-weight-slider">
+            <div aria-hidden="true" className="composite-weight-track">
+              <i className="robustness" style={{ width: `${draftWeights.robustness}%` }} />
+              <i className="fidelity" style={{ width: `${draftWeights.fidelity}%` }} />
+              <i className="complexity" style={{ width: `${draftWeights.complexity}%` }} />
+            </div>
+            <input
+              aria-label={language === "zh" ? "鲁棒性与保真度分界" : "Robustness and fidelity boundary"}
+              className="composite-weight-range first"
+              max="100"
+              min="0"
+              onBlur={commitDraftWeights}
+              onChange={(event) => updateFirstHandle(Number(event.target.value))}
+              onKeyUp={commitDraftWeights}
+              onPointerUp={commitDraftWeights}
+              step="1"
+              type="range"
+              value={firstHandle}
+            />
+            <input
+              aria-label={language === "zh" ? "保真度与算法复杂度分界" : "Fidelity and complexity boundary"}
+              className="composite-weight-range second"
+              max="100"
+              min="0"
+              onBlur={commitDraftWeights}
+              onChange={(event) => updateSecondHandle(Number(event.target.value))}
+              onKeyUp={commitDraftWeights}
+              onPointerUp={commitDraftWeights}
+              step="1"
+              type="range"
+              value={secondHandle}
+            />
+          </div>
+          <div className="composite-weight-scale" aria-hidden="true">
+            <span>0%</span>
+            <span>50%</span>
+            <span>100%</span>
+          </div>
+        </div>
+      ) : null}
       <div className="panel-body interactive-bars">
         {rankedRows.map((row, index) => {
-          const value = rankingMetricScore(row, metric, rows);
+          const value = rankingMetricScore(row, metric, rows, compositeWeights);
           const width = `${Math.max(3, (value / maxScore) * 100)}%`;
           const color = curveDomainColor(algorithmColorDomain, row.algorithmId);
           return (
@@ -253,7 +384,7 @@ function AlgorithmEvaluationRanking({
             >
               <span>{index + 1}. {displayAlgorithm(row.algorithmId, algorithmNames)}</span>
               <i style={{ width, background: chartBarFill(color) }} />
-              <strong>{formatRankingValue(row, metric, rows)}</strong>
+              <strong>{formatRankingValue(row, metric, rows, compositeWeights)}</strong>
             </button>
           );
         })}
@@ -303,20 +434,29 @@ function rankingLabels(language: string): Record<RankingMetric, string> {
   return {
     robustness: language === "zh" ? "鲁棒性" : "Robustness",
     complexity: language === "zh" ? "算法复杂度" : "Algorithm complexity",
-    fidelity: language === "zh" ? "自身保真度" : "Clean fidelity",
+    fidelity: language === "zh" ? "保真度" : "Fidelity",
     composite: language === "zh" ? "综合评分" : "Composite score"
   };
 }
 
-function rankRowsByMetric(rows: BenchmarkLeaderboardRow[], metric: RankingMetric): BenchmarkLeaderboardRow[] {
+function rankRowsByMetric(
+  rows: BenchmarkLeaderboardRow[],
+  metric: RankingMetric,
+  compositeWeights: CompositeWeights
+): BenchmarkLeaderboardRow[] {
   return [...rows].sort((left, right) => {
-    const leftScore = rankingMetricScore(left, metric, rows);
-    const rightScore = rankingMetricScore(right, metric, rows);
+    const leftScore = rankingMetricScore(left, metric, rows, compositeWeights);
+    const rightScore = rankingMetricScore(right, metric, rows, compositeWeights);
     return rightScore - leftScore || left.algorithmId.localeCompare(right.algorithmId);
   });
 }
 
-function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): number {
+function rankingMetricScore(
+  row: BenchmarkLeaderboardRow,
+  metric: RankingMetric,
+  rows: BenchmarkLeaderboardRow[],
+  compositeWeights: CompositeWeights
+): number {
   if (metric === "robustness") {
     return (robustnessScore(row) ?? 0) * 100;
   }
@@ -326,10 +466,15 @@ function rankingMetricScore(row: BenchmarkLeaderboardRow, metric: RankingMetric,
   if (metric === "complexity") {
     return (algorithmSimplicityScore(row, rows) ?? 0) * 100;
   }
-  return (compositeScore(row, rows) ?? 0) * 100;
+  return (compositeScore(row, rows, compositeWeights) ?? 0) * 100;
 }
 
-function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric, rows: BenchmarkLeaderboardRow[]): string {
+function formatRankingValue(
+  row: BenchmarkLeaderboardRow,
+  metric: RankingMetric,
+  rows: BenchmarkLeaderboardRow[],
+  compositeWeights: CompositeWeights
+): string {
   if (metric === "robustness") {
     return formatPercent(robustnessScore(row));
   }
@@ -339,28 +484,66 @@ function formatRankingValue(row: BenchmarkLeaderboardRow, metric: RankingMetric,
   if (metric === "complexity") {
     return formatPercent(algorithmSimplicityScore(row, rows));
   }
-  return formatPercent(compositeScore(row, rows));
+  return formatPercent(compositeScore(row, rows, compositeWeights));
 }
 
-function compositeScore(row: BenchmarkLeaderboardRow, rows: BenchmarkLeaderboardRow[]): number | null {
+function compositeScore(
+  row: BenchmarkLeaderboardRow,
+  rows: BenchmarkLeaderboardRow[],
+  compositeWeights: CompositeWeights
+): number | null {
   const components: Array<{ value: number; weight: number }> = [];
   const robustness = robustnessScore(row);
   if (robustness != null) {
-    components.push({ value: robustness, weight: COMPOSITE_WEIGHTS.robustness });
+    components.push({ value: robustness, weight: compositeWeights.robustness });
   }
   const fidelity = normalizedFidelityScore(row, rows);
   if (fidelity != null) {
-    components.push({ value: fidelity, weight: COMPOSITE_WEIGHTS.fidelity });
+    components.push({ value: fidelity, weight: compositeWeights.fidelity });
   }
   const complexity = algorithmSimplicityScore(row, rows);
   if (complexity != null) {
-    components.push({ value: complexity, weight: COMPOSITE_WEIGHTS.complexity });
-  }
-  if (components.length === 0) {
-    return null;
+    components.push({ value: complexity, weight: compositeWeights.complexity });
   }
   const weightSum = components.reduce((total, item) => total + item.weight, 0);
+  if (components.length === 0 || weightSum <= 0) {
+    return null;
+  }
   return components.reduce((total, item) => total + item.value * item.weight, 0) / weightSum;
+}
+
+function clampWeight(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0;
+}
+
+function weightsFromHandles(firstPosition: number, secondPosition: number): CompositeWeights {
+  const first = clampWeight(firstPosition);
+  const second = Math.max(first, clampWeight(secondPosition));
+  return {
+    robustness: first,
+    fidelity: second - first,
+    complexity: 100 - second
+  };
+}
+
+function normalizeCompositeWeights(value: unknown): CompositeWeights {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_COMPOSITE_WEIGHTS };
+  }
+  const candidate = value as Partial<Record<CompositeWeightKey, unknown>>;
+  const robustness = Number(candidate.robustness);
+  const fidelity = Number(candidate.fidelity);
+  const complexity = Number(candidate.complexity);
+  if (![robustness, fidelity, complexity].every((item) => Number.isFinite(item) && item >= 0)) {
+    return { ...DEFAULT_COMPOSITE_WEIGHTS };
+  }
+  const total = robustness + fidelity + complexity;
+  if (total <= 0) {
+    return { ...DEFAULT_COMPOSITE_WEIGHTS };
+  }
+  const first = (robustness / total) * 100;
+  const second = ((robustness + fidelity) / total) * 100;
+  return weightsFromHandles(first, second);
 }
 
 function robustnessScore(row: BenchmarkLeaderboardRow): number | null {

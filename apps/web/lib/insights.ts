@@ -36,7 +36,7 @@ const phaseOrder: RunPhaseKey[] = [
 ];
 
 const fallbackPhaseLabels: Record<RunPhaseKey, string> = {
-  canonical: "采样 canonical 数据集",
+  canonical: "采样实验载体图片",
   watermark_embed: "嵌入水印",
   attack: "攻击",
   watermark_extract: "提取",
